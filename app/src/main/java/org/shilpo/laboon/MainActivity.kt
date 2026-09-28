@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
+
 package org.shilpo.laboon
 
 import android.animation.AnimatorSet
@@ -20,7 +22,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -46,6 +50,7 @@ import org.shilpo.laboon.ui.component.splash.SplashConfig
 import org.shilpo.laboon.ui.component.splash.SplashOverlay
 import org.shilpo.laboon.ui.component.splash.SplashSlots
 import org.shilpo.laboon.ui.component.splash.SplashVectorLoader
+import org.shilpo.laboon.ui.theme.AppTypography
 
 class MainActivity : ComponentActivity() {
 
@@ -95,7 +100,11 @@ class MainActivity : ComponentActivity() {
                 dynamicLightColorScheme(context)
             }
 
-            MaterialTheme(colorScheme = colorScheme) {
+            MaterialExpressiveTheme(
+                colorScheme = colorScheme,
+                motionScheme = MotionScheme.expressive(),
+                typography = AppTypography,
+            ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
