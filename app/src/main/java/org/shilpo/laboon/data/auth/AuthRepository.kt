@@ -194,6 +194,77 @@ class AuthRepository(
             }
         }
 
+    suspend fun loginLastFm(
+        serverUrl: String,
+        token: String,
+        username: String,
+        password: String,
+    ): Result<LastFmCredentials> = withContext(Dispatchers.IO) {
+        try {
+            val cleanUrl = serverUrl.trimEnd('/')
+            val endpoint = URL("$cleanUrl/api/v1/integrations/lastfm/login")
+            val connection = (endpoint.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 15000
+                readTimeout = 15000
+                doOutput = true
+                setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Accept", "application/json")
+            }
+
+            val requestJson = JSONObject().apply {
+                put("username", username)
+                put("password", password)
+            }
+
+            OutputStreamWriter(connection.outputStream, StandardCharsets.UTF_8).use { writer ->
+                writer.write(requestJson.toString())
+                writer.flush()
+            }
+
+            val responseCode = connection.responseCode
+            val stream = if (responseCode in 200..299) {
+                connection.inputStream
+            } else {
+                connection.errorStream
+            }
+
+            val responseText = stream?.let {
+                BufferedReader(InputStreamReader(it, StandardCharsets.UTF_8)).use { reader ->
+                    reader.readText()
+                }
+            }.orEmpty()
+
+            if (responseCode !in 200..299) {
+                val message = try {
+                    val errJson = JSONObject(responseText)
+                    errJson.optString("message").ifBlank {
+                        errJson.optString("error")
+                            .ifBlank { "Last.fm authentication failed ($responseCode)" }
+                    }
+                } catch (_: Exception) {
+                    "Last.fm authentication failed ($responseCode)"
+                }
+                return@withContext Result.failure(Exception(message))
+            }
+
+            val json = JSONObject(responseText)
+            val credentials = LastFmCredentials(
+                connected = json.optBoolean("connected", true),
+                username = json.optCleanString("username") ?: username,
+                sessionKey = json.optCleanString("session_key"),
+                apiKey = json.optCleanString("api_key"),
+                apiSecret = json.optCleanString("api_secret"),
+            )
+
+            storage.saveLastFmCredentials(credentials)
+            Result.success(credentials)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     private fun JSONObject.optCleanString(key: String): String? {
         if (isNull(key)) return null
         val value = optString(key).trim()

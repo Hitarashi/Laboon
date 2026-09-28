@@ -35,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalAutofillManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.animation.doOnEnd
@@ -51,6 +52,7 @@ import org.shilpo.laboon.ui.component.splash.SplashOverlay
 import org.shilpo.laboon.ui.component.splash.SplashSlots
 import org.shilpo.laboon.ui.component.splash.SplashVectorLoader
 import org.shilpo.laboon.ui.screens.auth.ConnectScreen
+import org.shilpo.laboon.ui.screens.home.HomeScreen
 import org.shilpo.laboon.ui.screens.lastfm.LastFmScreen
 import org.shilpo.laboon.ui.screens.welcome.WelcomeScreen
 import org.shilpo.laboon.ui.theme.AppTypography
@@ -59,6 +61,7 @@ private sealed interface Screen {
     data object Welcome : Screen
     data object Connect : Screen
     data class LastFm(val credentials: LastFmCredentials?) : Screen
+    data object Home : Screen
 }
 
 class MainActivity : ComponentActivity() {
@@ -71,6 +74,9 @@ class MainActivity : ComponentActivity() {
     private var isAuthenticating by mutableStateOf(false)
     private var authErrorMessage by mutableStateOf<String?>(null)
 
+    private var isLastFmConnecting by mutableStateOf(false)
+    private var lastFmErrorMessage by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
@@ -80,7 +86,12 @@ class MainActivity : ComponentActivity() {
         authRepository = AuthRepository(authStorage)
 
         if (authStorage.hasSession()) {
-            currentScreen = Screen.LastFm(authStorage.getLastFmCredentials())
+            val lastFm = authStorage.getLastFmCredentials()
+            currentScreen = if (lastFm?.connected == true) {
+                Screen.Home
+            } else {
+                Screen.LastFm(lastFm)
+            }
         }
 
         splashScreen.setKeepOnScreenCondition { !isReady }
@@ -133,6 +144,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
+                    val autofillManager = LocalAutofillManager.current
                     var contentVisible by remember { mutableStateOf(false) }
                     var splashDone by remember { mutableStateOf(false) }
 
@@ -175,6 +187,48 @@ class MainActivity : ComponentActivity() {
 
                                 is Screen.LastFm -> LastFmScreen(
                                     credentials = screen.credentials,
+                                    isConnecting = isLastFmConnecting,
+                                    errorMessage = lastFmErrorMessage,
+                                    onConnect = { username, password ->
+                                        val session = authStorage.getSession()
+                                        if (session == null) {
+                                            currentScreen = Screen.Welcome
+                                            return@LastFmScreen
+                                        }
+                                        isLastFmConnecting = true
+                                        lastFmErrorMessage = null
+                                        lifecycleScope.launch {
+                                            val result = authRepository.loginLastFm(
+                                                serverUrl = session.serverUrl,
+                                                token = session.token,
+                                                username = username,
+                                                password = password,
+                                            )
+                                            result.fold(
+                                                onSuccess = {
+                                                    autofillManager?.commit()
+                                                    isLastFmConnecting = false
+                                                    currentScreen = Screen.Home
+                                                },
+                                                onFailure = { error ->
+                                                    autofillManager?.cancel()
+                                                    isLastFmConnecting = false
+                                                    lastFmErrorMessage = error.message
+                                                        ?: getString(R.string.connect_auth_failed)
+                                                }
+                                            )
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+
+                                Screen.Home -> HomeScreen(
+                                    session = authStorage.getSession(),
+                                    credentials = authStorage.getLastFmCredentials(),
+                                    onDisconnect = {
+                                        authStorage.clearSession()
+                                        currentScreen = Screen.Welcome
+                                    },
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }
@@ -221,7 +275,11 @@ class MainActivity : ComponentActivity() {
                         authRepository.fetchLastFmStatus(session.serverUrl, session.token)
                     val creds = lastFmResult.getOrNull()
                     isAuthenticating = false
-                    currentScreen = Screen.LastFm(creds)
+                    currentScreen = if (creds?.connected == true) {
+                        Screen.Home
+                    } else {
+                        Screen.LastFm(creds)
+                    }
                 },
                 onFailure = { error ->
                     isAuthenticating = false

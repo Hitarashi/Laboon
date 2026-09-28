@@ -10,11 +10,19 @@
     <string name="connect_auth_failed">Authentication failed. Please try again.</string>
     <string name="lastfm_title">Connect Last.fm</string>
     <string name="lastfm_subtitle">Link your account to enable scrobbling and playback streaming</string>
-    <string name="lastfm_server_configured">Server API key configured</string>
     <string name="lastfm_already_connected">Already connected as %1$s</string>
     <string name="lastfm_username_label">Last.fm Username</string>
     <string name="lastfm_username_placeholder">Enter username</string>
     <string name="lastfm_password_label">Last.fm Password</string>
     <string name="lastfm_password_placeholder">Enter password</string>
     <string name="lastfm_connect_button">Connect Last.fm</string>
+    <string name="lastfm_connecting">Connecting Last.fm…</string>
+    <string name="lastfm_error_empty">Please enter your username and password</string>
+    <string name="home_title">Laboon</string>
+    <string name="home_welcome">Welcome, %1$s</string>
+    <string name="home_user_fallback">Listener</string>
+    <string name="home_status_connected">Ready</string>
+    <string name="home_library_placeholder_title">Music Library</string>
+    <string name="home_library_placeholder_subtitle">Your personal Telegram music files and playback sessions will be available here.</string>
+    <string name="home_disconnect_button">Disconnect &amp; Sign Out</string>
 </resources>
