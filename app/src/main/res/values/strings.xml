@@ -34,6 +34,7 @@
     <string name="library_title">Library</string>
     <string name="library_placeholder_title">Your Library</string>
     <string name="library_placeholder_subtitle">Saved tracks, downloaded playlists, and local files.</string>
+    <string name="settings_title">Settings</string>
     <string name="permissions_title">Permissions</string>
     <string name="permissions_subtitle">Laboon needs these permissions to ensure smooth audio playback, lock screen controls, and wireless device connections.</string>
     <string name="permissions_grant">Grant</string>

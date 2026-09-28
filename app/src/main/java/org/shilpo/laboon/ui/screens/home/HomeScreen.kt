@@ -2,7 +2,9 @@
 
 package org.shilpo.laboon.ui.screens.home
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -28,8 +30,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -51,7 +51,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil3.SingletonImageLoader
 import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import coil3.compose.LocalPlatformContext
@@ -66,6 +65,7 @@ import org.shilpo.laboon.ui.component.FloatingNavigationToolbar
 import org.shilpo.laboon.ui.navigation.MainNavTab
 import org.shilpo.laboon.ui.screens.library.LibraryScreen
 import org.shilpo.laboon.ui.screens.search.SearchScreen
+import org.shilpo.laboon.ui.screens.settings.SettingsScreen
 
 @Composable
 fun HomeScreen(
@@ -75,6 +75,11 @@ fun HomeScreen(
     onDisconnect: () -> Unit = {},
 ) {
     var currentTab by rememberSaveable { mutableStateOf(MainNavTab.Home) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
+
+    BackHandler(enabled = showSettings) {
+        showSettings = false
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
         AnimatedContent(
@@ -90,7 +95,7 @@ fun HomeScreen(
             when (tab) {
                 MainNavTab.Home -> HomeContent(
                     session = session,
-                    onDisconnect = onDisconnect,
+                    onOpenSettings = { showSettings = true },
                     modifier = Modifier.fillMaxSize(),
                 )
 
@@ -112,13 +117,29 @@ fun HomeScreen(
                 .navigationBarsPadding()
                 .padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
         )
+
+        AnimatedVisibility(
+            visible = showSettings,
+            enter = slideInHorizontally { it } + fadeIn(),
+            exit = slideOutHorizontally { it } + fadeOut(),
+        ) {
+            SettingsScreen(
+                session = session,
+                onBack = { showSettings = false },
+                onDisconnect = {
+                    showSettings = false
+                    onDisconnect()
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
     }
 }
 
 @Composable
 private fun HomeContent(
     session: AuthSession?,
-    onDisconnect: () -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -139,14 +160,25 @@ private fun HomeContent(
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Column {
-                        Text(
-                            text = stringResource(R.string.home_title),
-                            style = MaterialTheme.typography.headlineLarge.copy(
-                                fontSize = 34.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            ),
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.app_icon_small),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(34.dp),
+                            )
+                            Text(
+                                text = stringResource(R.string.home_title),
+                                style = MaterialTheme.typography.headlineLarge.copy(
+                                    fontSize = 34.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                ),
+                            )
+                        }
                         Spacer(modifier = Modifier.height(4.dp))
                         val displayName = session?.user?.name
                             ?: session?.user?.username?.let { "@$it" }
@@ -160,7 +192,7 @@ private fun HomeContent(
 
                     UserProfileAvatar(
                         session = session,
-                        onDisconnect = onDisconnect,
+                        onClick = onOpenSettings,
                         modifier = Modifier.size(48.dp),
                     )
                 }
@@ -203,12 +235,11 @@ private fun HomeContent(
 @Composable
 private fun UserProfileAvatar(
     session: AuthSession?,
-    onDisconnect: () -> Unit,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier,
     size: Dp = 48.dp,
 ) {
     val context = LocalPlatformContext.current
-    var menuExpanded by remember { mutableStateOf(false) }
     var isImageLoaded by remember { mutableStateOf(false) }
 
     val imageRequest = remember(session?.serverUrl, session?.token) {
@@ -236,91 +267,54 @@ private fun UserProfileAvatar(
         }
     }
 
-    Box(modifier = modifier) {
-        Box(
-            modifier = Modifier
-                .size(size)
-                .clip(CircleShape)
-                .clickable { menuExpanded = true },
-            contentAlignment = Alignment.Center,
-        ) {
-            if (!isImageLoaded) {
-                if (initial != null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.colorScheme.primaryContainer),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = initial.toString(),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        )
-                    }
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_user_headshot),
-                            contentDescription = null,
-                            modifier = Modifier.size(size * 0.55f),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+    Box(
+        modifier = modifier
+            .size(size)
+            .clip(CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (!isImageLoaded) {
+            if (initial != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = initial.toString(),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
                 }
-            }
-
-            if (imageRequest != null) {
-                AsyncImage(
-                    model = imageRequest,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    onState = { state ->
-                        isImageLoaded = state is AsyncImagePainter.State.Success
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_user_headshot),
+                        contentDescription = null,
+                        modifier = Modifier.size(size * 0.55f),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
 
-        DropdownMenu(
-            expanded = menuExpanded,
-            onDismissRequest = { menuExpanded = false },
-        ) {
-            val name = session?.user?.name ?: session?.user?.username
-            if (name != null) {
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            text = name,
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    },
-                    onClick = {},
-                    enabled = false,
-                )
-            }
-            DropdownMenuItem(
-                text = {
-                    Text(
-                        text = stringResource(R.string.home_disconnect_button),
-                        color = MaterialTheme.colorScheme.error,
-                    )
+        if (imageRequest != null) {
+            AsyncImage(
+                model = imageRequest,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                onState = { state ->
+                    isImageLoaded = state is AsyncImagePainter.State.Success
                 },
-                onClick = {
-                    menuExpanded = false
-                    val loader = SingletonImageLoader.get(context)
-                    loader.memoryCache?.clear()
-                    loader.diskCache?.clear()
-                    onDisconnect()
-                },
+                modifier = Modifier.fillMaxSize(),
             )
         }
     }
