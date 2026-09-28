@@ -2,9 +2,12 @@
 
 package org.shilpo.laboon
 
+import android.Manifest
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
@@ -39,6 +42,7 @@ import androidx.compose.ui.platform.LocalAutofillManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.animation.doOnEnd
+import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -54,11 +58,13 @@ import org.shilpo.laboon.ui.component.splash.SplashVectorLoader
 import org.shilpo.laboon.ui.screens.auth.ConnectScreen
 import org.shilpo.laboon.ui.screens.home.HomeScreen
 import org.shilpo.laboon.ui.screens.lastfm.LastFmScreen
+import org.shilpo.laboon.ui.screens.permissions.PermissionsScreen
 import org.shilpo.laboon.ui.screens.welcome.WelcomeScreen
 import org.shilpo.laboon.ui.theme.AppTypography
 
 private sealed interface Screen {
     data object Welcome : Screen
+    data object Permissions : Screen
     data object Connect : Screen
     data class LastFm(val credentials: LastFmCredentials?) : Screen
     data object Home : Screen
@@ -85,7 +91,19 @@ class MainActivity : ComponentActivity() {
         authStorage = AuthStorage(applicationContext)
         authRepository = AuthRepository(authStorage)
 
-        if (authStorage.hasSession()) {
+        val hasSession = authStorage.hasSession()
+        val permissionsCompleted =
+            authStorage.hasCompletedPermissions() && areEssentialPermissionsGranted(
+                applicationContext
+            )
+
+        if (!permissionsCompleted) {
+            currentScreen = if (hasSession) {
+                Screen.Permissions
+            } else {
+                Screen.Welcome
+            }
+        } else if (hasSession) {
             val lastFm = authStorage.getLastFmCredentials()
             currentScreen = if (lastFm?.connected == true) {
                 Screen.Home
@@ -176,7 +194,24 @@ class MainActivity : ComponentActivity() {
                             when (screen) {
                                 Screen.Welcome -> WelcomeScreen(
                                     modifier = Modifier.fillMaxSize(),
-                                    onLetsGoClick = { currentScreen = Screen.Connect },
+                                    onLetsGoClick = { currentScreen = Screen.Permissions },
+                                )
+
+                                Screen.Permissions -> PermissionsScreen(
+                                    modifier = Modifier.fillMaxSize(),
+                                    onContinue = {
+                                        authStorage.setCompletedPermissions(true)
+                                        if (authStorage.hasSession()) {
+                                            val lastFm = authStorage.getLastFmCredentials()
+                                            currentScreen = if (lastFm?.connected == true) {
+                                                Screen.Home
+                                            } else {
+                                                Screen.LastFm(lastFm)
+                                            }
+                                        } else {
+                                            currentScreen = Screen.Connect
+                                        }
+                                    },
                                 )
 
                                 Screen.Connect -> ConnectScreen(
@@ -287,5 +322,19 @@ class MainActivity : ComponentActivity() {
                 }
             )
         }
+    }
+
+    private fun areEssentialPermissionsGranted(context: Context): Boolean {
+        val notifGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val audioGranted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.READ_MEDIA_AUDIO,
+        ) == PackageManager.PERMISSION_GRANTED
+
+        return notifGranted && audioGranted
     }
 }

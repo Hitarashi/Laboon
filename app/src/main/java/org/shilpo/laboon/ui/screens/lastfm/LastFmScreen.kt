@@ -53,7 +53,6 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -82,7 +81,7 @@ fun LastFmScreen(
     errorMessage: String? = null,
     onConnect: (username: String, password: String) -> Unit = { _, _ -> },
 ) {
-    val context = LocalContext.current
+    val emptyErrorText = stringResource(R.string.lastfm_error_empty)
     var username by rememberSaveable(credentials?.username) {
         mutableStateOf(
             credentials?.username?.takeIf { !it.equals("null", ignoreCase = true) }.orEmpty()
@@ -114,7 +113,7 @@ fun LastFmScreen(
             val u = username.trim()
             val p = password.trim()
             if (u.isEmpty() || p.isEmpty()) {
-                localError = context.getString(R.string.lastfm_error_empty)
+                localError = emptyErrorText
             } else {
                 onConnect(u, p)
             }

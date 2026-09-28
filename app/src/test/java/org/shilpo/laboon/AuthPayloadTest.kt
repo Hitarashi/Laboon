@@ -68,5 +68,13 @@ class AuthPayloadTest {
         }
 
         override fun getLastFmCredentials(): LastFmCredentials? = lastFm
+
+        private var permissionsCompleted = false
+
+        override fun hasCompletedPermissions(): Boolean = permissionsCompleted
+
+        override fun setCompletedPermissions(completed: Boolean) {
+            permissionsCompleted = completed
+        }
     }
 }

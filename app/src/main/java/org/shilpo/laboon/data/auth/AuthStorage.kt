@@ -10,6 +10,8 @@ interface AuthSessionStore {
     fun clearSession()
     fun saveLastFmCredentials(credentials: LastFmCredentials)
     fun getLastFmCredentials(): LastFmCredentials?
+    fun hasCompletedPermissions(): Boolean
+    fun setCompletedPermissions(completed: Boolean)
 }
 
 class AuthStorage(context: Context) : AuthSessionStore {
@@ -111,6 +113,13 @@ class AuthStorage(context: Context) : AuthSessionStore {
         )
     }
 
+    override fun hasCompletedPermissions(): Boolean =
+        prefs.getBoolean(KEY_PERMISSIONS_COMPLETED, false)
+
+    override fun setCompletedPermissions(completed: Boolean) {
+        prefs.edit().putBoolean(KEY_PERMISSIONS_COMPLETED, completed).apply()
+    }
+
     private fun SharedPreferences.getCleanString(key: String): String? {
         val value = getString(key, null)?.trim()
         return if (value.isNullOrEmpty() || value.equals("null", ignoreCase = true)) null else value
@@ -133,5 +142,7 @@ class AuthStorage(context: Context) : AuthSessionStore {
         private const val KEY_LASTFM_SESSION_KEY = "lastfm_session_key"
         private const val KEY_LASTFM_API_KEY = "lastfm_api_key"
         private const val KEY_LASTFM_API_SECRET = "lastfm_api_secret"
+
+        private const val KEY_PERMISSIONS_COMPLETED = "permissions_completed"
     }
 }

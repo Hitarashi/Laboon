@@ -25,4 +25,27 @@
     <string name="home_library_placeholder_title">Music Library</string>
     <string name="home_library_placeholder_subtitle">Your personal Telegram music files and playback sessions will be available here.</string>
     <string name="home_disconnect_button">Disconnect &amp; Sign Out</string>
+    <string name="permissions_title">Permissions</string>
+    <string name="permissions_subtitle">Laboon needs these permissions to ensure smooth audio playback, lock screen controls, and wireless device connections.</string>
+    <string name="permissions_grant">Grant</string>
+    <string name="permissions_granted">Granted</string>
+    <string name="permissions_continue">Continue</string>
+    <string name="permissions_skip">Skip</string>
+    <string name="permissions_notif_title">Notifications</string>
+    <string name="permissions_notif_desc">Playback controls in notification shade and lock screen</string>
+    <string name="permissions_storage_title">Music &amp; Storage</string>
+    <string name="permissions_storage_desc">Access music files on your device and manage offline downloads</string>
+    <string name="permissions_bt_connect_title">Bluetooth Audio</string>
+    <string name="permissions_bt_connect_desc">Connect to wireless headphones, speakers, and media controls</string>
+    <string name="permissions_bt_scan_title">Bluetooth Scan</string>
+    <string name="permissions_bt_scan_desc">Discover and pair nearby wireless audio devices</string>
+    <string name="permissions_battery_title">Background Playback</string>
+    <string name="permissions_battery_desc">Keep audio playing uninterrupted when your screen turns off</string>
+    <string name="permissions_install_title">App Installation</string>
+    <string name="permissions_install_desc">Allow installing future Laboon app updates directly</string>
+    <string name="permissions_auto_title">System Permissions</string>
+    <string name="permissions_network_title">Network Access</string>
+    <string name="permissions_network_desc">High quality music streaming and Last.fm scrobble syncing</string>
+    <string name="permissions_audio_vibe_title">Audio &amp; Vibration</string>
+    <string name="permissions_audio_vibe_desc">Manage system audio focus and subtle tactile feedback</string>
 </resources>
