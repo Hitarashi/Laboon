@@ -2,4 +2,8 @@
     <string name="app_name">Laboon</string>
     <string name="welcome_tagline">Your personal Telegram music player</string>
     <string name="welcome_lets_go">Let\'s go</string>
+    <string name="connect_title">Sign in with Telegram</string>
+    <string name="connect_subtitle">Authenticate with your Telegram account to connect to your server</string>
+    <string name="connect_telegram_button">Open Telegram</string>
+    <string name="connect_telegram_hint">Send /stream to your bot in Telegram to get started</string>
 </resources>

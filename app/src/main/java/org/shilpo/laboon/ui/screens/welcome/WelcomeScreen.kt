@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalMaterial3ExpressiveApi::class)
+
 package org.shilpo.laboon.ui.screens.welcome
 
 import androidx.compose.foundation.layout.Box
@@ -10,6 +12,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -111,14 +115,14 @@ fun WelcomeScreen(
         ) {
             Button(
                 onClick = onLetsGoClick,
+                shapes = ButtonDefaults.shapes(),
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
+                    .fillMaxWidth(),
+                contentPadding = ButtonDefaults.LargeContentPadding,
             ) {
                 Text(
                     text = stringResource(id = R.string.welcome_lets_go),
                     style = MaterialTheme.typography.titleMedium.copy(
-                        fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                     ),
                 )

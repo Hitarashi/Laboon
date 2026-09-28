@@ -10,9 +10,15 @@ import android.view.animation.AccelerateDecelerateInterpolator
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,6 +29,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -40,6 +47,7 @@ import org.shilpo.laboon.ui.component.splash.SplashConfig
 import org.shilpo.laboon.ui.component.splash.SplashOverlay
 import org.shilpo.laboon.ui.component.splash.SplashSlots
 import org.shilpo.laboon.ui.component.splash.SplashVectorLoader
+import org.shilpo.laboon.ui.screens.auth.ConnectScreen
 import org.shilpo.laboon.ui.screens.welcome.WelcomeScreen
 import org.shilpo.laboon.ui.theme.AppTypography
 
@@ -102,6 +110,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     var contentVisible by remember { mutableStateOf(false) }
                     var splashDone by remember { mutableStateOf(false) }
+                    var currentScreen by remember { mutableIntStateOf(0) }
 
                     val contentAlpha by animateFloatAsState(
                         targetValue = if (contentVisible) 1f else 0f,
@@ -113,7 +122,8 @@ class MainActivity : ComponentActivity() {
                     )
 
                     Box(modifier = Modifier.fillMaxSize()) {
-                        WelcomeScreen(
+                        AnimatedContent(
+                            targetState = currentScreen,
                             modifier = Modifier
                                 .fillMaxSize()
                                 .graphicsLayer {
@@ -121,9 +131,23 @@ class MainActivity : ComponentActivity() {
                                     translationY =
                                         (1f - contentAlpha) * SplashConfig.Reveal.RISE_DP.dp.toPx()
                                 },
-                            onLetsGoClick = {
+                            transitionSpec = {
+                                (slideInHorizontally { it } + fadeIn()) togetherWith
+                                        (slideOutHorizontally { -it } + fadeOut())
+                            },
+                            label = "onboardingScreen",
+                        ) { screen ->
+                            when (screen) {
+                                0 -> WelcomeScreen(
+                                    modifier = Modifier.fillMaxSize(),
+                                    onLetsGoClick = { currentScreen = 1 },
+                                )
+
+                                1 -> ConnectScreen(
+                                    modifier = Modifier.fillMaxSize(),
+                                )
                             }
-                        )
+                        }
 
                         if (!splashDone) {
                             SplashOverlay(
