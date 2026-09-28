@@ -2,9 +2,11 @@
 
 package org.shilpo.laboon.ui.screens.home
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -44,13 +46,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.navigationevent.NavigationEvent
+import androidx.navigationevent.NavigationEventInfo
+import androidx.navigationevent.NavigationEventTransitionState
+import androidx.navigationevent.compose.NavigationBackHandler
+import androidx.navigationevent.compose.rememberNavigationEventState
 import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import coil3.compose.LocalPlatformContext
@@ -77,14 +87,90 @@ fun HomeScreen(
     var currentTab by rememberSaveable { mutableStateOf(MainNavTab.Home) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
 
-    BackHandler(enabled = showSettings) {
-        showSettings = false
-    }
+    val homeBackState = rememberNavigationEventState(currentInfo = NavigationEventInfo.None)
+    val isBackEnabled = showSettings || currentTab != MainNavTab.Home
+
+    NavigationBackHandler(
+        state = homeBackState,
+        isBackEnabled = isBackEnabled,
+        onBackCompleted = {
+            if (showSettings) {
+                showSettings = false
+            } else if (currentTab != MainNavTab.Home) {
+                currentTab = MainNavTab.Home
+            }
+        },
+    )
+
+    val transitionState = homeBackState.transitionState
+    val isBackInProgress = transitionState is NavigationEventTransitionState.InProgress
+    val backEvent = (transitionState as? NavigationEventTransitionState.InProgress)?.latestEvent
+    val backProgress = backEvent?.progress ?: 0f
+    val swipeEdge = backEvent?.swipeEdge ?: NavigationEvent.EDGE_LEFT
+
+    val settingsBackProgress = if (showSettings && isBackInProgress) backProgress else 0f
+    val tabBackProgress =
+        if (!showSettings && currentTab != MainNavTab.Home && isBackInProgress) backProgress else 0f
+
+    val animatedSettingsScale by animateFloatAsState(
+        targetValue = 1f - (settingsBackProgress * 0.10f),
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "settingsScale",
+    )
+    val animatedSettingsCorners by animateFloatAsState(
+        targetValue = settingsBackProgress * 32f,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "settingsCorners",
+    )
+    val density = LocalDensity.current
+    val settingsMaxShiftPx = with(density) { 56.dp.toPx() }
+    val targetSettingsOffsetX = if (settingsBackProgress > 0f) {
+        if (swipeEdge == NavigationEvent.EDGE_RIGHT) -settingsBackProgress * settingsMaxShiftPx else settingsBackProgress * settingsMaxShiftPx
+    } else 0f
+    val animatedSettingsOffsetX by animateFloatAsState(
+        targetValue = targetSettingsOffsetX,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "settingsOffsetX",
+    )
+
+    val scrimAlpha by animateFloatAsState(
+        targetValue = if (showSettings) (1f - settingsBackProgress) * 0.4f else 0f,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "settingsScrim",
+    )
+
+    val animatedTabScale by animateFloatAsState(
+        targetValue = 1f - (tabBackProgress * 0.08f),
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "tabScale",
+    )
+    val animatedTabCorners by animateFloatAsState(
+        targetValue = tabBackProgress * 24f,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "tabCorners",
+    )
+    val tabMaxShiftPx = with(density) { 40.dp.toPx() }
+    val targetTabOffsetX = if (tabBackProgress > 0f) {
+        if (swipeEdge == NavigationEvent.EDGE_RIGHT) -tabBackProgress * tabMaxShiftPx else tabBackProgress * tabMaxShiftPx
+    } else 0f
+    val animatedTabOffsetX by animateFloatAsState(
+        targetValue = targetTabOffsetX,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "tabOffsetX",
+    )
 
     Box(modifier = modifier.fillMaxSize()) {
         AnimatedContent(
             targetState = currentTab,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    scaleX = animatedTabScale
+                    scaleY = animatedTabScale
+                    translationX = animatedTabOffsetX
+                    shape = RoundedCornerShape(animatedTabCorners.dp)
+                    clip = animatedTabCorners > 0.5f
+                },
             transitionSpec = {
                 val direction = if (targetState.ordinal > initialState.ordinal) 1 else -1
                 (slideInHorizontally { width -> direction * (width / 4) } + fadeIn()) togetherWith
@@ -118,6 +204,14 @@ fun HomeScreen(
                 .padding(start = 16.dp, end = 16.dp, bottom = 10.dp),
         )
 
+        if (showSettings || scrimAlpha > 0.01f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = scrimAlpha)),
+            )
+        }
+
         AnimatedVisibility(
             visible = showSettings,
             enter = slideInHorizontally { it } + fadeIn(),
@@ -130,7 +224,15 @@ fun HomeScreen(
                     showSettings = false
                     onDisconnect()
                 },
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = animatedSettingsScale
+                        scaleY = animatedSettingsScale
+                        translationX = animatedSettingsOffsetX
+                        shape = RoundedCornerShape(animatedSettingsCorners.dp)
+                        clip = animatedSettingsCorners > 0.5f
+                    },
             )
         }
     }

@@ -16,7 +16,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.EaseOut
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -26,6 +28,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MotionScheme
@@ -33,6 +36,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -40,11 +44,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalAutofillManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.core.animation.doOnEnd
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
+import androidx.navigationevent.NavigationEvent
+import androidx.navigationevent.NavigationEventInfo
+import androidx.navigationevent.NavigationEventTransitionState
+import androidx.navigationevent.compose.NavigationBackHandler
+import androidx.navigationevent.compose.rememberNavigationEventState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -166,6 +176,51 @@ class MainActivity : ComponentActivity() {
                     var contentVisible by remember { mutableStateOf(false) }
                     var splashDone by remember { mutableStateOf(false) }
 
+                    val screenBackStack = remember { mutableStateListOf<Screen>() }
+                    val mainBackState =
+                        rememberNavigationEventState(currentInfo = NavigationEventInfo.None)
+                    val canGoBack = screenBackStack.isNotEmpty() && currentScreen != Screen.Home
+
+                    NavigationBackHandler(
+                        state = mainBackState,
+                        isBackEnabled = canGoBack,
+                        onBackCompleted = {
+                            if (screenBackStack.isNotEmpty()) {
+                                currentScreen = screenBackStack.removeLast()
+                            }
+                        },
+                    )
+
+                    val mainTransition = mainBackState.transitionState
+                    val isMainBackInProgress =
+                        mainTransition is NavigationEventTransitionState.InProgress
+                    val mainEvent =
+                        (mainTransition as? NavigationEventTransitionState.InProgress)?.latestEvent
+                    val mainProgress =
+                        if (canGoBack && isMainBackInProgress) mainEvent?.progress ?: 0f else 0f
+                    val mainSwipeEdge = mainEvent?.swipeEdge ?: NavigationEvent.EDGE_LEFT
+
+                    val mainScale by animateFloatAsState(
+                        targetValue = 1f - (mainProgress * 0.08f),
+                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                        label = "mainScale",
+                    )
+                    val mainCornerRadius by animateFloatAsState(
+                        targetValue = mainProgress * 28f,
+                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                        label = "mainCornerRadius",
+                    )
+                    val density = LocalDensity.current
+                    val mainMaxShiftPx = with(density) { 44.dp.toPx() }
+                    val mainTargetOffsetX = if (mainProgress > 0f) {
+                        if (mainSwipeEdge == NavigationEvent.EDGE_RIGHT) -mainProgress * mainMaxShiftPx else mainProgress * mainMaxShiftPx
+                    } else 0f
+                    val mainOffsetX by animateFloatAsState(
+                        targetValue = mainTargetOffsetX,
+                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                        label = "mainOffsetX",
+                    )
+
                     val contentAlpha by animateFloatAsState(
                         targetValue = if (contentVisible) 1f else 0f,
                         animationSpec = tween(
@@ -181,20 +236,36 @@ class MainActivity : ComponentActivity() {
                             modifier = Modifier
                                 .fillMaxSize()
                                 .graphicsLayer {
+                                    scaleX = mainScale
+                                    scaleY = mainScale
+                                    translationX = mainOffsetX
+                                    shape = RoundedCornerShape(mainCornerRadius.dp)
+                                    clip = mainCornerRadius > 0.5f
                                     alpha = contentAlpha
                                     translationY =
                                         (1f - contentAlpha) * SplashConfig.Reveal.RISE_DP.dp.toPx()
                                 },
                             transitionSpec = {
-                                (slideInHorizontally { it } + fadeIn()) togetherWith
-                                        (slideOutHorizontally { -it } + fadeOut())
+                                val isBackNav =
+                                    (targetState == Screen.Welcome && initialState == Screen.Permissions) ||
+                                            (targetState == Screen.Permissions && initialState == Screen.Connect)
+                                if (isBackNav) {
+                                    (slideInHorizontally { -it } + fadeIn()) togetherWith
+                                            (slideOutHorizontally { it } + fadeOut())
+                                } else {
+                                    (slideInHorizontally { it } + fadeIn()) togetherWith
+                                            (slideOutHorizontally { -it } + fadeOut())
+                                }
                             },
                             label = "screenTransition",
                         ) { screen ->
                             when (screen) {
                                 Screen.Welcome -> WelcomeScreen(
                                     modifier = Modifier.fillMaxSize(),
-                                    onLetsGoClick = { currentScreen = Screen.Permissions },
+                                    onLetsGoClick = {
+                                        screenBackStack.add(Screen.Welcome)
+                                        currentScreen = Screen.Permissions
+                                    },
                                 )
 
                                 Screen.Permissions -> PermissionsScreen(
@@ -203,12 +274,14 @@ class MainActivity : ComponentActivity() {
                                         authStorage.setCompletedPermissions(true)
                                         if (authStorage.hasSession()) {
                                             val lastFm = authStorage.getLastFmCredentials()
+                                            screenBackStack.clear()
                                             currentScreen = if (lastFm?.connected == true) {
                                                 Screen.Home
                                             } else {
                                                 Screen.LastFm(lastFm)
                                             }
                                         } else {
+                                            screenBackStack.add(Screen.Permissions)
                                             currentScreen = Screen.Connect
                                         }
                                     },
@@ -262,6 +335,7 @@ class MainActivity : ComponentActivity() {
                                     credentials = authStorage.getLastFmCredentials(),
                                     onDisconnect = {
                                         authStorage.clearSession()
+                                        screenBackStack.clear()
                                         currentScreen = Screen.Welcome
                                     },
                                     modifier = Modifier.fillMaxSize(),
