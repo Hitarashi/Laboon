@@ -4,6 +4,7 @@ package org.shilpo.laboon
 
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
+import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
@@ -29,7 +30,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -43,22 +43,45 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.shilpo.laboon.data.auth.AuthRepository
+import org.shilpo.laboon.data.auth.AuthStorage
+import org.shilpo.laboon.data.auth.LastFmCredentials
 import org.shilpo.laboon.ui.component.splash.SplashConfig
 import org.shilpo.laboon.ui.component.splash.SplashOverlay
 import org.shilpo.laboon.ui.component.splash.SplashSlots
 import org.shilpo.laboon.ui.component.splash.SplashVectorLoader
 import org.shilpo.laboon.ui.screens.auth.ConnectScreen
+import org.shilpo.laboon.ui.screens.lastfm.LastFmScreen
 import org.shilpo.laboon.ui.screens.welcome.WelcomeScreen
 import org.shilpo.laboon.ui.theme.AppTypography
+
+private sealed interface Screen {
+    data object Welcome : Screen
+    data object Connect : Screen
+    data class LastFm(val credentials: LastFmCredentials?) : Screen
+}
 
 class MainActivity : ComponentActivity() {
 
     private var isReady = false
+    private lateinit var authStorage: AuthStorage
+    private lateinit var authRepository: AuthRepository
+
+    private var currentScreen by mutableStateOf<Screen>(Screen.Welcome)
+    private var isAuthenticating by mutableStateOf(false)
+    private var authErrorMessage by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        authStorage = AuthStorage(applicationContext)
+        authRepository = AuthRepository(authStorage)
+
+        if (authStorage.hasSession()) {
+            currentScreen = Screen.LastFm(authStorage.getLastFmCredentials())
+        }
 
         splashScreen.setKeepOnScreenCondition { !isReady }
         splashScreen.setOnExitAnimationListener { splashScreenViewProvider ->
@@ -90,6 +113,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        handleAuthIntent(intent)
+
         setContent {
             val darkTheme = isSystemInDarkTheme()
             val context = LocalContext.current
@@ -110,7 +135,6 @@ class MainActivity : ComponentActivity() {
                 ) {
                     var contentVisible by remember { mutableStateOf(false) }
                     var splashDone by remember { mutableStateOf(false) }
-                    var currentScreen by remember { mutableIntStateOf(0) }
 
                     val contentAlpha by animateFloatAsState(
                         targetValue = if (contentVisible) 1f else 0f,
@@ -135,15 +159,22 @@ class MainActivity : ComponentActivity() {
                                 (slideInHorizontally { it } + fadeIn()) togetherWith
                                         (slideOutHorizontally { -it } + fadeOut())
                             },
-                            label = "onboardingScreen",
+                            label = "screenTransition",
                         ) { screen ->
                             when (screen) {
-                                0 -> WelcomeScreen(
+                                Screen.Welcome -> WelcomeScreen(
                                     modifier = Modifier.fillMaxSize(),
-                                    onLetsGoClick = { currentScreen = 1 },
+                                    onLetsGoClick = { currentScreen = Screen.Connect },
                                 )
 
-                                1 -> ConnectScreen(
+                                Screen.Connect -> ConnectScreen(
+                                    modifier = Modifier.fillMaxSize(),
+                                    isAuthenticating = isAuthenticating,
+                                    errorMessage = authErrorMessage,
+                                )
+
+                                is Screen.LastFm -> LastFmScreen(
+                                    credentials = screen.credentials,
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             }
@@ -163,6 +194,40 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleAuthIntent(intent)
+    }
+
+    private fun handleAuthIntent(intent: Intent?) {
+        val uri = intent?.data ?: return
+        val payload = authRepository.parseConnectionUri(uri) ?: return
+
+        isAuthenticating = true
+        authErrorMessage = null
+        if (currentScreen is Screen.Welcome) {
+            currentScreen = Screen.Connect
+        }
+
+        lifecycleScope.launch {
+            val exchangeResult = authRepository.exchangeCode(payload.serverUrl, payload.code)
+            exchangeResult.fold(
+                onSuccess = { session ->
+                    val lastFmResult =
+                        authRepository.fetchLastFmStatus(session.serverUrl, session.token)
+                    val creds = lastFmResult.getOrNull()
+                    isAuthenticating = false
+                    currentScreen = Screen.LastFm(creds)
+                },
+                onFailure = { error ->
+                    isAuthenticating = false
+                    authErrorMessage = error.message ?: getString(R.string.connect_auth_failed)
+                }
+            )
         }
     }
 }

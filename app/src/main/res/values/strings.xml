@@ -6,4 +6,15 @@
     <string name="connect_subtitle">Authenticate with your Telegram account to connect to your server</string>
     <string name="connect_telegram_button">Open Telegram</string>
     <string name="connect_telegram_hint">Send /stream to your bot in Telegram to get started</string>
+    <string name="connect_authenticating">Verifying credentials…</string>
+    <string name="connect_auth_failed">Authentication failed. Please try again.</string>
+    <string name="lastfm_title">Connect Last.fm</string>
+    <string name="lastfm_subtitle">Link your account to enable scrobbling and playback streaming</string>
+    <string name="lastfm_server_configured">Server API key configured</string>
+    <string name="lastfm_already_connected">Already connected as %1$s</string>
+    <string name="lastfm_username_label">Last.fm Username</string>
+    <string name="lastfm_username_placeholder">Enter username</string>
+    <string name="lastfm_password_label">Last.fm Password</string>
+    <string name="lastfm_password_placeholder">Enter password</string>
+    <string name="lastfm_connect_button">Connect Last.fm</string>
 </resources>
