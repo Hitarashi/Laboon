@@ -15,30 +15,20 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialExpressiveTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.animation.doOnEnd
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -50,6 +40,7 @@ import org.shilpo.laboon.ui.component.splash.SplashConfig
 import org.shilpo.laboon.ui.component.splash.SplashOverlay
 import org.shilpo.laboon.ui.component.splash.SplashSlots
 import org.shilpo.laboon.ui.component.splash.SplashVectorLoader
+import org.shilpo.laboon.ui.screens.welcome.WelcomeScreen
 import org.shilpo.laboon.ui.theme.AppTypography
 
 class MainActivity : ComponentActivity() {
@@ -122,8 +113,7 @@ class MainActivity : ComponentActivity() {
                     )
 
                     Box(modifier = Modifier.fillMaxSize()) {
-                        // App Main Content
-                        Box(
+                        WelcomeScreen(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .graphicsLayer {
@@ -131,28 +121,10 @@ class MainActivity : ComponentActivity() {
                                     translationY =
                                         (1f - contentAlpha) * SplashConfig.Reveal.RISE_DP.dp.toPx()
                                 },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.padding(16.dp)
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.about_splash),
-                                    contentDescription = stringResource(id = R.string.app_name),
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(96.dp)
-                                )
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Text(
-                                    text = stringResource(id = R.string.app_name),
-                                    style = MaterialTheme.typography.headlineMedium,
-                                    color = MaterialTheme.colorScheme.onBackground
-                                )
+                            onLetsGoClick = {
                             }
-                        }
+                        )
 
-                        // Splash Screen Animation Overlay
                         if (!splashDone) {
                             SplashOverlay(
                                 isDark = darkTheme,

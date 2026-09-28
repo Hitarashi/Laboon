@@ -8,7 +8,6 @@
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
 
-    <!-- Material You dynamic system colors for light mode -->
     <color name="ic_launcher_background">@android:color/system_accent1_100</color>
     <color name="ic_launcher_foreground_color">@android:color/system_accent1_800</color>
     <color name="splash_icon_color">@android:color/system_accent1_800</color>
