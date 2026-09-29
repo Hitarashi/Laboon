@@ -1,6 +1,6 @@
 @file:Suppress("PropertyName")
 
-package org.shilpo.laboon.ui.design.splash
+package org.shilpo.laboon.splash
 
 data class Tuning(
     val slots: Slots = Slots(),
@@ -153,7 +153,6 @@ data class Tuning(
 
     data class Reveal(
         val START_FRACTION: Float = 0.15f,
-        val DURATION_MS: Int = 450,
         val RISE_DP: Float = 24f,
         val FADE_MS: Int = 250,
     )

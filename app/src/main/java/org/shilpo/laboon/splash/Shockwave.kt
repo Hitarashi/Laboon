@@ -1,4 +1,4 @@
-package org.shilpo.laboon.ui.design.splash
+package org.shilpo.laboon.splash
 
 class Shockwave(
     var x: Float = 0f,

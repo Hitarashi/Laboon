@@ -55,7 +55,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -69,8 +68,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import org.shilpo.laboon.R
 import org.shilpo.laboon.auth.AuthSession
-import org.shilpo.laboon.auth.SessionStore
-import org.shilpo.laboon.auth.SharedPreferencesKeyValueStore
 import org.shilpo.laboon.home.HomeAlbum
 import org.shilpo.laboon.home.HomeArtist
 import org.shilpo.laboon.home.HomeFeedDefaults
@@ -103,15 +100,13 @@ fun HomeScreen(
     state: RouteState,
     onEvent: (RouteEvent) -> Unit,
     session: AuthSession?,
+    repository: HomeFeedRepository,
     modifier: Modifier = Modifier,
     onDisconnect: () -> Unit = {},
 ) {
     val currentTab = state.currentTab
     val showSettings = state.settingsVisible
 
-    val context = LocalContext.current
-    val sessionStore = remember { SessionStore(SharedPreferencesKeyValueStore(context)) }
-    val repository = remember { HomeFeedRepository(sessionStore) }
     var feedState by remember { mutableStateOf(HomeFeedDefaults.defaultFeed) }
     val coroutineScope = rememberCoroutineScope()
 
@@ -137,7 +132,7 @@ fun HomeScreen(
     }
 
     val loadTopTracks: () -> Unit = {
-        if (feedState.topTracks.state == SectionLoadState.IDLE) {
+        if (feedState.topTracks.status == SectionLoadState.IDLE) {
             feedState = feedState.copy(topTracks = SectionState(SectionLoadState.LOADING))
             coroutineScope.launch {
                 val tracks = repository.fetchTopTracks()
@@ -148,7 +143,7 @@ fun HomeScreen(
     }
 
     val loadTrending: () -> Unit = {
-        if (feedState.regionalTrending.state == SectionLoadState.IDLE) {
+        if (feedState.regionalTrending.status == SectionLoadState.IDLE) {
             feedState = feedState.copy(
                 regionalTrending = SectionState(SectionLoadState.LOADING),
                 globalTrending = SectionState(SectionLoadState.LOADING),
@@ -167,7 +162,7 @@ fun HomeScreen(
     }
 
     val loadWeeklyPicks: () -> Unit = {
-        if (feedState.weeklyPicks.state == SectionLoadState.IDLE) {
+        if (feedState.weeklyPicks.status == SectionLoadState.IDLE) {
             feedState = feedState.copy(weeklyPicks = SectionState(SectionLoadState.LOADING))
             coroutineScope.launch {
                 val weekly = repository.fetchWeeklyPicks()
@@ -358,7 +353,7 @@ private fun HomeContent(
             WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         val bottomClearance = FloatingNavBarClearance + navBarBottomInset + 16.dp
 
-        if (feedState.isAllEmpty && !feedState.isInitialLoading && feedState.regionalTrending.state == SectionLoadState.LOADED) {
+        if (feedState.isAllEmpty && !feedState.isInitialLoading && feedState.regionalTrending.status == SectionLoadState.LOADED) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -433,7 +428,7 @@ private fun HomeContent(
                 ),
                 verticalArrangement = Arrangement.spacedBy(28.dp),
             ) {
-                if (feedState.rotation.state == SectionLoadState.LOADING) {
+                if (feedState.rotation.status == SectionLoadState.LOADING) {
                     item(key = "rotation_skeleton") {
                         SkeletonTrackCarousel(
                             titleWidth = 140.dp,
@@ -441,18 +436,18 @@ private fun HomeContent(
                             isArtist = false,
                         )
                     }
-                } else if (feedState.rotation.state == SectionLoadState.LOADED && feedState.rotation.data.isNotEmpty()) {
+                } else if (feedState.rotation.status == SectionLoadState.LOADED && feedState.rotation.items.isNotEmpty()) {
                     item(key = "rotation_live") {
                         HomeTrackCarousel(
                             title = stringResource(R.string.home_your_rotation),
                             subtitle = stringResource(R.string.home_your_rotation_subtitle),
-                            tracks = feedState.rotation.data,
+                            tracks = feedState.rotation.items,
                             onTrackClick = onTrackClick,
                         )
                     }
                 }
 
-                if (feedState.recommended.state == SectionLoadState.LOADING) {
+                if (feedState.recommended.status == SectionLoadState.LOADING) {
                     item(key = "recommended_skeleton") {
                         SkeletonTrackCarousel(
                             titleWidth = 150.dp,
@@ -460,18 +455,18 @@ private fun HomeContent(
                             isArtist = false,
                         )
                     }
-                } else if (feedState.recommended.state == SectionLoadState.LOADED && feedState.recommended.data.isNotEmpty()) {
+                } else if (feedState.recommended.status == SectionLoadState.LOADED && feedState.recommended.items.isNotEmpty()) {
                     item(key = "recommended_live") {
                         HomeTrackCarousel(
                             title = stringResource(R.string.home_recommended),
                             subtitle = stringResource(R.string.home_recommended_subtitle),
-                            tracks = feedState.recommended.data,
+                            tracks = feedState.recommended.items,
                             onTrackClick = onTrackClick,
                         )
                     }
                 }
 
-                if (feedState.topArtists.state == SectionLoadState.LOADING) {
+                if (feedState.topArtists.status == SectionLoadState.LOADING) {
                     item(key = "top_artists_skeleton") {
                         SkeletonTrackCarousel(
                             titleWidth = 120.dp,
@@ -479,18 +474,18 @@ private fun HomeContent(
                             isArtist = true,
                         )
                     }
-                } else if (feedState.topArtists.state == SectionLoadState.LOADED && feedState.topArtists.data.isNotEmpty()) {
+                } else if (feedState.topArtists.status == SectionLoadState.LOADED && feedState.topArtists.items.isNotEmpty()) {
                     item(key = "top_artists_live") {
                         HomeArtistCarousel(
                             title = stringResource(R.string.home_top_artists),
                             subtitle = stringResource(R.string.home_top_artists_subtitle),
-                            artists = feedState.topArtists.data,
+                            artists = feedState.topArtists.items,
                             onArtistClick = onArtistClick,
                         )
                     }
                 }
 
-                if (feedState.topAlbums.state == SectionLoadState.LOADING) {
+                if (feedState.topAlbums.status == SectionLoadState.LOADING) {
                     item(key = "top_albums_skeleton") {
                         SkeletonTrackCarousel(
                             titleWidth = 130.dp,
@@ -498,12 +493,12 @@ private fun HomeContent(
                             isArtist = false,
                         )
                     }
-                } else if (feedState.topAlbums.state == SectionLoadState.LOADED && feedState.topAlbums.data.isNotEmpty()) {
+                } else if (feedState.topAlbums.status == SectionLoadState.LOADED && feedState.topAlbums.items.isNotEmpty()) {
                     item(key = "top_albums_live") {
                         HomeAlbumCarousel(
                             title = stringResource(R.string.home_top_albums),
                             subtitle = stringResource(R.string.home_top_albums_subtitle),
-                            albums = feedState.topAlbums.data,
+                            albums = feedState.topAlbums.items,
                             onAlbumClick = onAlbumClick,
                         )
                     }
@@ -513,7 +508,7 @@ private fun HomeContent(
                     LaunchedEffect(Unit) {
                         onLoadTopTracks()
                     }
-                    when (feedState.topTracks.state) {
+                    when (feedState.topTracks.status) {
                         SectionLoadState.LOADING -> {
                             SkeletonTrackCarousel(
                                 titleWidth = 130.dp,
@@ -523,11 +518,11 @@ private fun HomeContent(
                         }
 
                         SectionLoadState.LOADED -> {
-                            if (feedState.topTracks.data.isNotEmpty()) {
+                            if (feedState.topTracks.items.isNotEmpty()) {
                                 HomeTrackCarousel(
                                     title = stringResource(R.string.home_top_tracks),
                                     subtitle = stringResource(R.string.home_top_tracks_subtitle),
-                                    tracks = feedState.topTracks.data,
+                                    tracks = feedState.topTracks.items,
                                     onTrackClick = onTrackClick,
                                 )
                             }
@@ -541,17 +536,17 @@ private fun HomeContent(
                     LaunchedEffect(Unit) {
                         onLoadTrending()
                     }
-                    if (feedState.regionalTrending.state == SectionLoadState.LOADING || feedState.globalTrending.state == SectionLoadState.LOADING) {
+                    if (feedState.regionalTrending.status == SectionLoadState.LOADING || feedState.globalTrending.status == SectionLoadState.LOADING) {
                         SkeletonSegmentedList()
-                    } else if (feedState.regionalTrending.state == SectionLoadState.LOADED || feedState.globalTrending.state == SectionLoadState.LOADED) {
-                        val hasRegional = feedState.regionalTrending.data.isNotEmpty()
+                    } else if (feedState.regionalTrending.status == SectionLoadState.LOADED || feedState.globalTrending.status == SectionLoadState.LOADED) {
+                        val hasRegional = feedState.regionalTrending.items.isNotEmpty()
                         val effectiveIsGlobal = isGlobalTrending || !hasRegional
                         val currentTrending = if (effectiveIsGlobal) {
-                            feedState.globalTrending.data
+                            feedState.globalTrending.items
                         } else {
-                            feedState.regionalTrending.data
+                            feedState.regionalTrending.items
                         }
-                        if (currentTrending.isNotEmpty() || feedState.globalTrending.data.isNotEmpty() || feedState.regionalTrending.data.isNotEmpty()) {
+                        if (currentTrending.isNotEmpty() || feedState.globalTrending.items.isNotEmpty() || feedState.regionalTrending.items.isNotEmpty()) {
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -614,9 +609,9 @@ private fun HomeContent(
                                     label = "trendingSongsTransition",
                                 ) { showGlobal ->
                                     val displayList = if (showGlobal) {
-                                        feedState.globalTrending.data
+                                        feedState.globalTrending.items
                                     } else {
-                                        feedState.regionalTrending.data
+                                        feedState.regionalTrending.items
                                     }
 
                                     Column(
@@ -709,7 +704,7 @@ private fun HomeContent(
                     LaunchedEffect(Unit) {
                         onLoadWeeklyPicks()
                     }
-                    when (feedState.weeklyPicks.state) {
+                    when (feedState.weeklyPicks.status) {
                         SectionLoadState.LOADING -> {
                             SkeletonTrackCarousel(
                                 titleWidth = 140.dp,
@@ -719,11 +714,11 @@ private fun HomeContent(
                         }
 
                         SectionLoadState.LOADED -> {
-                            if (feedState.weeklyPicks.data.isNotEmpty()) {
+                            if (feedState.weeklyPicks.items.isNotEmpty()) {
                                 HomeTrackCarousel(
                                     title = stringResource(R.string.home_weekly_picks),
                                     subtitle = stringResource(R.string.home_weekly_picks_subtitle),
-                                    tracks = feedState.weeklyPicks.data,
+                                    tracks = feedState.weeklyPicks.items,
                                     onTrackClick = onTrackClick,
                                 )
                             }

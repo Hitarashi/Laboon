@@ -1,4 +1,4 @@
-package org.shilpo.laboon.ui.design.splash
+package org.shilpo.laboon.splash
 
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode

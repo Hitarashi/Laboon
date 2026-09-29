@@ -1,4 +1,4 @@
-package org.shilpo.laboon.ui.design.splash
+package org.shilpo.laboon.splash
 
 sealed interface Phase {
     data object Gather : Phase

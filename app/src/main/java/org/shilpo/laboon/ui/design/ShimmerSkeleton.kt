@@ -12,7 +12,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -21,7 +20,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ButtonGroupDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -242,37 +240,3 @@ fun SkeletonSegmentedList(
     }
 }
 
-@Composable
-fun HomeLoadingSkeleton(
-    modifier: Modifier = Modifier,
-    contentPadding: PaddingValues = PaddingValues(0.dp),
-) {
-    Column(
-        modifier = modifier
-            .verticalScroll(rememberScrollState())
-            .padding(contentPadding),
-        verticalArrangement = Arrangement.spacedBy(28.dp),
-    ) {
-        SkeletonTrackCarousel(
-            titleWidth = 140.dp,
-            subtitleWidth = 200.dp,
-            isArtist = false,
-        )
-        SkeletonTrackCarousel(
-            titleWidth = 150.dp,
-            subtitleWidth = 220.dp,
-            isArtist = false,
-        )
-        SkeletonTrackCarousel(
-            titleWidth = 120.dp,
-            subtitleWidth = 180.dp,
-            isArtist = true,
-        )
-        SkeletonSegmentedList()
-        SkeletonTrackCarousel(
-            titleWidth = 130.dp,
-            subtitleWidth = 190.dp,
-            isArtist = false,
-        )
-    }
-}

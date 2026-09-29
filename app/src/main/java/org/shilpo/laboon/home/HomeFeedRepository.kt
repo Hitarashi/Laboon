@@ -208,39 +208,6 @@ class HomeFeedRepository(
         resolveTracks(rawWeekly, session?.serverUrl, session?.token)
     }
 
-    suspend fun loadFeed(): HomeFeedState = coroutineScope {
-        val displayRegion = getDisplayRegion().orEmpty()
-        val rotationDeferred = async { fetchRotation() }
-        val recommendedDeferred = async { fetchRecommended() }
-        val topArtistsDeferred = async { fetchTopArtists() }
-        val topAlbumsDeferred = async { fetchTopAlbums() }
-        val topTracksDeferred = async { fetchTopTracks() }
-        val regionalTrendingDeferred = async { fetchRegionalTrending() }
-        val globalTrendingDeferred = async { fetchGlobalTrending() }
-        val weeklyDeferred = async { fetchWeeklyPicks() }
-
-        val resolvedRotation = rotationDeferred.await()
-        val resolvedRecommended = recommendedDeferred.await()
-        val resolvedTopArtists = topArtistsDeferred.await()
-        val resolvedTopAlbums = topAlbumsDeferred.await()
-        val resolvedTopTracks = topTracksDeferred.await()
-        val resolvedRegional = regionalTrendingDeferred.await()
-        val resolvedGlobal = globalTrendingDeferred.await()
-        val resolvedWeekly = weeklyDeferred.await()
-
-        HomeFeedState(
-            rotation = SectionState(SectionLoadState.LOADED, resolvedRotation),
-            recommended = SectionState(SectionLoadState.LOADED, resolvedRecommended),
-            topArtists = SectionState(SectionLoadState.LOADED, resolvedTopArtists),
-            topAlbums = SectionState(SectionLoadState.LOADED, resolvedTopAlbums),
-            topTracks = SectionState(SectionLoadState.LOADED, resolvedTopTracks),
-            regionalTrending = SectionState(SectionLoadState.LOADED, resolvedRegional),
-            globalTrending = SectionState(SectionLoadState.LOADED, resolvedGlobal),
-            regionName = displayRegion,
-            weeklyPicks = SectionState(SectionLoadState.LOADED, resolvedWeekly),
-        )
-    }
-
     private suspend fun resolveTracks(
         tracks: List<HomeTrack>,
         serverUrl: String?,
@@ -299,7 +266,7 @@ class HomeFeedRepository(
         val username = creds?.username?.trim().orEmpty()
         if (username.isEmpty()) return emptyList()
 
-        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: DEFAULT_LASTFM_API_KEY
+        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: return emptyList()
         val endpoint =
             "https://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=$username&api_key=$apiKey&format=json&limit=25"
 
@@ -357,7 +324,7 @@ class HomeFeedRepository(
         val username = creds?.username?.trim().orEmpty()
         if (username.isEmpty()) return emptyList()
 
-        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: DEFAULT_LASTFM_API_KEY
+        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: return emptyList()
         val endpoint =
             "https://ws.audioscrobbler.com/2.0/?method=user.gettoptracks&user=$username&api_key=$apiKey&format=json&limit=15"
 
@@ -415,7 +382,7 @@ class HomeFeedRepository(
         val username = creds?.username?.trim().orEmpty()
         if (username.isEmpty()) return emptyList()
 
-        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: DEFAULT_LASTFM_API_KEY
+        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: return emptyList()
         val endpoint =
             "https://ws.audioscrobbler.com/2.0/?method=user.gettopartists&user=$username&api_key=$apiKey&format=json&limit=15"
 
@@ -470,7 +437,7 @@ class HomeFeedRepository(
         val username = creds?.username?.trim().orEmpty()
         if (username.isEmpty()) return emptyList()
 
-        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: DEFAULT_LASTFM_API_KEY
+        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: return emptyList()
         val endpoint =
             "https://ws.audioscrobbler.com/2.0/?method=user.gettopalbums&user=$username&api_key=$apiKey&format=json&limit=15"
 
@@ -765,7 +732,7 @@ class HomeFeedRepository(
         seedTracks: List<HomeTrack>,
         topArtistName: String? = null,
     ): List<HomeTrack> {
-        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: DEFAULT_LASTFM_API_KEY
+        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: return emptyList()
         val result = mutableListOf<HomeTrack>()
 
         for (seed in seedTracks) {
@@ -998,7 +965,7 @@ class HomeFeedRepository(
     }
 
     private fun fetchLastFmTrendingTracks(creds: LastFmCredentials?): List<HomeTrack> {
-        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: DEFAULT_LASTFM_API_KEY
+        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: return emptyList()
         val endpoint =
             "https://ws.audioscrobbler.com/2.0/?method=chart.gettoptracks&api_key=$apiKey&format=json&limit=10"
         return executeLastFmTrackList(endpoint, "tracks", "track")
@@ -1063,7 +1030,7 @@ class HomeFeedRepository(
         creds: LastFmCredentials?,
         country: String
     ): List<HomeTrack> {
-        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: DEFAULT_LASTFM_API_KEY
+        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: return emptyList()
         val encodedCountry =
             java.net.URLEncoder.encode(country.trim(), StandardCharsets.UTF_8.name())
         val endpoint =
@@ -1076,7 +1043,7 @@ class HomeFeedRepository(
         seedArtists: List<HomeArtist>,
     ): List<HomeTrack> {
         if (seedArtists.isEmpty()) return emptyList()
-        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: DEFAULT_LASTFM_API_KEY
+        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: return emptyList()
         val result = mutableListOf<HomeTrack>()
 
         for (artist in seedArtists.take(3)) {
@@ -1107,9 +1074,5 @@ class HomeFeedRepository(
         }
 
         return result
-    }
-
-    private companion object {
-        const val DEFAULT_LASTFM_API_KEY = "426a20516a3e511c5d2ed88f710247fd"
     }
 }

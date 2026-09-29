@@ -33,8 +33,8 @@ enum class SectionLoadState {
 }
 
 data class SectionState<T>(
-    val state: SectionLoadState = SectionLoadState.IDLE,
-    val data: List<T> = emptyList(),
+    val status: SectionLoadState = SectionLoadState.IDLE,
+    val items: List<T> = emptyList(),
 )
 
 data class HomeFeedState(
@@ -49,33 +49,33 @@ data class HomeFeedState(
     val weeklyPicks: SectionState<HomeTrack> = SectionState(),
 ) {
     val isInitialLoading: Boolean
-        get() = rotation.state == SectionLoadState.LOADING ||
-                recommended.state == SectionLoadState.LOADING ||
-                topArtists.state == SectionLoadState.LOADING ||
-                topAlbums.state == SectionLoadState.LOADING
+        get() = rotation.status == SectionLoadState.LOADING ||
+                recommended.status == SectionLoadState.LOADING ||
+                topArtists.status == SectionLoadState.LOADING ||
+                topAlbums.status == SectionLoadState.LOADING
 
     val isAllEmpty: Boolean
-        get() = rotation.data.isEmpty() &&
-                recommended.data.isEmpty() &&
-                topArtists.data.isEmpty() &&
-                topAlbums.data.isEmpty() &&
-                topTracks.data.isEmpty() &&
-                regionalTrending.data.isEmpty() &&
-                globalTrending.data.isEmpty() &&
-                weeklyPicks.data.isEmpty()
+        get() = rotation.items.isEmpty() &&
+                recommended.items.isEmpty() &&
+                topArtists.items.isEmpty() &&
+                topAlbums.items.isEmpty() &&
+                topTracks.items.isEmpty() &&
+                regionalTrending.items.isEmpty() &&
+                globalTrending.items.isEmpty() &&
+                weeklyPicks.items.isEmpty()
 
-    val yourRotation: List<HomeTrack> get() = rotation.data
-    val recommendedTracks: List<HomeTrack> get() = recommended.data
-    val trendingSongs: List<HomeTrack> get() = regionalTrending.data
-    val regionalTrendingSongs: List<HomeTrack> get() = regionalTrending.data
-    val globalTrendingSongs: List<HomeTrack> get() = globalTrending.data
+    val yourRotation: List<HomeTrack> get() = rotation.items
+    val recommendedTracks: List<HomeTrack> get() = recommended.items
+    val trendingSongs: List<HomeTrack> get() = regionalTrending.items
+    val regionalTrendingSongs: List<HomeTrack> get() = regionalTrending.items
+    val globalTrendingSongs: List<HomeTrack> get() = globalTrending.items
 }
 
 object HomeFeedDefaults {
     val defaultFeed = HomeFeedState(
-        rotation = SectionState(state = SectionLoadState.LOADING),
-        recommended = SectionState(state = SectionLoadState.LOADING),
-        topArtists = SectionState(state = SectionLoadState.LOADING),
-        topAlbums = SectionState(state = SectionLoadState.LOADING),
+        rotation = SectionState(status = SectionLoadState.LOADING),
+        recommended = SectionState(status = SectionLoadState.LOADING),
+        topArtists = SectionState(status = SectionLoadState.LOADING),
+        topAlbums = SectionState(status = SectionLoadState.LOADING),
     )
 }

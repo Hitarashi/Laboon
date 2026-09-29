@@ -6,13 +6,13 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import org.shilpo.laboon.ui.design.splash.Contour
-import org.shilpo.laboon.ui.design.splash.DismissReason
-import org.shilpo.laboon.ui.design.splash.Engine
-import org.shilpo.laboon.ui.design.splash.FrameOutcome
-import org.shilpo.laboon.ui.design.splash.Phase
-import org.shilpo.laboon.ui.design.splash.Shockwave
-import org.shilpo.laboon.ui.design.splash.Tuning
+import org.shilpo.laboon.splash.Contour
+import org.shilpo.laboon.splash.DismissReason
+import org.shilpo.laboon.splash.Engine
+import org.shilpo.laboon.splash.FrameOutcome
+import org.shilpo.laboon.splash.Phase
+import org.shilpo.laboon.splash.Shockwave
+import org.shilpo.laboon.splash.Tuning
 
 class SplashFramePolicyTest {
     private fun engine(

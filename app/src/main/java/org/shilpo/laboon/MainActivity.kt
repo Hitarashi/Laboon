@@ -51,6 +51,7 @@ import org.shilpo.laboon.auth.OnboardingProgress
 import org.shilpo.laboon.auth.SessionStore
 import org.shilpo.laboon.auth.SharedPreferencesKeyValueStore
 import org.shilpo.laboon.auth.UnauthorizedException
+import org.shilpo.laboon.home.HomeFeedRepository
 import org.shilpo.laboon.navigation.Route
 import org.shilpo.laboon.navigation.RouteDirection
 import org.shilpo.laboon.navigation.RouteEvent
@@ -62,12 +63,12 @@ import org.shilpo.laboon.navigation.transitionDirection
 import org.shilpo.laboon.permissions.AndroidPermissionState
 import org.shilpo.laboon.permissions.PermissionCatalogue
 import org.shilpo.laboon.permissions.canLeaveOnboarding
+import org.shilpo.laboon.splash.Overlay
+import org.shilpo.laboon.splash.Tuning
+import org.shilpo.laboon.splash.VectorLoader
 import org.shilpo.laboon.ui.design.PredictiveBackSpec
 import org.shilpo.laboon.ui.design.PredictiveBackSurface
 import org.shilpo.laboon.ui.design.rememberPredictiveBackState
-import org.shilpo.laboon.ui.design.splash.Overlay
-import org.shilpo.laboon.ui.design.splash.Tuning
-import org.shilpo.laboon.ui.design.splash.VectorLoader
 import org.shilpo.laboon.ui.design.theme.AppTypography
 import org.shilpo.laboon.ui.screens.connect.ConnectScreen
 import org.shilpo.laboon.ui.screens.home.HomeScreen
@@ -85,15 +86,16 @@ class MainActivity : ComponentActivity() {
     private lateinit var sessionStore: SessionStore
     private lateinit var authClient: AuthClient
     private lateinit var onboardingProgress: OnboardingProgress
+    private lateinit var homeFeedRepository: HomeFeedRepository
 
     private var routeState by mutableStateOf(RouteState())
-    private var isAuthenticating by mutableStateOf(false)
+    private var isExchangingCode by mutableStateOf(false)
     private var authErrorMessage by mutableStateOf<String?>(null)
 
-    private var isLastFmConnecting by mutableStateOf(false)
+    private var isLastFmAuthenticating by mutableStateOf(false)
     private var lastFmErrorMessage by mutableStateOf<String?>(null)
 
-    private var isListenBrainzConnecting by mutableStateOf(false)
+    private var isListenBrainzAuthenticating by mutableStateOf(false)
     private var listenBrainzErrorMessage by mutableStateOf<String?>(null)
 
     private var permissionAnswersRevision by mutableIntStateOf(0)
@@ -128,6 +130,7 @@ class MainActivity : ComponentActivity() {
         sessionStore = SessionStore(keyValueStore)
         authClient = AuthClient(sessionStore)
         onboardingProgress = OnboardingProgress(keyValueStore)
+        homeFeedRepository = HomeFeedRepository(sessionStore)
         verifySessionIfPresent()
 
         val restoredTokens = savedInstanceState?.getStringArrayList(ROUTE_STATE_KEY)
@@ -291,14 +294,14 @@ class MainActivity : ComponentActivity() {
 
                                     Route.Connect -> ConnectScreen(
                                         modifier = Modifier.fillMaxSize(),
-                                        isAuthenticating = isAuthenticating,
+                                        isAuthenticating = isExchangingCode,
                                         errorMessage = authErrorMessage,
                                     )
 
                                     is Route.LastFm -> LastFmScreen(
                                         credentials = route.credentials,
                                         hasSession = sessionStore.hasSession(),
-                                        isConnecting = isLastFmConnecting,
+                                        isConnecting = isLastFmAuthenticating,
                                         errorMessage = lastFmErrorMessage,
                                         onConnect = { username, password ->
                                             val session = sessionStore.getSession()
@@ -306,7 +309,7 @@ class MainActivity : ComponentActivity() {
                                                 dispatch(RouteEvent.SessionMissing)
                                                 return@LastFmScreen
                                             }
-                                            isLastFmConnecting = true
+                                            isLastFmAuthenticating = true
                                             lastFmErrorMessage = null
                                             lifecycleScope.launch {
                                                 val result = authClient.loginLastFm(
@@ -318,7 +321,7 @@ class MainActivity : ComponentActivity() {
                                                 result.fold(
                                                     onSuccess = {
                                                         autofillManager?.commit()
-                                                        isLastFmConnecting = false
+                                                        isLastFmAuthenticating = false
                                                         dispatch(
                                                             RouteEvent.LastFmConnected(
                                                                 listenBrainzCredentials = sessionStore.getListenBrainzCredentials(),
@@ -327,7 +330,7 @@ class MainActivity : ComponentActivity() {
                                                     },
                                                     onFailure = { error ->
                                                         autofillManager?.cancel()
-                                                        isLastFmConnecting = false
+                                                        isLastFmAuthenticating = false
                                                         if (error is UnauthorizedException) {
                                                             dispatch(RouteEvent.SessionMissing)
                                                         } else {
@@ -344,7 +347,7 @@ class MainActivity : ComponentActivity() {
                                     is Route.ListenBrainz -> ListenBrainzScreen(
                                         credentials = route.credentials,
                                         hasSession = sessionStore.hasSession(),
-                                        isConnecting = isListenBrainzConnecting,
+                                        isConnecting = isListenBrainzAuthenticating,
                                         errorMessage = listenBrainzErrorMessage,
                                         onConnect = { token ->
                                             val session = sessionStore.getSession()
@@ -352,7 +355,7 @@ class MainActivity : ComponentActivity() {
                                                 dispatch(RouteEvent.SessionMissing)
                                                 return@ListenBrainzScreen
                                             }
-                                            isListenBrainzConnecting = true
+                                            isListenBrainzAuthenticating = true
                                             listenBrainzErrorMessage = null
                                             lifecycleScope.launch {
                                                 val result = authClient.loginListenBrainz(
@@ -362,11 +365,11 @@ class MainActivity : ComponentActivity() {
                                                 )
                                                 result.fold(
                                                     onSuccess = {
-                                                        isListenBrainzConnecting = false
+                                                        isListenBrainzAuthenticating = false
                                                         dispatch(RouteEvent.ListenBrainzConnected)
                                                     },
                                                     onFailure = { error ->
-                                                        isListenBrainzConnecting = false
+                                                        isListenBrainzAuthenticating = false
                                                         if (error is UnauthorizedException) {
                                                             dispatch(RouteEvent.SessionMissing)
                                                         } else {
@@ -383,6 +386,7 @@ class MainActivity : ComponentActivity() {
                                     Route.Home -> HomeScreen(
                                         state = routeState,
                                         session = sessionStore.getSession(),
+                                        repository = homeFeedRepository,
                                         onEvent = ::dispatch,
                                         onDisconnect = {
                                             sessionStore.signOut()
@@ -428,7 +432,7 @@ class MainActivity : ComponentActivity() {
         val uri = intent?.data ?: return
         val payload = authClient.parseConnectionUri(uri) ?: return
 
-        isAuthenticating = true
+        isExchangingCode = true
         authErrorMessage = null
         dispatch(RouteEvent.DeepLinkArrived)
 
@@ -442,7 +446,7 @@ class MainActivity : ComponentActivity() {
                     val lbResult =
                         authClient.fetchListenBrainzStatus(session.serverUrl, session.token)
                     val lbCreds = lbResult.getOrNull()
-                    isAuthenticating = false
+                    isExchangingCode = false
                     dispatch(
                         RouteEvent.SessionEstablished(
                             lastFmCredentials = creds,
@@ -451,7 +455,7 @@ class MainActivity : ComponentActivity() {
                     )
                 },
                 onFailure = { error ->
-                    isAuthenticating = false
+                    isExchangingCode = false
                     authErrorMessage = error.message ?: getString(R.string.connect_auth_failed)
                 }
             )

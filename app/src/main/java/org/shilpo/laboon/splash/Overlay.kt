@@ -1,4 +1,4 @@
-package org.shilpo.laboon.ui.design.splash
+package org.shilpo.laboon.splash
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -24,8 +23,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import kotlinx.coroutines.isActive
-
-val LocalAnimationsDisabled = compositionLocalOf { false }
 
 @Composable
 fun Overlay(
@@ -46,8 +43,7 @@ fun Overlay(
         val resolvedPrimaryColor = remember(primaryColor, colorScheme) {
             primaryColor ?: colorScheme.primary
         }
-        val animationsDisabled = LocalAnimationsDisabled.current
-        var showSplash by remember { mutableStateOf(!animationsDisabled) }
+        var showSplash by remember { mutableStateOf(true) }
         val currentOnBurstStart by rememberUpdatedState(onBurstStart)
         val currentOnDismiss by rememberUpdatedState(onDismiss)
         var isInitialized by remember { mutableStateOf(false) }
