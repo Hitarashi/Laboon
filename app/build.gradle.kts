@@ -50,6 +50,7 @@ dependencies {
     implementation(libs.coil.network.okhttp)
     implementation(libs.lottie.compose)
     testImplementation(libs.junit)
+    testImplementation(libs.json)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
 }

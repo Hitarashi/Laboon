@@ -2,6 +2,7 @@ package org.shilpo.laboon.auth
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.core.content.edit
 
 class SharedPreferencesKeyValueStore(context: Context) : KeyValueStore {
 
@@ -20,23 +21,23 @@ class SharedPreferencesKeyValueStore(context: Context) : KeyValueStore {
     override fun contains(key: String): Boolean = prefs.contains(key)
 
     override fun putString(key: String, value: String) {
-        prefs.edit().putString(key, value).apply()
+        prefs.edit { putString(key, value) }
     }
 
     override fun putLong(key: String, value: Long) {
-        prefs.edit().putLong(key, value).apply()
+        prefs.edit { putLong(key, value) }
     }
 
     override fun putBoolean(key: String, value: Boolean) {
-        prefs.edit().putBoolean(key, value).apply()
+        prefs.edit { putBoolean(key, value) }
     }
 
     override fun remove(key: String) {
-        prefs.edit().remove(key).apply()
+        prefs.edit { remove(key) }
     }
 
     override fun clear() {
-        prefs.edit().clear().apply()
+        prefs.edit { clear() }
     }
 
     private companion object {

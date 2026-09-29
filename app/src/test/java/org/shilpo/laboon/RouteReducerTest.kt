@@ -7,6 +7,7 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.shilpo.laboon.auth.LastFmCredentials
+import org.shilpo.laboon.auth.ListenBrainzCredentials
 import org.shilpo.laboon.navigation.MainTab
 import org.shilpo.laboon.navigation.Route
 import org.shilpo.laboon.navigation.RouteDirection
@@ -34,6 +35,18 @@ private val unconnectedCredentials = LastFmCredentials(
     apiSecret = "as",
 )
 
+private val connectedLbCredentials = ListenBrainzCredentials(
+    connected = true,
+    username = "listener",
+    token = "lb-token",
+)
+
+private val unconnectedLbCredentials = ListenBrainzCredentials(
+    connected = false,
+    username = "listener",
+    token = null,
+)
+
 class RouteReducerTest {
 
     @Test
@@ -45,33 +58,40 @@ class RouteReducerTest {
             for (permissionsCompleted in BOOLEANS) {
                 for (permissionsSatisfied in BOOLEANS) {
                     for (credentials in CREDENTIAL_VARIANTS) {
-                        combinations++
-                        val event = RouteEvent.AppStarted(
-                            hasSession = hasSession,
-                            permissionsCompleted = permissionsCompleted,
-                            permissionsSatisfied = permissionsSatisfied,
-                            lastFmCredentials = credentials,
-                        )
-                        val state = reduce(RouteState(), event)
-                        val settled = permissionsCompleted && permissionsSatisfied
-                        val expected = when {
-                            !settled -> if (hasSession) Route.Permissions else Route.Welcome
-                            !hasSession -> Route.Welcome
-                            credentials?.connected == true -> Route.Home
-                            else -> Route.LastFm(credentials)
+                        for (lbCredentials in LB_CREDENTIAL_VARIANTS) {
+                            combinations++
+                            val event = RouteEvent.AppStarted(
+                                hasSession = hasSession,
+                                permissionsCompleted = permissionsCompleted,
+                                permissionsSatisfied = permissionsSatisfied,
+                                lastFmCredentials = credentials,
+                                listenBrainzCredentials = lbCredentials,
+                            )
+                            val state = reduce(RouteState(), event)
+                            val settled = permissionsCompleted && permissionsSatisfied
+                            val expected = when {
+                                !settled -> if (hasSession) Route.Permissions else Route.Welcome
+                                !hasSession -> Route.Welcome
+                                credentials?.connected != true -> Route.LastFm(credentials)
+                                lbCredentials?.connected != true -> Route.ListenBrainz(lbCredentials)
+                                else -> Route.Home
+                            }
+                            val label = "session=$hasSession completed=$permissionsCompleted " +
+                                    "satisfied=$permissionsSatisfied creds=${credentials?.connected} lb=${lbCredentials?.connected}"
+                            results += "$label -> $state.current"
+                            assertEquals(label, expected, state.current)
+                            assertTrue(
+                                "$label must not carry a backstack",
+                                state.backStack.isEmpty()
+                            )
                         }
-                        val label = "session=$hasSession completed=$permissionsCompleted " +
-                                "satisfied=$permissionsSatisfied creds=${credentials?.connected}"
-                        results += "$label -> $state.current"
-                        assertEquals(label, expected, state.current)
-                        assertTrue("$label must not carry a backstack", state.backStack.isEmpty())
                     }
                 }
             }
         }
 
-        assertEquals(24, combinations)
-        assertEquals(24, results.size)
+        assertEquals(72, combinations)
+        assertEquals(72, results.size)
     }
 
     @Test
@@ -83,6 +103,7 @@ class RouteReducerTest {
                 permissionsCompleted = false,
                 permissionsSatisfied = false,
                 lastFmCredentials = null,
+                listenBrainzCredentials = null,
             ),
         )
         assertEquals(Route.Welcome, state.current)
@@ -101,7 +122,11 @@ class RouteReducerTest {
     fun permissionsCompleted_withoutSession_pushesConnect() {
         val state = reduce(
             RouteState(current = Route.Permissions, backStack = listOf(Route.Welcome)),
-            RouteEvent.PermissionsCompleted(hasSession = false, lastFmCredentials = null),
+            RouteEvent.PermissionsCompleted(
+                hasSession = false,
+                lastFmCredentials = null,
+                listenBrainzCredentials = null,
+            ),
         )
 
         assertEquals(Route.Connect, state.current)
@@ -115,6 +140,7 @@ class RouteReducerTest {
             RouteEvent.PermissionsCompleted(
                 hasSession = true,
                 lastFmCredentials = connectedCredentials,
+                listenBrainzCredentials = connectedLbCredentials,
             ),
         )
 
@@ -129,10 +155,26 @@ class RouteReducerTest {
             RouteEvent.PermissionsCompleted(
                 hasSession = true,
                 lastFmCredentials = unconnectedCredentials,
+                listenBrainzCredentials = connectedLbCredentials,
             ),
         )
 
         assertEquals(Route.LastFm(unconnectedCredentials), state.current)
+        assertEquals(emptyList<Route>(), state.backStack)
+    }
+
+    @Test
+    fun permissionsCompleted_withSession_connectedLastFm_butDisconnectedListenBrainz_landsOnListenBrainz() {
+        val state = reduce(
+            RouteState(current = Route.Permissions, backStack = listOf(Route.Welcome)),
+            RouteEvent.PermissionsCompleted(
+                hasSession = true,
+                lastFmCredentials = connectedCredentials,
+                listenBrainzCredentials = unconnectedLbCredentials,
+            ),
+        )
+
+        assertEquals(Route.ListenBrainz(unconnectedLbCredentials), state.current)
         assertEquals(emptyList<Route>(), state.backStack)
     }
 
@@ -180,7 +222,10 @@ class RouteReducerTest {
     fun canGoBack_isFalseAtHomeAndTrueOnPushedRoutes() {
         val home = reduce(
             RouteState(),
-            RouteEvent.SessionEstablished(connectedCredentials),
+            RouteEvent.SessionEstablished(
+                lastFmCredentials = connectedCredentials,
+                listenBrainzCredentials = connectedLbCredentials,
+            ),
         )
         assertEquals(Route.Home, home.current)
         assertFalse(home.canGoBack)
@@ -218,7 +263,13 @@ class RouteReducerTest {
         )
         assertEquals(Route.Connect, onConnect.current)
 
-        val onHome = reduce(RouteState(), RouteEvent.SessionEstablished(connectedCredentials))
+        val onHome = reduce(
+            RouteState(),
+            RouteEvent.SessionEstablished(
+                lastFmCredentials = connectedCredentials,
+                listenBrainzCredentials = connectedLbCredentials,
+            ),
+        )
         val stillHome = reduce(onHome, RouteEvent.DeepLinkArrived)
         assertEquals(Route.Home, stillHome.current)
     }
@@ -230,7 +281,13 @@ class RouteReducerTest {
             backStack = listOf(Route.Welcome, Route.Connect),
         )
         val arrived = reduce(withBackstack, RouteEvent.DeepLinkArrived)
-        val established = reduce(arrived, RouteEvent.SessionEstablished(connectedCredentials))
+        val established = reduce(
+            arrived,
+            RouteEvent.SessionEstablished(
+                lastFmCredentials = connectedCredentials,
+                listenBrainzCredentials = connectedLbCredentials,
+            ),
+        )
 
         assertEquals(Route.Home, established.current)
         assertEquals(listOf(Route.Welcome, Route.Connect), established.backStack)
@@ -240,7 +297,13 @@ class RouteReducerTest {
     @Test
     fun deepLinkArrived_thenSessionEstablished_landsOnHomeFromABareStack() {
         val arrived = reduce(RouteState(), RouteEvent.DeepLinkArrived)
-        val established = reduce(arrived, RouteEvent.SessionEstablished(connectedCredentials))
+        val established = reduce(
+            arrived,
+            RouteEvent.SessionEstablished(
+                lastFmCredentials = connectedCredentials,
+                listenBrainzCredentials = connectedLbCredentials,
+            ),
+        )
 
         assertEquals(Route.Home, established.current)
         assertEquals(emptyList<Route>(), established.backStack)
@@ -249,9 +312,29 @@ class RouteReducerTest {
     @Test
     fun deepLinkArrived_thenSessionEstablished_withoutLastFm_landsOnLastFm() {
         val arrived = reduce(RouteState(), RouteEvent.DeepLinkArrived)
-        val established = reduce(arrived, RouteEvent.SessionEstablished(unconnectedCredentials))
+        val established = reduce(
+            arrived,
+            RouteEvent.SessionEstablished(
+                lastFmCredentials = unconnectedCredentials,
+                listenBrainzCredentials = connectedLbCredentials,
+            ),
+        )
 
         assertEquals(Route.LastFm(unconnectedCredentials), established.current)
+    }
+
+    @Test
+    fun deepLinkArrived_thenSessionEstablished_withLastFm_withoutListenBrainz_landsOnListenBrainz() {
+        val arrived = reduce(RouteState(), RouteEvent.DeepLinkArrived)
+        val established = reduce(
+            arrived,
+            RouteEvent.SessionEstablished(
+                lastFmCredentials = connectedCredentials,
+                listenBrainzCredentials = unconnectedLbCredentials,
+            ),
+        )
+
+        assertEquals(Route.ListenBrainz(unconnectedLbCredentials), established.current)
     }
 
     @Test
@@ -274,21 +357,51 @@ class RouteReducerTest {
     }
 
     @Test
-    fun lastFmConnected_landsOnHome() {
+    fun lastFmConnected_withDisconnectedListenBrainz_pushesListenBrainz() {
         val state = reduce(
             RouteState(current = Route.LastFm(unconnectedCredentials)),
-            RouteEvent.LastFmConnected,
+            RouteEvent.LastFmConnected(unconnectedLbCredentials),
+        )
+        assertEquals(Route.ListenBrainz(unconnectedLbCredentials), state.current)
+        assertEquals(listOf(Route.LastFm(unconnectedCredentials)), state.backStack)
+    }
+
+    @Test
+    fun lastFmConnected_withConnectedListenBrainz_landsOnHome() {
+        val state = reduce(
+            RouteState(current = Route.LastFm(unconnectedCredentials)),
+            RouteEvent.LastFmConnected(connectedLbCredentials),
         )
         assertEquals(Route.Home, state.current)
+        assertEquals(emptyList<Route>(), state.backStack)
+    }
+
+    @Test
+    fun listenBrainzConnected_landsOnHome() {
+        val state = reduce(
+            RouteState(
+                current = Route.ListenBrainz(unconnectedLbCredentials),
+                backStack = listOf(Route.LastFm(null)),
+            ),
+            RouteEvent.ListenBrainzConnected,
+        )
+        assertEquals(Route.Home, state.current)
+        assertEquals(emptyList<Route>(), state.backStack)
     }
 
     @Test
     fun sessionMissing_landsOnWelcome() {
         val state = reduce(
-            RouteState(current = Route.LastFm(null), backStack = listOf(Route.Connect)),
+            RouteState(
+                current = Route.LastFm(null),
+                backStack = listOf(Route.Connect),
+                settingsVisible = true
+            ),
             RouteEvent.SessionMissing,
         )
         assertEquals(Route.Welcome, state.current)
+        assertEquals(emptyList<Route>(), state.backStack)
+        assertEquals(false, state.settingsVisible)
     }
 
     @Test
@@ -297,7 +410,11 @@ class RouteReducerTest {
         repeat(5) {
             state = reduce(
                 state,
-                RouteEvent.PermissionsCompleted(hasSession = false, lastFmCredentials = null),
+                RouteEvent.PermissionsCompleted(
+                    hasSession = false,
+                    lastFmCredentials = null,
+                    listenBrainzCredentials = null,
+                ),
             )
             assertTrue(state.backStack.zipWithNext().none { (a, b) -> a == b })
             assertFalse(state.backStack.lastOrNull() == state.current)
@@ -310,7 +427,11 @@ class RouteReducerTest {
     fun push_ofTheCurrentRoute_isANoOp() {
         val onConnect = reduce(
             RouteState(current = Route.Connect, backStack = listOf(Route.Permissions)),
-            RouteEvent.PermissionsCompleted(hasSession = false, lastFmCredentials = null),
+            RouteEvent.PermissionsCompleted(
+                hasSession = false,
+                lastFmCredentials = null,
+                listenBrainzCredentials = null,
+            ),
         )
 
         assertEquals(Route.Connect, onConnect.current)
@@ -329,7 +450,11 @@ class RouteReducerTest {
 
         val next = reduce(
             start,
-            RouteEvent.PermissionsCompleted(hasSession = true, lastFmCredentials = null)
+            RouteEvent.PermissionsCompleted(
+                hasSession = true,
+                lastFmCredentials = null,
+                listenBrainzCredentials = null,
+            ),
         )
 
         assertEquals(Route.Permissions, start.current)
@@ -342,11 +467,18 @@ class RouteReducerTest {
     fun reduce_keepsBackStackConsistentWithCurrentAcrossTheWholeEventSurface() {
         val events = listOf(
             RouteEvent.OnboardingStarted,
-            RouteEvent.PermissionsCompleted(hasSession = false, lastFmCredentials = null),
+            RouteEvent.PermissionsCompleted(
+                hasSession = false,
+                lastFmCredentials = null,
+                listenBrainzCredentials = null,
+            ),
             RouteEvent.BackPressed,
             RouteEvent.BackPressed,
             RouteEvent.DeepLinkArrived,
-            RouteEvent.SessionEstablished(connectedCredentials),
+            RouteEvent.SessionEstablished(
+                lastFmCredentials = connectedCredentials,
+                listenBrainzCredentials = connectedLbCredentials,
+            ),
             RouteEvent.TabSelected(MainTab.Search),
             RouteEvent.SettingsOpened,
             RouteEvent.BackPressed,
@@ -381,10 +513,21 @@ class RouteReducerTest {
     fun routeTransitionDirection_matchesTheOnboardingBackPairs() {
         assertEquals(RouteDirection.Backward, transitionDirection(Route.Permissions, Route.Welcome))
         assertEquals(RouteDirection.Backward, transitionDirection(Route.Connect, Route.Permissions))
+        assertEquals(
+            RouteDirection.Backward,
+            transitionDirection(Route.ListenBrainz(null), Route.LastFm(null))
+        )
         assertEquals(RouteDirection.Forward, transitionDirection(Route.Welcome, Route.Permissions))
         assertEquals(RouteDirection.Forward, transitionDirection(Route.Permissions, Route.Connect))
         assertEquals(RouteDirection.Forward, transitionDirection(Route.Welcome, Route.Connect))
-        assertEquals(RouteDirection.Forward, transitionDirection(Route.LastFm(null), Route.Home))
+        assertEquals(
+            RouteDirection.Forward,
+            transitionDirection(Route.LastFm(null), Route.ListenBrainz(null))
+        )
+        assertEquals(
+            RouteDirection.Forward,
+            transitionDirection(Route.ListenBrainz(null), Route.Home)
+        )
         assertEquals(RouteDirection.Forward, transitionDirection(Route.Home, Route.Welcome))
     }
 
@@ -416,6 +559,15 @@ class RouteReducerTest {
                 currentTab = MainTab.Library,
                 settingsVisible = true
             ),
+            RouteState(
+                current = Route.ListenBrainz(connectedLbCredentials),
+                backStack = listOf(Route.Connect)
+            ),
+            RouteState(
+                current = Route.ListenBrainz(null),
+                currentTab = MainTab.Search,
+                settingsVisible = false,
+            ),
             RouteState(current = Route.Home, currentTab = MainTab.Search, settingsVisible = true),
         )
 
@@ -436,5 +588,7 @@ class RouteReducerTest {
         val BOOLEANS = listOf(true, false)
         val CREDENTIAL_VARIANTS =
             listOf(null, connectedCredentials, unconnectedCredentials)
+        val LB_CREDENTIAL_VARIANTS =
+            listOf(null, connectedLbCredentials, unconnectedLbCredentials)
     }
 }

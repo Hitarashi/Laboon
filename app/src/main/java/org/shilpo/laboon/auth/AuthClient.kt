@@ -13,6 +13,8 @@ import java.net.URL
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 
+class UnauthorizedException(message: String = "Session expired or revoked") : Exception(message)
+
 class AuthClient(
     private val sessionStore: SessionStore,
 ) {
@@ -166,6 +168,56 @@ class AuthClient(
             }
         }
 
+    suspend fun validateSession(serverUrl: String, token: String): Result<AuthUser> =
+        withContext(Dispatchers.IO) {
+            try {
+                val cleanUrl = serverUrl.trimEnd('/')
+                val endpoint = URL("$cleanUrl/api/v1/auth/me")
+                val connection = (endpoint.openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 15000
+                    readTimeout = 15000
+                    setRequestProperty("Authorization", "Bearer $token")
+                    setRequestProperty("Accept", "application/json")
+                }
+
+                val responseCode = connection.responseCode
+                if (responseCode == 401) {
+                    sessionStore.signOut()
+                    return@withContext Result.failure(UnauthorizedException())
+                }
+                if (responseCode !in 200..299) {
+                    return@withContext Result.failure(Exception("Session check failed ($responseCode)"))
+                }
+
+                val responseText = connection.inputStream.let {
+                    BufferedReader(InputStreamReader(it, StandardCharsets.UTF_8)).use { reader ->
+                        reader.readText()
+                    }
+                }
+
+                val json = JSONObject(responseText)
+                val userJson = json.optJSONObject("user")
+                val user = if (userJson != null) {
+                    AuthUser(
+                        telegramId = userJson.getLong("telegram_id"),
+                        name = userJson.optString("name").normalizedText(),
+                        username = userJson.optString("username").normalizedText(),
+                        firstName = userJson.optString("first_name").normalizedText(),
+                        lastName = userJson.optString("last_name").normalizedText(),
+                    )
+                } else {
+                    sessionStore.getSession()?.user ?: return@withContext Result.failure(
+                        Exception("Missing user object in response")
+                    )
+                }
+
+                Result.success(user)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+
     suspend fun fetchLastFmStatus(serverUrl: String, token: String): Result<LastFmCredentials> =
         withContext(Dispatchers.IO) {
             try {
@@ -180,6 +232,10 @@ class AuthClient(
                 }
 
                 val responseCode = connection.responseCode
+                if (responseCode == 401) {
+                    sessionStore.signOut()
+                    return@withContext Result.failure(UnauthorizedException())
+                }
                 if (responseCode !in 200..299) {
                     return@withContext Result.failure(Exception("Failed to check Last.fm status: $responseCode"))
                 }
@@ -248,6 +304,11 @@ class AuthClient(
                 }
             }.orEmpty()
 
+            if (responseCode == 401) {
+                sessionStore.signOut()
+                return@withContext Result.failure(UnauthorizedException())
+            }
+
             if (responseCode !in 200..299) {
                 val message = try {
                     val errJson = JSONObject(responseText)
@@ -271,6 +332,122 @@ class AuthClient(
             ).normalized()
 
             sessionStore.saveLastFmCredentials(credentials)
+            Result.success(credentials)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun fetchListenBrainzStatus(
+        serverUrl: String,
+        token: String,
+    ): Result<ListenBrainzCredentials> = withContext(Dispatchers.IO) {
+        try {
+            val cleanUrl = serverUrl.trimEnd('/')
+            val endpoint = URL("$cleanUrl/api/v1/integrations/listenbrainz/status")
+            val connection = (endpoint.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 15000
+                readTimeout = 15000
+                setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("Accept", "application/json")
+            }
+
+            val responseCode = connection.responseCode
+            if (responseCode == 401) {
+                sessionStore.signOut()
+                return@withContext Result.failure(UnauthorizedException())
+            }
+            if (responseCode !in 200..299) {
+                return@withContext Result.failure(Exception("Failed to check ListenBrainz status: $responseCode"))
+            }
+
+            val responseText = connection.inputStream.let {
+                BufferedReader(InputStreamReader(it, StandardCharsets.UTF_8)).use { reader ->
+                    reader.readText()
+                }
+            }
+
+            val json = JSONObject(responseText)
+            val credentials = ListenBrainzCredentials(
+                connected = json.optBoolean("connected", false),
+                username = json.optString("username").normalizedText(),
+                token = json.optString("token").normalizedText(),
+            ).normalized()
+
+            sessionStore.saveListenBrainzCredentials(credentials)
+            Result.success(credentials)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun loginListenBrainz(
+        serverUrl: String,
+        token: String,
+        listenbrainzToken: String,
+    ): Result<ListenBrainzCredentials> = withContext(Dispatchers.IO) {
+        try {
+            val cleanUrl = serverUrl.trimEnd('/')
+            val endpoint = URL("$cleanUrl/api/v1/integrations/listenbrainz/login")
+            val connection = (endpoint.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 15000
+                readTimeout = 15000
+                doOutput = true
+                setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Accept", "application/json")
+            }
+
+            val requestJson = JSONObject().apply {
+                put("token", listenbrainzToken)
+            }
+
+            OutputStreamWriter(connection.outputStream, StandardCharsets.UTF_8).use { writer ->
+                writer.write(requestJson.toString())
+                writer.flush()
+            }
+
+            val responseCode = connection.responseCode
+            val stream = if (responseCode in 200..299) {
+                connection.inputStream
+            } else {
+                connection.errorStream
+            }
+
+            val responseText = stream?.let {
+                BufferedReader(InputStreamReader(it, StandardCharsets.UTF_8)).use { reader ->
+                    reader.readText()
+                }
+            }.orEmpty()
+
+            if (responseCode == 401) {
+                sessionStore.signOut()
+                return@withContext Result.failure(UnauthorizedException())
+            }
+
+            if (responseCode !in 200..299) {
+                val message = try {
+                    val errJson = JSONObject(responseText)
+                    errJson.optString("message").ifBlank {
+                        errJson.optString("error")
+                            .ifBlank { "ListenBrainz authentication failed ($responseCode)" }
+                    }
+                } catch (_: Exception) {
+                    "ListenBrainz authentication failed ($responseCode)"
+                }
+                return@withContext Result.failure(Exception(message))
+            }
+
+            val json = JSONObject(responseText)
+            val credentials = ListenBrainzCredentials(
+                connected = json.optBoolean("connected", true),
+                username = json.optString("username").normalizedText(),
+                token = json.optString("token").normalizedText() ?: listenbrainzToken,
+            ).normalized()
+
+            sessionStore.saveListenBrainzCredentials(credentials)
             Result.success(credentials)
         } catch (e: Exception) {
             Result.failure(e)

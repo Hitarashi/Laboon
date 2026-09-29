@@ -92,8 +92,8 @@ fun rememberPredictiveBackState(enabled: Boolean, onBack: () -> Unit): Predictiv
 fun PredictiveBackSurface(
     state: PredictiveBackState,
     spec: PredictiveBackSpec,
-    active: Boolean = true,
     modifier: Modifier = Modifier,
+    active: Boolean = true,
     content: @Composable (Modifier) -> Unit,
 ) {
     val maxShiftPx = with(LocalDensity.current) { spec.shiftDp.dp.toPx() }

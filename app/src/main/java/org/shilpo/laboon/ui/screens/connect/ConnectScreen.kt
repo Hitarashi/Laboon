@@ -4,7 +4,6 @@ package org.shilpo.laboon.ui.screens.connect
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,6 +21,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import org.shilpo.laboon.R
 import org.shilpo.laboon.ui.design.LandingColumn
 import org.shilpo.laboon.ui.design.LandingReveal
@@ -31,12 +31,12 @@ import org.shilpo.laboon.ui.design.ScreenScaffold
 
 private fun openTelegramApp(context: Context) {
     val telegramIntent = Intent(Intent.ACTION_VIEW).apply {
-        data = Uri.parse("tg://")
+        data = "tg://".toUri()
         flags = Intent.FLAG_ACTIVITY_NEW_TASK
     }
     val fallbackIntent = Intent(
         Intent.ACTION_VIEW,
-        Uri.parse("https://telegram.org"),
+        "https://telegram.org".toUri(),
     )
     try {
         context.startActivity(telegramIntent)

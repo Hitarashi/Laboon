@@ -1,12 +1,13 @@
 package org.shilpo.laboon.permissions
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
 
 internal interface PermissionState {
     fun isSatisfied(spec: PermissionSpec): Boolean
@@ -27,18 +28,19 @@ internal class AndroidPermissionState(
         } ?: false
     }
 
+    @SuppressLint("BatteryLife")
     override fun request(spec: PermissionSpec) {
         when (spec.id) {
             PermissionIds.BATTERY -> openSettings(
                 Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                    data = Uri.parse("package:${context.packageName}")
+                    data = "package:${context.packageName}".toUri()
                 },
                 Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
             )
 
             PermissionIds.INSTALL -> openSettings(
                 Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
-                    data = Uri.parse("package:${context.packageName}")
+                    data = "package:${context.packageName}".toUri()
                 },
             )
 
@@ -63,7 +65,7 @@ internal class AndroidPermissionState(
             if (runCatching { context.startActivity(intent) }.isSuccess) return
         }
         val appDetails = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-            data = Uri.parse("package:${context.packageName}")
+            data = "package:${context.packageName}".toUri()
         }
         runCatching { context.startActivity(appDetails) }
     }

@@ -63,8 +63,8 @@ fun HomeScreen(
     state: RouteState,
     onEvent: (RouteEvent) -> Unit,
     session: AuthSession?,
-    credentials: LastFmCredentials? = null,
     modifier: Modifier = Modifier,
+    credentials: LastFmCredentials? = null,
     onDisconnect: () -> Unit = {},
 ) {
     val currentTab = state.currentTab

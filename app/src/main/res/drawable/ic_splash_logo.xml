@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:width="288dp"
     android:height="288dp"
     android:viewportWidth="288"
-    android:viewportHeight="288">
+    android:viewportHeight="288"
+    tools:ignore="VectorRaster">
     <group
         android:pivotX="0.0"
         android:pivotY="0.0"
