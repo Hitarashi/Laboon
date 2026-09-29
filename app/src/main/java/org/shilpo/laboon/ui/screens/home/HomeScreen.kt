@@ -24,7 +24,11 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonGroupDefaults
@@ -36,14 +40,12 @@ import androidx.compose.material3.FilledTonalToggleButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,13 +55,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
@@ -83,12 +87,16 @@ import org.shilpo.laboon.navigation.RouteState
 import org.shilpo.laboon.navigation.tabTransitionDirection
 import org.shilpo.laboon.ui.design.FloatingNavBar
 import org.shilpo.laboon.ui.design.FloatingNavBarClearance
+import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
+import org.shilpo.laboon.ui.design.LiquidGlassSurface
 import org.shilpo.laboon.ui.design.NavigationBarBottomPadding
 import org.shilpo.laboon.ui.design.PredictiveBackSpec
 import org.shilpo.laboon.ui.design.PredictiveBackSurface
 import org.shilpo.laboon.ui.design.SkeletonSegmentedList
 import org.shilpo.laboon.ui.design.SkeletonTrackCarousel
 import org.shilpo.laboon.ui.design.UserAvatar
+import org.shilpo.laboon.ui.design.liquidGlassBackdropProducer
+import org.shilpo.laboon.ui.design.rememberLiquidGlassBackdropState
 import org.shilpo.laboon.ui.design.rememberPredictiveBackState
 import org.shilpo.laboon.ui.design.userDisplayName
 import org.shilpo.laboon.ui.screens.library.LibraryScreen
@@ -188,6 +196,20 @@ fun HomeScreen(
         label = "settingsScrim",
     )
 
+    val liquidGlassBackdropState = rememberLiquidGlassBackdropState()
+    val liquidGlassBackdropLayer = rememberGraphicsLayer()
+    val homeScrollState = rememberLazyListState()
+    val isHomeScrolled by remember {
+        derivedStateOf {
+            homeScrollState.firstVisibleItemIndex > 0 || homeScrollState.firstVisibleItemScrollOffset > 16
+        }
+    }
+    val topBarCollapseProgress by animateFloatAsState(
+        targetValue = if (isHomeScrolled) 1f else 0f,
+        animationSpec = motionScheme.defaultSpatialSpec(),
+        label = "topBarCollapse",
+    )
+
     Box(modifier = modifier.fillMaxSize()) {
         PredictiveBackSurface(
             state = homeBackState,
@@ -196,7 +218,13 @@ fun HomeScreen(
         ) { tabSurface ->
             AnimatedContent(
                 targetState = currentTab,
-                modifier = tabSurface.fillMaxSize(),
+                modifier = tabSurface
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
+                    .liquidGlassBackdropProducer(
+                        liquidGlassBackdropState,
+                        liquidGlassBackdropLayer
+                    ),
                 transitionSpec = {
                     val forward =
                         tabTransitionDirection(initialState, targetState) == RouteDirection.Forward
@@ -221,6 +249,7 @@ fun HomeScreen(
                         onLoadTopTracks = loadTopTracks,
                         onLoadTrending = loadTrending,
                         onLoadWeeklyPicks = loadWeeklyPicks,
+                        lazyListState = homeScrollState,
                         modifier = Modifier.fillMaxSize(),
                     )
 
@@ -238,11 +267,26 @@ fun HomeScreen(
         FloatingNavBar(
             selectedTab = currentTab,
             onTabSelected = { onEvent(RouteEvent.TabSelected(it)) },
+            backdropState = liquidGlassBackdropState,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
                 .padding(start = 16.dp, end = 16.dp, bottom = NavigationBarBottomPadding),
         )
+
+        AnimatedVisibility(
+            visible = currentTab == MainTab.Home,
+            enter = fadeIn(animationSpec = motionScheme.defaultEffectsSpec()),
+            exit = fadeOut(animationSpec = motionScheme.defaultEffectsSpec()),
+            modifier = Modifier.align(Alignment.TopCenter),
+        ) {
+            HomeTopBar(
+                session = session,
+                onOpenSettings = { onEvent(RouteEvent.SettingsOpened) },
+                backdropState = liquidGlassBackdropState,
+                collapseProgress = topBarCollapseProgress,
+            )
+        }
 
         if (showSettings || scrimAlpha > 0.01f) {
             Box(
@@ -283,11 +327,93 @@ fun HomeScreen(
 }
 
 @Composable
+private fun HomeTopBar(
+    session: AuthSession?,
+    onOpenSettings: () -> Unit,
+    backdropState: LiquidGlassBackdropState?,
+    modifier: Modifier = Modifier,
+    collapseProgress: Float = 0f,
+) {
+    val topPadding = (16 - 8 * collapseProgress).dp
+    val bottomPadding = (20 - 8 * collapseProgress).dp
+    val iconSize = (42 - 8 * collapseProgress).dp
+    val avatarSize = (48 - 10 * collapseProgress).dp
+    val iconSpacing = (12 - 2 * collapseProgress).dp
+    val titleFontSize = (25 - 5 * collapseProgress).sp
+    val titleLineHeight = (30 - 6 * collapseProgress).sp
+    val subtitleFontSize = (14 - 2 * collapseProgress).sp
+
+    LiquidGlassSurface(
+        modifier = modifier.fillMaxWidth(),
+        backdropState = backdropState,
+        shape = RectangleShape,
+        cornerRadius = 0.dp,
+        topRadius = 0.dp,
+        bottomRadius = 0.dp,
+        tintColor = MaterialTheme.colorScheme.background,
+        tintAlpha = 0.85f,
+        shadowElevation = 0.dp,
+        refractIntensity = 0f,
+        thicknessDp = 0.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(start = 16.dp, end = 16.dp, top = topPadding, bottom = bottomPadding),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(iconSpacing),
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.app_icon_small),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(iconSize),
+                )
+                Column {
+                    Text(
+                        text = stringResource(R.string.home_title),
+                        style = MaterialTheme.typography.titleLargeEmphasized.copy(
+                            fontSize = titleFontSize,
+                            lineHeight = titleLineHeight,
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = stringResource(
+                            R.string.home_welcome,
+                            userDisplayName(session?.user)
+                                ?: stringResource(R.string.home_user_fallback),
+                        ),
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = subtitleFontSize,
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            UserAvatar(
+                session = session,
+                onClick = onOpenSettings,
+                size = avatarSize,
+                modifier = Modifier.padding(end = 4.dp),
+            )
+        }
+    }
+}
+
+@Composable
 private fun HomeContent(
     session: AuthSession?,
     onOpenSettings: () -> Unit,
     onNavigate: (MainTab) -> Unit,
     modifier: Modifier = Modifier,
+    lazyListState: LazyListState = rememberLazyListState(),
     feedState: HomeFeedState = HomeFeedDefaults.defaultFeed,
     onLoadTopTracks: () -> Unit = {},
     onLoadTrending: () -> Unit = {},
@@ -296,69 +422,26 @@ private fun HomeContent(
     onArtistClick: (HomeArtist) -> Unit = {},
     onAlbumClick: (HomeAlbum) -> Unit = {},
 ) {
-    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val motionScheme = MaterialTheme.motionScheme
     var isGlobalTrending by remember { mutableStateOf(false) }
 
-    Scaffold(
-        modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
-        topBar = {
-            TopAppBar(
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.app_icon_small),
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(34.dp),
-                        )
-                        Column {
-                            Text(
-                                text = stringResource(R.string.home_title),
-                                style = MaterialTheme.typography.titleLargeEmphasized,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                            Text(
-                                text = stringResource(
-                                    R.string.home_welcome,
-                                    userDisplayName(session?.user)
-                                        ?: stringResource(R.string.home_user_fallback),
-                                ),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                },
-                actions = {
-                    UserAvatar(
-                        session = session,
-                        onClick = onOpenSettings,
-                        modifier = Modifier.padding(end = 12.dp),
-                    )
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                    scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                ),
-                scrollBehavior = scrollBehavior,
-            )
-        },
-        containerColor = MaterialTheme.colorScheme.background,
-    ) { innerPadding ->
-        val navBarBottomInset =
-            WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-        val bottomClearance = FloatingNavBarClearance + navBarBottomInset + 16.dp
+    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val topClearance = statusBarTop + 84.dp
+    val navBarBottomInset =
+        WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val bottomClearance = FloatingNavBarClearance + navBarBottomInset + 16.dp
 
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
         if (feedState.isAllEmpty && !feedState.isInitialLoading && feedState.regionalTrending.status == SectionLoadState.LOADED) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(
-                        top = innerPadding.calculateTopPadding() + 8.dp,
+                        top = topClearance + 8.dp,
                         bottom = bottomClearance,
                     )
                     .padding(horizontal = 24.dp),
@@ -421,9 +504,10 @@ private fun HomeContent(
             }
         } else {
             LazyColumn(
+                state = lazyListState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(
-                    top = innerPadding.calculateTopPadding() + 8.dp,
+                    top = topClearance + 8.dp,
                     bottom = bottomClearance,
                 ),
                 verticalArrangement = Arrangement.spacedBy(28.dp),

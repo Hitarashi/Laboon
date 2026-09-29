@@ -24,7 +24,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ShortNavigationBar
 import androidx.compose.material3.ShortNavigationBarArrangement
 import androidx.compose.material3.ShortNavigationBarItem
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -51,6 +50,7 @@ fun FloatingNavBar(
     onTabSelected: (MainTab) -> Unit,
     modifier: Modifier = Modifier,
     tabs: List<MainTab> = MainTab.entries,
+    backdropState: LiquidGlassBackdropState? = null,
 ) {
     val motionScheme = MaterialTheme.motionScheme
 
@@ -60,15 +60,15 @@ fun FloatingNavBar(
             .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Horizontal)),
         contentAlignment = Alignment.Center,
     ) {
-        Surface(
+        LiquidGlassSurface(
             modifier = Modifier
                 .widthIn(max = NavigationBarMaxWidth)
                 .fillMaxWidth()
                 .height(NavigationBarHeight),
+            backdropState = backdropState,
             shape = RoundedCornerShape(32.dp),
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            tonalElevation = 3.dp,
-            shadowElevation = 6.dp,
+            cornerRadius = 32.dp,
+            shadowElevation = 8.dp,
         ) {
             ShortNavigationBar(
                 modifier = Modifier.fillMaxSize(),
