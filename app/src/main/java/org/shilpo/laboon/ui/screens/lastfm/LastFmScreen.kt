@@ -2,43 +2,25 @@
 
 package org.shilpo.laboon.ui.screens.lastfm
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,16 +40,19 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentType
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
 import org.shilpo.laboon.R
-import org.shilpo.laboon.data.auth.LastFmCredentials
+import org.shilpo.laboon.auth.LastFmCredentials
+import org.shilpo.laboon.ui.design.LandingColumn
+import org.shilpo.laboon.ui.design.LandingReveal
+import org.shilpo.laboon.ui.design.PrimaryActionZone
+import org.shilpo.laboon.ui.design.ScreenError
+import org.shilpo.laboon.ui.design.ScreenScaffold
+import org.shilpo.laboon.ui.design.mergeScreenErrors
 import kotlin.math.hypot
 import kotlin.math.sin
 
@@ -76,6 +61,7 @@ private val LastFmRed = Color(0xFFD51007)
 @Composable
 fun LastFmScreen(
     credentials: LastFmCredentials?,
+    hasSession: Boolean,
     modifier: Modifier = Modifier,
     isConnecting: Boolean = false,
     errorMessage: String? = null,
@@ -83,23 +69,21 @@ fun LastFmScreen(
 ) {
     val emptyErrorText = stringResource(R.string.lastfm_error_empty)
     var username by rememberSaveable(credentials?.username) {
-        mutableStateOf(
-            credentials?.username?.takeIf { !it.equals("null", ignoreCase = true) }.orEmpty()
-        )
+        mutableStateOf(credentials?.normalized()?.username.orEmpty())
     }
     var password by rememberSaveable { mutableStateOf("") }
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
-    var localError by remember { mutableStateOf<String?>(null) }
-
-    val displayError = errorMessage ?: localError
+    var localError by remember { mutableStateOf<ScreenError?>(null) }
+    val remoteError = remember(errorMessage) { errorMessage?.let(ScreenError::Remote) }
 
     LastFmContent(
         username = username,
         password = password,
         passwordVisible = passwordVisible,
         credentials = credentials,
+        hasSession = hasSession,
         isConnecting = isConnecting,
-        errorMessage = displayError,
+        error = mergeScreenErrors(remote = remoteError, local = localError),
         onUsernameChange = {
             username = it
             localError = null
@@ -110,12 +94,13 @@ fun LastFmScreen(
         },
         onTogglePasswordVisibility = { passwordVisible = !passwordVisible },
         onConnect = {
-            val u = username.trim()
-            val p = password.trim()
-            if (u.isEmpty() || p.isEmpty()) {
-                localError = emptyErrorText
+            if (!hasSession) return@LastFmContent
+            val trimmedUsername = username.trim()
+            val trimmedPassword = password.trim()
+            if (trimmedUsername.isEmpty() || trimmedPassword.isEmpty()) {
+                localError = ScreenError.Validation(emptyErrorText)
             } else {
-                onConnect(u, p)
+                onConnect(trimmedUsername, trimmedPassword)
             }
         },
         modifier = modifier,
@@ -128,8 +113,9 @@ private fun LastFmContent(
     password: String,
     passwordVisible: Boolean,
     credentials: LastFmCredentials?,
+    hasSession: Boolean,
     isConnecting: Boolean,
-    errorMessage: String?,
+    error: ScreenError?,
     onUsernameChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
     onTogglePasswordVisibility: () -> Unit,
@@ -137,32 +123,10 @@ private fun LastFmContent(
     modifier: Modifier = Modifier,
 ) {
     val keyboardController = LocalSoftwareKeyboardController.current
-    var contentVisible by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        delay(100)
-        contentVisible = true
-    }
-
-    Surface(
-        modifier = modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding()
-                .imePadding()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp),
-        ) {
-            Spacer(modifier = Modifier.height(48.dp))
-
-            AnimatedVisibility(
-                visible = contentVisible,
-                enter = fadeIn() + slideInVertically { it / 4 },
-            ) {
+    ScreenScaffold(modifier = modifier) {
+        LandingColumn(imeAware = true, scrollable = true) {
+            LandingReveal {
                 Column {
                     Box(
                         modifier = Modifier
@@ -183,8 +147,7 @@ private fun LastFmContent(
 
                     Text(
                         text = stringResource(R.string.lastfm_title),
-                        style = MaterialTheme.typography.headlineLarge,
-                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.headlineLargeEmphasized,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
 
@@ -255,55 +218,14 @@ private fun LastFmContent(
             Spacer(modifier = Modifier.weight(1f))
             Spacer(modifier = Modifier.height(24.dp))
 
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                if (errorMessage != null) {
-                    Text(
-                        text = errorMessage,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.error,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-
-                Button(
+            if (hasSession) {
+                PrimaryActionZone(
+                    label = stringResource(R.string.lastfm_connect_button),
+                    busyLabel = stringResource(R.string.lastfm_connecting),
+                    isBusy = isConnecting,
                     onClick = onConnect,
-                    enabled = !isConnecting,
-                    shapes = ButtonDefaults.shapes(),
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = ButtonDefaults.LargeContentPadding,
-                ) {
-                    if (isConnecting) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center,
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                strokeWidth = 2.5.dp,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Text(
-                                text = stringResource(R.string.lastfm_connecting),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        }
-                    } else {
-                        Text(
-                            text = stringResource(R.string.lastfm_connect_button),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
-                }
+                    error = error,
+                )
             }
         }
     }

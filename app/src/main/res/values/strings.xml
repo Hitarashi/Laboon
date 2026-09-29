@@ -40,7 +40,7 @@
     <string name="permissions_grant">Grant</string>
     <string name="permissions_granted">Granted</string>
     <string name="permissions_continue">Continue</string>
-    <string name="permissions_skip">Skip</string>
+    <string name="permissions_blocked_hint">Grant these to continue: %1$s</string>
     <string name="permissions_notif_title">Notifications</string>
     <string name="permissions_notif_desc">Playback controls in notification shade and lock screen</string>
     <string name="permissions_storage_title">Music &amp; Storage</string>

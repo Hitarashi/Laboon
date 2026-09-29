@@ -23,7 +23,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.airbnb.lottie.LottieProperty
@@ -90,9 +89,8 @@ fun WelcomeScreen(
         ) {
             Text(
                 text = stringResource(id = R.string.app_name),
-                style = MaterialTheme.typography.headlineLarge.copy(
+                style = MaterialTheme.typography.headlineLargeEmphasized.copy(
                     fontSize = 36.sp,
-                    fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
                 ),
             )
@@ -100,7 +98,6 @@ fun WelcomeScreen(
             Text(
                 text = stringResource(id = R.string.welcome_tagline),
                 style = MaterialTheme.typography.headlineSmall.copy(
-                    fontSize = 24.sp,
                     color = MaterialTheme.colorScheme.onSurface,
                 ),
             )
@@ -122,9 +119,7 @@ fun WelcomeScreen(
             ) {
                 Text(
                     text = stringResource(id = R.string.welcome_lets_go),
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                    ),
+                    style = MaterialTheme.typography.titleMediumEmphasized,
                 )
             }
         }

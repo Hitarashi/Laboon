@@ -4,19 +4,18 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
-import org.shilpo.laboon.data.auth.AuthRepository
-import org.shilpo.laboon.data.auth.AuthSession
-import org.shilpo.laboon.data.auth.AuthSessionStore
-import org.shilpo.laboon.data.auth.LastFmCredentials
+import org.shilpo.laboon.auth.AuthClient
+import org.shilpo.laboon.auth.SessionStore
 
 class AuthPayloadTest {
 
+    private val authClient = AuthClient(SessionStore(FakeKeyValueStore()))
+
     @Test
     fun parsePayloadData_validJsonBase64_returnsPayload() {
-        val repository = AuthRepository(FakeAuthSessionStore())
-
         val sampleBase64 = "eyJzIjoiaHR0cHM6Ly9zdHJlYW0uZXhhbXBsZS5jb20iLCJjIjoiMTIzNDU2In0="
-        val payload = repository.parsePayloadData(sampleBase64)
+
+        val payload = authClient.parsePayloadData(sampleBase64)
 
         assertNotNull(payload)
         assertEquals("https://stream.example.com", payload?.serverUrl)
@@ -24,57 +23,161 @@ class AuthPayloadTest {
     }
 
     @Test
-    fun parsePayloadData_invalidBase64_returnsNull() {
-        val repository = AuthRepository(FakeAuthSessionStore())
+    fun parsePayloadData_urlSafeCharactersInTheServerUrl_arePreserved() {
+        val encoded = java.util.Base64.getEncoder().encodeToString(
+            """{"s":"https://s.example.com/a+b","c":"  7  "}""".toByteArray(),
+        )
 
-        val invalid = "not_valid_base64_json"
-        val payload = repository.parsePayloadData(invalid)
+        val payload = authClient.parsePayloadData(encoded)
 
-        assertNull(payload)
+        assertEquals("https://s.example.com/a+b", payload?.serverUrl)
+        assertEquals("7", payload?.code)
     }
 
     @Test
-    fun lastFmCredentials_nullUsername_isSanitized() {
-        val creds = LastFmCredentials(
-            connected = false,
-            username = "null",
-            sessionKey = "null",
-            apiKey = "test_key",
-            apiSecret = "test_secret",
+    fun parsePayloadData_trailingSlashIsStrippedFromTheServerUrl() {
+        val encoded = java.util.Base64.getEncoder().encodeToString(
+            """{"s":"https://stream.example.com/","c":"1"}""".toByteArray(),
         )
-        val sanitizedUsername = creds.username?.takeIf { !it.equals("null", ignoreCase = true) }
-        assertNull(sanitizedUsername)
+
+        assertEquals("https://stream.example.com", authClient.parsePayloadData(encoded)?.serverUrl)
     }
 
-    private class FakeAuthSessionStore : AuthSessionStore {
-        private var session: AuthSession? = null
-        private var lastFm: LastFmCredentials? = null
+    @Test
+    fun parsePayloadData_invalidBase64_returnsNull() {
+        assertNull(authClient.parsePayloadData("not_valid_base64_json"))
+    }
 
-        override fun saveSession(session: AuthSession) {
-            this.session = session
-        }
+    @Test
+    fun parsePayloadData_base64ContainingAnIllegalCharacter_returnsNull() {
+        val valid = "eyJzIjoiaHR0cHM6Ly9zdHJlYW0uZXhhbXBsZS5jb20iLCJjIjoiMTIzNDU2In0="
+        val corrupted = valid.take(10) + "!" + valid.drop(10)
 
-        override fun getSession(): AuthSession? = session
+        assertNotNull(
+            "the same payload without the illegal byte must parse",
+            authClient.parsePayloadData(valid)
+        )
+        assertNull(authClient.parsePayloadData(corrupted))
+    }
 
-        override fun hasSession(): Boolean = session != null
+    @Test
+    fun parsePayloadData_truncatedBase64_returnsNull() {
+        val valid = "eyJzIjoiaHR0cHM6Ly9zdHJlYW0uZXhhbXBsZS5jb20iLCJjIjoiMTIzNDU2In0="
 
-        override fun clearSession() {
-            session = null
-            lastFm = null
-        }
+        assertNotNull(authClient.parsePayloadData(valid))
+        assertNull(authClient.parsePayloadData(valid.dropLast(3)))
+    }
 
-        override fun saveLastFmCredentials(credentials: LastFmCredentials) {
-            lastFm = credentials
-        }
+    @Test
+    fun parsePayloadData_validBase64OfTheWrongSchema_returnsNull() {
+        val encoded = java.util.Base64.getEncoder().encodeToString(
+            """{"token":"123456"}""".toByteArray(),
+        )
 
-        override fun getLastFmCredentials(): LastFmCredentials? = lastFm
+        assertNull(authClient.parsePayloadData(encoded))
+    }
 
-        private var permissionsCompleted = false
+    @Test
+    fun parsePayloadData_validBase64WithBlankFields_returnsNull() {
+        val missingCode = java.util.Base64.getEncoder().encodeToString(
+            """{"s":"https://stream.example.com","c":""}""".toByteArray(),
+        )
+        val missingServer = java.util.Base64.getEncoder().encodeToString(
+            """{"s":"","c":"1"}""".toByteArray(),
+        )
 
-        override fun hasCompletedPermissions(): Boolean = permissionsCompleted
+        assertNull(authClient.parsePayloadData(missingCode))
+        assertNull(authClient.parsePayloadData(missingServer))
+    }
 
-        override fun setCompletedPermissions(completed: Boolean) {
-            permissionsCompleted = completed
-        }
+    @Test
+    fun parsePayloadData_emptyAndWhitespaceInput_returnNull() {
+        assertNull(authClient.parsePayloadData(""))
+        assertNull(authClient.parsePayloadData("   "))
+    }
+
+    @Test
+    fun parseConnectionUri_dataQueryParameter_returnsPayload() {
+        val encoded = "eyJzIjoiaHR0cHM6Ly9zdHJlYW0uZXhhbXBsZS5jb20iLCJjIjoiMTIzNDU2In0="
+
+        val payload = authClient.parseConnectionUri("laboon://connect?data=$encoded")
+
+        assertEquals("https://stream.example.com", payload?.serverUrl)
+        assertEquals("123456", payload?.code)
+    }
+
+    @Test
+    fun parseConnectionUri_percentEncodedDataQueryParameter_returnsPayload() {
+        val encoded = "eyJzIjoiaHR0cHM6Ly9zdHJlYW0uZXhhbXBsZS5jb20iLCJjIjoiMTIzNDU2In0="
+
+        val payload =
+            authClient.parseConnectionUri("laboon://connect?data=${encoded.replace("=", "%3D")}")
+
+        assertEquals("https://stream.example.com", payload?.serverUrl)
+    }
+
+    @Test
+    fun parseConnectionUri_codeAndServerQueryParameters_returnsPayload() {
+        val payload = authClient.parseConnectionUri(
+            "laboon://connect?code=%20123456%20&server=https%3A%2F%2Fstream.example.com%2F",
+        )
+
+        assertEquals("https://stream.example.com", payload?.serverUrl)
+        assertEquals("123456", payload?.code)
+    }
+
+    @Test
+    fun parseConnectionUri_shortQueryParameterNames_returnsPayload() {
+        val payload = authClient.parseConnectionUri("laboon://connect?c=1&s=https://s.example.com")
+
+        assertEquals("https://s.example.com", payload?.serverUrl)
+        assertEquals("1", payload?.code)
+    }
+
+    @Test
+    fun parseConnectionUri_codeWithoutServer_returnsNull() {
+        assertNull(authClient.parseConnectionUri("laboon://connect?code=123456"))
+    }
+
+    @Test
+    fun parseConnectionUri_serverWithoutCode_returnsNull() {
+        assertNull(authClient.parseConnectionUri("laboon://connect?server=https://s.example.com"))
+    }
+
+    @Test
+    fun parseConnectionUri_blankValues_returnNull() {
+        assertNull(authClient.parseConnectionUri("laboon://connect?code=%20&server=%20"))
+        assertNull(authClient.parseConnectionUri("laboon://connect?data="))
+    }
+
+    @Test
+    fun parseConnectionUri_noQuery_returnsNull() {
+        assertNull(authClient.parseConnectionUri("laboon://connect"))
+        assertNull(authClient.parseConnectionUri("laboon://connect#data=abc"))
+    }
+
+    @Test
+    fun parseConnectionUri_garbageInput_returnsNullWithoutThrowing() {
+        assertNull(authClient.parseConnectionUri(""))
+        assertNull(authClient.parseConnectionUri("not a uri at all"))
+        assertNull(authClient.parseConnectionUri("laboon://connect?data=%E0%A4%A&c=&s="))
+    }
+
+    @Test
+    fun parseConnectionUri_firstValueOfARepeatedParameterWins() {
+        val payload = authClient.parseConnectionUri(
+            "laboon://connect?code=first&code=second&server=https://s.example.com",
+        )
+
+        assertEquals("first", payload?.code)
+    }
+
+    @Test
+    fun parseConnectionUri_queryIsNotConfusedByTheFragment() {
+        val payload = authClient.parseConnectionUri(
+            "laboon://connect?code=abc#server=https://evil.example.com",
+        )
+
+        assertNull(payload)
     }
 }

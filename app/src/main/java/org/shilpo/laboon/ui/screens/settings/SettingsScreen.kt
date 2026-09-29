@@ -2,9 +2,7 @@
 
 package org.shilpo.laboon.ui.screens.settings
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -21,47 +19,76 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import coil3.compose.AsyncImage
-import coil3.compose.AsyncImagePainter
-import coil3.compose.LocalPlatformContext
-import coil3.network.NetworkHeaders
-import coil3.network.httpHeaders
-import coil3.request.ImageRequest
-import coil3.request.crossfade
 import org.shilpo.laboon.R
-import org.shilpo.laboon.data.auth.AuthSession
+import org.shilpo.laboon.auth.AuthSession
+import org.shilpo.laboon.ui.design.AppCardShape
+import org.shilpo.laboon.ui.design.ScreenScaffold
+import org.shilpo.laboon.ui.design.SegmentedSection
+import org.shilpo.laboon.ui.design.UserAvatar
+import org.shilpo.laboon.ui.design.userDisplayName
 
 private data class SettingItem(
     val title: String,
     val subtitle: String? = null,
 )
+
+private val TopBarOuterVerticalPadding = 8.dp
+private val TopBarInnerVerticalPadding = 6.dp
+private val TopBarNavButtonHeight = 48.dp
+
+private val TopBarHeight =
+    TopBarNavButtonHeight + (TopBarOuterVerticalPadding + TopBarInnerVerticalPadding) * 2
+
+private fun settingSupportingContent(
+    items: List<SettingItem>,
+): (@Composable (item: SettingItem) -> Unit)? =
+    if (items.any { it.subtitle != null }) {
+        { item ->
+            item.subtitle?.let { subtitle ->
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    } else {
+        null
+    }
+
+@Composable
+private fun SettingItemsSection(
+    title: String,
+    items: List<SettingItem>,
+) {
+    SegmentedSection(
+        title = title,
+        items = items,
+        titleModifier = Modifier.padding(start = 4.dp),
+        supportingContent = settingSupportingContent(items),
+    ) { item ->
+        Text(
+            text = item.title,
+            style = MaterialTheme.typography.titleMediumEmphasized,
+        )
+    }
+}
 
 @Composable
 fun SettingsScreen(
@@ -70,34 +97,6 @@ fun SettingsScreen(
     onDisconnect: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalPlatformContext.current
-    var isImageLoaded by remember { mutableStateOf(false) }
-
-    val imageRequest = remember(session?.serverUrl, session?.token) {
-        val serverUrl = session?.serverUrl?.trimEnd('/')
-        val token = session?.token
-        if (!serverUrl.isNullOrEmpty() && !token.isNullOrEmpty()) {
-            val headers = NetworkHeaders.Builder()
-                .set("Authorization", "Bearer $token")
-                .build()
-            ImageRequest.Builder(context)
-                .data("$serverUrl/api/v1/auth/me/avatar")
-                .httpHeaders(headers)
-                .crossfade(true)
-                .build()
-        } else {
-            null
-        }
-    }
-
-    val initial = remember(session?.user) {
-        session?.user?.let { user ->
-            (user.name ?: user.username ?: user.firstName)
-                ?.firstOrNull { it.isLetter() }
-                ?.uppercaseChar()
-        }
-    }
-
     val playbackItems = remember {
         listOf(
             SettingItem("Streaming Quality", "High (320 kbps)"),
@@ -123,15 +122,53 @@ fun SettingsScreen(
     val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+    ScreenScaffold(
+        modifier = modifier,
+        topBar = {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = TopBarOuterVerticalPadding),
+                shape = MaterialTheme.shapes.extraLargeIncreased,
+                color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.90f),
+                tonalElevation = 3.dp,
+                shadowElevation = 6.dp,
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = TopBarInnerVerticalPadding),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(
+                        onClick = onBack,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_arrow_back),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    Text(
+                        text = stringResource(R.string.settings_title),
+                        style = MaterialTheme.typography.titleLargeEmphasized.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                    )
+                }
+            }
+        },
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
-                top = topInset + 68.dp,
+                top = topInset + TopBarHeight,
                 bottom = bottomInset + 24.dp,
                 start = 20.dp,
                 end = 20.dp,
@@ -141,7 +178,7 @@ fun SettingsScreen(
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(24.dp),
+                    shape = AppCardShape,
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surfaceContainer,
                     ),
@@ -153,65 +190,18 @@ fun SettingsScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(CircleShape),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            if (!isImageLoaded) {
-                                if (initial != null) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .background(MaterialTheme.colorScheme.primaryContainer),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Text(
-                                            text = initial.toString(),
-                                            style = MaterialTheme.typography.headlineSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        )
-                                    }
-                                } else {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        Icon(
-                                            painter = painterResource(R.drawable.ic_user_headshot),
-                                            contentDescription = null,
-                                            modifier = Modifier.size(36.dp),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        )
-                                    }
-                                }
-                            }
-
-                            if (imageRequest != null) {
-                                AsyncImage(
-                                    model = imageRequest,
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    onState = { state ->
-                                        isImageLoaded = state is AsyncImagePainter.State.Success
-                                    },
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-                            }
-                        }
+                        UserAvatar(
+                            session = session,
+                            size = 64.dp,
+                            fallbackIconSize = 36.dp,
+                            initialTextStyle = MaterialTheme.typography.headlineSmallEmphasized,
+                        )
 
                         Column(modifier = Modifier.weight(1f)) {
-                            val name = session?.user?.name
-                                ?: session?.user?.username
-                                ?: stringResource(R.string.home_user_fallback)
                             Text(
-                                text = name,
-                                style = MaterialTheme.typography.titleLarge.copy(
-                                    fontWeight = FontWeight.Bold,
+                                text = userDisplayName(session?.user)
+                                    ?: stringResource(R.string.home_user_fallback),
+                                style = MaterialTheme.typography.titleLargeEmphasized.copy(
                                     color = MaterialTheme.colorScheme.onSurface,
                                 ),
                             )
@@ -228,158 +218,11 @@ fun SettingsScreen(
                 }
             }
 
-            item {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "Playback & Audio",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                        ),
-                        modifier = Modifier.padding(start = 4.dp),
-                    )
+            item { SettingItemsSection("Playback & Audio", playbackItems) }
 
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
-                    ) {
-                        playbackItems.forEachIndexed { index, item ->
-                            SegmentedListItem(
-                                shapes = ListItemDefaults.segmentedShapes(
-                                    index = index,
-                                    count = playbackItems.size,
-                                ),
-                                colors = ListItemDefaults.segmentedColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                                ),
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.fillMaxWidth(),
-                                content = {
-                                    Text(
-                                        text = item.title,
-                                        style = MaterialTheme.typography.titleMedium.copy(
-                                            fontWeight = FontWeight.SemiBold,
-                                        ),
-                                    )
-                                },
-                                supportingContent = item.subtitle?.let {
-                                    {
-                                        Text(
-                                            text = it,
-                                            style = MaterialTheme.typography.bodySmall,
-                                        )
-                                    }
-                                },
-                            )
-                        }
-                    }
-                }
-            }
+            item { SettingItemsSection("Services", servicesItems) }
 
-            item {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "Services",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                        ),
-                        modifier = Modifier.padding(start = 4.dp),
-                    )
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
-                    ) {
-                        servicesItems.forEachIndexed { index, item ->
-                            SegmentedListItem(
-                                shapes = ListItemDefaults.segmentedShapes(
-                                    index = index,
-                                    count = servicesItems.size,
-                                ),
-                                colors = ListItemDefaults.segmentedColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                                ),
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.fillMaxWidth(),
-                                content = {
-                                    Text(
-                                        text = item.title,
-                                        style = MaterialTheme.typography.titleMedium.copy(
-                                            fontWeight = FontWeight.SemiBold,
-                                        ),
-                                    )
-                                },
-                                supportingContent = item.subtitle?.let {
-                                    {
-                                        Text(
-                                            text = it,
-                                            style = MaterialTheme.typography.bodySmall,
-                                        )
-                                    }
-                                },
-                            )
-                        }
-                    }
-                }
-            }
-
-            item {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "About",
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                        ),
-                        modifier = Modifier.padding(start = 4.dp),
-                    )
-
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
-                    ) {
-                        aboutItems.forEachIndexed { index, item ->
-                            SegmentedListItem(
-                                shapes = ListItemDefaults.segmentedShapes(
-                                    index = index,
-                                    count = aboutItems.size,
-                                ),
-                                colors = ListItemDefaults.segmentedColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                                ),
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.fillMaxWidth(),
-                                content = {
-                                    Text(
-                                        text = item.title,
-                                        style = MaterialTheme.typography.titleMedium.copy(
-                                            fontWeight = FontWeight.SemiBold,
-                                        ),
-                                    )
-                                },
-                                supportingContent = item.subtitle?.let {
-                                    {
-                                        Text(
-                                            text = it,
-                                            style = MaterialTheme.typography.bodySmall,
-                                        )
-                                    }
-                                },
-                            )
-                        }
-                    }
-                }
-            }
+            item { SettingItemsSection("About", aboutItems) }
 
             item {
                 OutlinedButton(
@@ -395,52 +238,9 @@ fun SettingsScreen(
                 ) {
                     Text(
                         text = stringResource(R.string.home_disconnect_button),
-                        style = MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = FontWeight.SemiBold,
-                        ),
+                        style = MaterialTheme.typography.titleMediumEmphasized,
                     )
                 }
-            }
-        }
-
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.TopCenter)
-                .statusBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            shape = RoundedCornerShape(32.dp),
-            color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.90f),
-            tonalElevation = 3.dp,
-            shadowElevation = 6.dp,
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(
-                    onClick = onBack,
-                    modifier = Modifier.size(44.dp),
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_arrow_back),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(24.dp),
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                Text(
-                    text = stringResource(R.string.settings_title),
-                    style = MaterialTheme.typography.titleLarge.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    ),
-                )
             }
         }
     }
