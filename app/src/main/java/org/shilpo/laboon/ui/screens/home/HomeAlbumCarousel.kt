@@ -22,9 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -36,6 +34,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -46,6 +45,9 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeAlbum
+import org.shilpo.laboon.ui.design.LiquidGlassPlayButton
+import org.shilpo.laboon.ui.design.liquidGlassBackdropProducer
+import org.shilpo.laboon.ui.design.rememberLiquidGlassBackdropState
 
 @Composable
 fun HomeAlbumCarousel(
@@ -122,6 +124,9 @@ fun CarouselItemScope.HomeAlbumCard(
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
 ) {
+    val cardBackdropState = rememberLiquidGlassBackdropState()
+    val cardBackdropLayer = rememberGraphicsLayer()
+
     Surface(
         shape = MaterialTheme.shapes.extraLarge,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -133,42 +138,50 @@ fun CarouselItemScope.HomeAlbumCard(
             ),
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            if (!album.artworkUrl.isNullOrBlank()) {
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalPlatformContext.current)
-                        .data(album.artworkUrl)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = album.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            } else {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.app_icon_small),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                        modifier = Modifier.size(48.dp),
-                    )
-                }
-            }
-
+            // Card backdrop layer (artwork + scrim overlay) captured cleanly for liquid glass refraction
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            0.0f to Color.Transparent,
-                            0.45f to Color.Transparent,
-                            0.72f to Color.Black.copy(alpha = 0.50f),
-                            1.0f to Color.Black.copy(alpha = 0.90f),
+                    .liquidGlassBackdropProducer(cardBackdropState, cardBackdropLayer),
+            ) {
+                if (!album.artworkUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalPlatformContext.current)
+                            .data(album.artworkUrl)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = album.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.app_icon_small),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                            modifier = Modifier.size(48.dp),
                         )
-                    ),
-            )
+                    }
+                }
+
+                // Text protection scrim overlay (drawn over artwork, behind text & glass button)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                0.0f to Color.Transparent,
+                                0.45f to Color.Transparent,
+                                0.72f to Color.Black.copy(alpha = 0.50f),
+                                1.0f to Color.Black.copy(alpha = 0.90f),
+                            )
+                        ),
+                )
+            }
 
             Row(
                 modifier = Modifier
@@ -206,20 +219,12 @@ fun CarouselItemScope.HomeAlbumCard(
                     )
                 }
 
-                FilledTonalIconButton(
+                LiquidGlassPlayButton(
                     onClick = onPlayClick,
-                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f),
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    ),
-                    modifier = Modifier.size(38.dp),
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_play),
-                        contentDescription = "Play",
-                        modifier = Modifier.size(19.dp),
-                    )
-                }
+                    backdropState = cardBackdropState,
+                    size = 38.dp,
+                    iconSize = 19.dp,
+                )
             }
         }
     }

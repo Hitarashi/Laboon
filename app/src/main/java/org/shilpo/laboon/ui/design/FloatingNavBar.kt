@@ -4,6 +4,7 @@ package org.shilpo.laboon.ui.design
 
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -31,6 +32,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -51,36 +53,57 @@ import androidx.compose.ui.unit.dp
 import org.shilpo.laboon.navigation.MainTab
 import kotlin.math.roundToInt
 
-private val NavigationBarMaxWidth = 420.dp
+internal val NavigationBarMaxWidth = 420.dp
 internal val NavigationBarHeight = 70.dp
 private val NavigationBarInnerPadding = 6.dp
 internal val NavigationBarBottomPadding = 10.dp
 private val NavigationBarClearanceSlack = 8.dp
 
-internal val FloatingNavBarClearance =
+internal val MiniPlayerHeight = 72.dp
+internal val MiniPlayerSpacing = 4.dp
+
+internal val FloatingNavBarBaseClearance =
     NavigationBarHeight + NavigationBarBottomPadding + NavigationBarClearanceSlack
+
+internal val FloatingCombinedClearance =
+    FloatingNavBarBaseClearance + MiniPlayerHeight + MiniPlayerSpacing
+
+internal val FloatingNavBarClearance = FloatingCombinedClearance
 
 @Composable
 fun FloatingNavBar(
     selectedTab: MainTab,
     onTabSelected: (MainTab) -> Unit,
     modifier: Modifier = Modifier,
+    hasMiniPlayerAbove: Boolean = false,
     tabs: List<MainTab> = MainTab.entries,
     backdropState: LiquidGlassBackdropState? = null,
 ) {
     val motionScheme = MaterialTheme.motionScheme
     val isDark = isSystemInDarkTheme()
 
+    val topRadius by animateDpAsState(
+        targetValue = if (hasMiniPlayerAbove) 12.dp else 35.dp,
+        animationSpec = motionScheme.defaultSpatialSpec(),
+        label = "navTopCornerRadius",
+    )
+    val navShape = RoundedCornerShape(
+        topStart = topRadius,
+        topEnd = topRadius,
+        bottomStart = 35.dp,
+        bottomEnd = 35.dp,
+    )
+
     val pillGradient = Brush.verticalGradient(
         colors = if (isDark) {
             listOf(
-                Color.White.copy(alpha = 0.22f),
-                Color.White.copy(alpha = 0.08f),
+                Color.White.copy(alpha = 0.12f),
+                MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.50f),
             )
         } else {
             listOf(
-                Color.White.copy(alpha = 0.70f),
-                Color.White.copy(alpha = 0.35f),
+                Color.White.copy(alpha = 0.75f),
+                MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.45f),
             )
         },
     )
@@ -88,15 +111,15 @@ fun FloatingNavBar(
     val borderBrush = Brush.verticalGradient(
         colors = if (isDark) {
             listOf(
-                Color.White.copy(alpha = 0.50f),
-                Color.White.copy(alpha = 0.15f),
-                Color.White.copy(alpha = 0.02f),
+                Color.White.copy(alpha = 0.22f),
+                Color.White.copy(alpha = 0.05f),
+                Color.Transparent,
             )
         } else {
             listOf(
-                Color.White.copy(alpha = 0.85f),
-                Color.White.copy(alpha = 0.30f),
-                Color.White.copy(alpha = 0.05f),
+                Color.White.copy(alpha = 0.40f),
+                Color.White.copy(alpha = 0.10f),
+                Color.Transparent,
             )
         },
     )
@@ -113,8 +136,10 @@ fun FloatingNavBar(
                 .fillMaxWidth()
                 .height(NavigationBarHeight),
             backdropState = backdropState,
-            shape = CircleShape,
+            shape = navShape,
             cornerRadius = 35.dp,
+            topRadius = topRadius,
+            bottomRadius = 35.dp,
             shadowElevation = 8.dp,
         ) {
             BoxWithConstraints(
@@ -152,7 +177,7 @@ fun FloatingNavBar(
                                 shape = CircleShape,
                             )
                             .border(
-                                width = 1.dp,
+                                width = 0.5.dp,
                                 brush = borderBrush,
                                 shape = CircleShape,
                             ),

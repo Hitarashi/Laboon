@@ -8,7 +8,9 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -47,6 +49,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -85,10 +88,12 @@ import org.shilpo.laboon.navigation.RouteDirection
 import org.shilpo.laboon.navigation.RouteEvent
 import org.shilpo.laboon.navigation.RouteState
 import org.shilpo.laboon.navigation.tabTransitionDirection
+import org.shilpo.laboon.ui.design.FloatingCombinedClearance
 import org.shilpo.laboon.ui.design.FloatingNavBar
-import org.shilpo.laboon.ui.design.FloatingNavBarClearance
 import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
 import org.shilpo.laboon.ui.design.LiquidGlassSurface
+import org.shilpo.laboon.ui.design.MiniPlayer
+import org.shilpo.laboon.ui.design.MiniPlayerSpacing
 import org.shilpo.laboon.ui.design.NavigationBarBottomPadding
 import org.shilpo.laboon.ui.design.PredictiveBackSpec
 import org.shilpo.laboon.ui.design.PredictiveBackSurface
@@ -117,6 +122,26 @@ fun HomeScreen(
 
     var feedState by remember { mutableStateOf(HomeFeedDefaults.defaultFeed) }
     val coroutineScope = rememberCoroutineScope()
+
+    val starterTrack = remember {
+        HomeTrack(
+            id = "starter_sample",
+            title = "Sailor Song",
+            artist = "Gigi Perez",
+            artworkUrl = null,
+        )
+    }
+    var currentTrack by remember { mutableStateOf<HomeTrack?>(starterTrack) }
+    var isPlaying by remember { mutableStateOf(false) }
+    var playbackProgress by remember { mutableFloatStateOf(0.35f) }
+
+    LaunchedEffect(feedState.rotation.items) {
+        if (currentTrack == starterTrack) {
+            feedState.rotation.items.firstOrNull()?.let {
+                currentTrack = it
+            }
+        }
+    }
 
     LaunchedEffect(session) {
         val region = repository.getDisplayRegion().orEmpty()
@@ -249,6 +274,10 @@ fun HomeScreen(
                         onLoadTopTracks = loadTopTracks,
                         onLoadTrending = loadTrending,
                         onLoadWeeklyPicks = loadWeeklyPicks,
+                        onTrackClick = { track ->
+                            currentTrack = track
+                            isPlaying = true
+                        },
                         lazyListState = homeScrollState,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -264,15 +293,68 @@ fun HomeScreen(
             }
         }
 
-        FloatingNavBar(
-            selectedTab = currentTab,
-            onTabSelected = { onEvent(RouteEvent.TabSelected(it)) },
-            backdropState = liquidGlassBackdropState,
+        Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .navigationBarsPadding()
                 .padding(start = 16.dp, end = 16.dp, bottom = NavigationBarBottomPadding),
-        )
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(MiniPlayerSpacing),
+        ) {
+            AnimatedVisibility(
+                visible = currentTrack != null,
+                enter = slideInVertically(
+                    animationSpec = motionScheme.defaultSpatialSpec(),
+                    initialOffsetY = { it },
+                ) + fadeIn(animationSpec = motionScheme.defaultEffectsSpec()),
+                exit = slideOutVertically(
+                    animationSpec = motionScheme.defaultSpatialSpec(),
+                    targetOffsetY = { it },
+                ) + fadeOut(animationSpec = motionScheme.defaultEffectsSpec()),
+            ) {
+                currentTrack?.let { track ->
+                    MiniPlayer(
+                        track = track,
+                        isPlaying = isPlaying,
+                        progress = playbackProgress,
+                        onPlayPauseClick = { isPlaying = !isPlaying },
+                        onPreviousClick = {
+                            val tracks = feedState.rotation.items
+                                .ifEmpty { feedState.recommended.items }
+                                .ifEmpty { feedState.topTracks.items }
+                            if (tracks.isNotEmpty()) {
+                                val currentIndex = tracks.indexOfFirst { it.id == track.id }
+                                val prevIndex =
+                                    if (currentIndex <= 0) tracks.lastIndex else currentIndex - 1
+                                currentTrack = tracks[prevIndex]
+                                playbackProgress = 0f
+                            }
+                        },
+                        onNextClick = {
+                            val tracks = feedState.rotation.items
+                                .ifEmpty { feedState.recommended.items }
+                                .ifEmpty { feedState.topTracks.items }
+                            if (tracks.isNotEmpty()) {
+                                val currentIndex = tracks.indexOfFirst { it.id == track.id }
+                                val nextIndex =
+                                    if (currentIndex == -1 || currentIndex >= tracks.lastIndex) 0 else currentIndex + 1
+                                currentTrack = tracks[nextIndex]
+                                playbackProgress = 0f
+                            }
+                        },
+                        onClick = {},
+                        backdropState = liquidGlassBackdropState,
+                    )
+                }
+            }
+
+            FloatingNavBar(
+                selectedTab = currentTab,
+                onTabSelected = { onEvent(RouteEvent.TabSelected(it)) },
+                hasMiniPlayerAbove = currentTrack != null,
+                backdropState = liquidGlassBackdropState,
+            )
+        }
 
         AnimatedVisibility(
             visible = currentTab == MainTab.Home,
@@ -429,7 +511,7 @@ private fun HomeContent(
     val topClearance = statusBarTop + 84.dp
     val navBarBottomInset =
         WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    val bottomClearance = FloatingNavBarClearance + navBarBottomInset + 16.dp
+    val bottomClearance = FloatingCombinedClearance + navBarBottomInset + 16.dp
 
     Box(
         modifier = modifier
