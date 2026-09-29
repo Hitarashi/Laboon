@@ -8,6 +8,9 @@ data class HomeTrack(
     val artworkUrl: String? = null,
     val playCount: Long = 0,
     val source: String? = null,
+    val streamUrl: String? = null,
+    val backendTrackId: Int? = null,
+    val isCached: Boolean = false,
 )
 
 data class HomeArtist(

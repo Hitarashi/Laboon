@@ -283,6 +283,10 @@ fun HomeScreen(
                     )
 
                     MainTab.Search -> SearchScreen(
+                        onTrackClick = { track ->
+                            currentTrack = track
+                            isPlaying = true
+                        },
                         modifier = Modifier.fillMaxSize(),
                     )
 
