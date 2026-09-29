@@ -49,8 +49,6 @@ object Physics {
         physics: Tuning.Physics,
         isBursting: Boolean = false,
         time: Float = 0f,
-        centerX: Float = 0f,
-        centerY: Float = 0f,
         dampMember: Float = -1f,
         dampFloater: Float = -1f
     ): Particle {
@@ -78,7 +76,7 @@ object Physics {
             val springForce = formationK(formStrength, physics)
             val friction = if (dampMember >= 0f) dampMember else damping(
                 isForming = true,
-                isBursting = isBursting,
+                isBursting = false,
                 step = step,
                 physics = physics
             )
@@ -86,7 +84,7 @@ object Physics {
             p.vx = (p.vx + dx * springForce) * friction
             p.vy = (p.vy + dy * springForce) * friction
 
-            val m = speedClamp(isBursting, isForming, physics)
+            val m = speedClamp(false, isForming, physics)
             val speedSq = p.vx * p.vx + p.vy * p.vy
             if (speedSq > m * m && speedSq > 0f) {
                 val scale = m / sqrt(speedSq)

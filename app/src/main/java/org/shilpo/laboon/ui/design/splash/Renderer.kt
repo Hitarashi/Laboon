@@ -83,7 +83,7 @@ class Renderer(private val tuning: Tuning = Tuning.Default) {
         val bmp = ImageBitmap(size, size)
         val c = size / 2f
         val alphas = tuning.look.glow.SPRITE_ALPHAS
-        val stops = tuning.look.glow.SPRITE_STOPS
+        val stops = tuning.look.glow.SPRITE_STOPS.toFloatArray()
         val colors = IntArray(alphas.size) { i -> base.copy(alpha = alphas[i]).toArgb() }
         val paint = android.graphics.Paint().apply {
             shader = android.graphics.RadialGradient(
@@ -153,13 +153,13 @@ class Renderer(private val tuning: Tuning = Tuning.Default) {
         primaryColor: Color = Color.White
     ) {
         ensureDensity(density)
-        drawFormationGlow(engine, isDark, primaryColor)
+        drawFormationGlow(engine, primaryColor)
 
         drawSmoothOutline(engine, contentColor)
         drawFormationLinks(engine, contentColor)
-        drawParticles(engine, isDark, contentColor)
+        drawParticles(engine, contentColor)
         if (engine.currentPhase == Phase.Ignite) {
-            drawIgnite(engine, isDark, contentColor, primaryColor)
+            drawIgnite(engine, contentColor, primaryColor)
         }
 
         drawShockwave(
@@ -167,32 +167,30 @@ class Renderer(private val tuning: Tuning = Tuning.Default) {
             color = contentColor,
             isDark = isDark
         )
-        drawScreenFlash(engine, isDark, primaryColor)
+        drawScreenFlash(engine, primaryColor)
     }
 
     fun DrawScope.drawFormationGlow(
         engine: Engine,
-        isDark: Boolean = true,
         primaryColor: Color = Color.White
     ) {
         if (engine.formStrength <= tuning.look.cutoffs.FORM_GLOW || size.height <= 0f) return
-        val baseColor = primaryColor
         val r = size.height * tuning.look.glow.HEIGHT_FACTOR
         if (r <= 0f) return
         val c = center
         val strength = (engine.formStrength * 20f).toInt() / 20f
-        if (cachedGlowBrush == null || cachedGlowRadius != r || cachedGlowColor != baseColor || cachedGlowStrength != strength) {
+        if (cachedGlowBrush == null || cachedGlowRadius != r || cachedGlowColor != primaryColor || cachedGlowStrength != strength) {
             cachedGlowRadius = r
-            cachedGlowColor = baseColor
+            cachedGlowColor = primaryColor
             cachedGlowStrength = strength
             cachedGlowBrush = Brush.radialGradient(
-                0.0f to baseColor.copy(
+                0.0f to primaryColor.copy(
                     alpha = (strength * tuning.look.glow.STRENGTH_ALPHA_BASE).coerceIn(
                         0f,
                         1f
                     )
                 ),
-                tuning.look.glow.STOP_MID to baseColor.copy(
+                tuning.look.glow.STOP_MID to primaryColor.copy(
                     alpha = (strength * tuning.look.glow.STRENGTH_ALPHA_MID).coerceIn(
                         0f,
                         1f
@@ -302,7 +300,6 @@ class Renderer(private val tuning: Tuning = Tuning.Default) {
 
     fun DrawScope.drawParticles(
         engine: Engine,
-        isDark: Boolean = true,
         contentColor: Color = Color.White
     ) {
         val particles = engine.particles
@@ -362,9 +359,8 @@ class Renderer(private val tuning: Tuning = Tuning.Default) {
                     alpha = min(1f, alpha * 1.0f)
                 )
 
-                val coreCol = contentColor
                 drawCircle(
-                    color = coreCol.copy(alpha = min(1f, alpha * 1.0f)),
+                    color = contentColor.copy(alpha = min(1f, alpha * 1.0f)),
                     radius = currentRadius * 0.7f,
                     center = center
                 )
@@ -415,12 +411,9 @@ class Renderer(private val tuning: Tuning = Tuning.Default) {
 
     fun DrawScope.drawIgnite(
         engine: Engine,
-        isDark: Boolean = true,
         contentColor: Color = Color.White,
         primaryColor: Color = Color.White
     ) {
-        val haloColor = primaryColor
-
         val elapsed = engine.phaseElapsedMs
         val limit = engine.igniteWindowMs
         val stagger = engine.starStaggerMs
@@ -440,13 +433,13 @@ class Renderer(private val tuning: Tuning = Tuning.Default) {
                 if (alphaBin > 0) {
                     val cache = if (d in tipGlowCaches.indices) tipGlowCaches[d] else null
                     val haloBrush = if (cache != null) {
-                        if (cache.brush == null || cache.radius != haloRadius || cache.color != haloColor || cache.alphaBin != alphaBin || cache.center != center) {
+                        if (cache.brush == null || cache.radius != haloRadius || cache.color != primaryColor || cache.alphaBin != alphaBin || cache.center != center) {
                             cache.radius = haloRadius
-                            cache.color = haloColor
+                            cache.color = primaryColor
                             cache.alphaBin = alphaBin
                             cache.center = center
                             cache.brush = Brush.radialGradient(
-                                0.0f to haloColor.copy(alpha = alphaBin / 20f),
+                                0.0f to primaryColor.copy(alpha = alphaBin / 20f),
                                 1.0f to Color.Transparent,
                                 center = center,
                                 radius = haloRadius
@@ -455,7 +448,7 @@ class Renderer(private val tuning: Tuning = Tuning.Default) {
                         cache.brush!!
                     } else {
                         Brush.radialGradient(
-                            0.0f to haloColor.copy(alpha = rawAlpha),
+                            0.0f to primaryColor.copy(alpha = rawAlpha),
                             1.0f to Color.Transparent,
                             center = center,
                             radius = haloRadius
@@ -474,7 +467,7 @@ class Renderer(private val tuning: Tuning = Tuning.Default) {
                 radius = starBase * flare,
                 alpha = flare,
                 color = contentColor,
-                haloColor = haloColor
+                haloColor = primaryColor
             )
         }
     }
@@ -499,7 +492,6 @@ class Renderer(private val tuning: Tuning = Tuning.Default) {
 
     fun DrawScope.drawScreenFlash(
         engine: Engine,
-        isDark: Boolean = true,
         primaryColor: Color = Color.White
     ) {
         if (engine.currentPhase != Phase.Burst ||
@@ -510,18 +502,17 @@ class Renderer(private val tuning: Tuning = Tuning.Default) {
         val alpha = tuning.look.flash.MAX_ALPHA * (1f - progress)
         if (alpha <= tuning.look.cutoffs.FLASH_ALPHA) return
         val radius = tuning.look.flash.RADIUS_DP.dp.toPx()
-        val flashColor = primaryColor
         val alphaBin = (alpha * 20f).toInt()
         val c = center
         if (alphaBin > 0) {
             val brush =
-                if (flashGlowCache.brush == null || flashGlowCache.radius != radius || flashGlowCache.color != flashColor || flashGlowCache.alphaBin != alphaBin || flashGlowCache.center != c) {
+                if (flashGlowCache.brush == null || flashGlowCache.radius != radius || flashGlowCache.color != primaryColor || flashGlowCache.alphaBin != alphaBin || flashGlowCache.center != c) {
                     flashGlowCache.radius = radius
-                    flashGlowCache.color = flashColor
+                    flashGlowCache.color = primaryColor
                     flashGlowCache.alphaBin = alphaBin
                     flashGlowCache.center = c
                     Brush.radialGradient(
-                        0.0f to flashColor.copy(alpha = alphaBin / 20f),
+                        0.0f to primaryColor.copy(alpha = alphaBin / 20f),
                         1.0f to Color.Transparent,
                         center = c,
                         radius = radius,

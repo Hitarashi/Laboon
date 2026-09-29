@@ -51,7 +51,7 @@ fun routeStateFromTokens(tokens: List<String>): RouteState? {
                     username = tokens[index++].decoded(),
                     sessionKey = tokens[index++].decoded(),
                     apiKey = tokens[index++].decoded(),
-                    apiSecret = tokens[index++].decoded(),
+                    apiSecret = tokens[index].decoded(),
                 ),
             )
         }
@@ -65,7 +65,7 @@ fun routeStateFromTokens(tokens: List<String>): RouteState? {
                 ListenBrainzCredentials(
                     connected = tokens[index++] == "1",
                     username = tokens[index++].decoded(),
-                    token = tokens[index++].decoded(),
+                    token = tokens[index].decoded(),
                 ),
             )
         }

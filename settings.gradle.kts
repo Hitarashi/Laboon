@@ -1,3 +1,5 @@
+@file:Suppress("UnstableApiUsage")
+
 pluginManagement {
     repositories {
         google {
@@ -24,4 +26,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Laboon"
 include(":app")
- 
+

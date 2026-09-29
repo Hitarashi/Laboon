@@ -50,7 +50,7 @@ class SplashFramePolicyTest {
     @Test
     fun defaultTuningIsTheShippedNumbers() {
         val t = Tuning.Default
-        assertEquals(56, t.slots.getSlotCount("logo"))
+        assertEquals(56, t.slots.getSlotCount())
         assertEquals(800f, t.timings.GATHER_LOGO_MS, 0f)
         assertEquals(200f, t.timings.igniteDurationMs(false), 0f)
         assertEquals(120f, t.timings.igniteDurationMs(true), 0f)
@@ -346,9 +346,11 @@ class SplashFramePolicyTest {
         )
         outcomes.forEachIndexed { i, o ->
             val expected: FrameOutcome =
-                if (i == outcomes.indexOf(reveals[0])) reveals[0]
-                else if (i == outcomes.indexOf(finishes[0])) finishes[0]
-                else FrameOutcome.StillRunning
+                when (i) {
+                    outcomes.indexOf(reveals[0]) -> reveals[0]
+                    outcomes.indexOf(finishes[0]) -> finishes[0]
+                    else -> FrameOutcome.StillRunning
+                }
             assertSame("frame $i", expected, o)
         }
     }

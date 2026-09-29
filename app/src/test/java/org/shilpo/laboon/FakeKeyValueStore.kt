@@ -6,7 +6,7 @@ class FakeKeyValueStore : KeyValueStore {
 
     private val entries = mutableMapOf<String, Any?>()
 
-    val stored: Map<String, Any?> get() = entries
+    val stored: Map<String, Any?> = entries
 
     override fun getString(key: String): String? = entries[key] as? String
 

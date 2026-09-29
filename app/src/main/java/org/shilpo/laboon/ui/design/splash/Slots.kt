@@ -81,7 +81,6 @@ object Slots {
     }
 
     fun tips(
-        shape: String,
         width: Float,
         height: Float,
         density: Float,
@@ -95,7 +94,7 @@ object Slots {
         )
     }
 
-    fun contour(shape: String, cx: Float, cy: Float, size: Float): List<Offset> =
+    fun contour(cx: Float, cy: Float, size: Float): List<Offset> =
         pbBolt(cx, cy, size)
 
     fun ndResample(pts: List<Offset>, count: Int): List<Offset> = synchronized(this) {
@@ -285,11 +284,11 @@ private object PolygonContour : ContourSource {
     ): Slots.ShapeSlots {
         if (width <= 0f || height <= 0f) return Slots.empty(totalSlots)
         val (c, size) = Slots.boxFrame(width, height, density, logoTargetSizeDp)
-        val raw = Slots.contour(Slots.SHAPE_LOGO, c.x, c.y, size)
+        val raw = Slots.contour(c.x, c.y, size)
         return Slots.ShapeSlots(
             Slots.ndResample(raw, totalSlots),
             listOf(0 until totalSlots),
-            Slots.tips(Slots.SHAPE_LOGO, width, height, density, logoTargetSizeDp),
+            Slots.tips(width, height, density, logoTargetSizeDp),
             null
         )
     }

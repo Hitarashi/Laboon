@@ -12,7 +12,7 @@ espressoCore = "3.7.0"
 lottie = "6.7.1"
 coil = "3.6.3"
 navigationevent = "1.1.2"
-json = "20240303"
+json = "20260814"
 
 [libraries]
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }

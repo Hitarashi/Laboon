@@ -36,7 +36,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import org.shilpo.laboon.R
 import org.shilpo.laboon.auth.AuthSession
-import org.shilpo.laboon.auth.LastFmCredentials
 import org.shilpo.laboon.navigation.MainTab
 import org.shilpo.laboon.navigation.RouteDirection
 import org.shilpo.laboon.navigation.RouteEvent
@@ -64,7 +63,6 @@ fun HomeScreen(
     onEvent: (RouteEvent) -> Unit,
     session: AuthSession?,
     modifier: Modifier = Modifier,
-    credentials: LastFmCredentials? = null,
     onDisconnect: () -> Unit = {},
 ) {
     val currentTab = state.currentTab
@@ -75,9 +73,8 @@ fun HomeScreen(
         onBack = { onEvent(RouteEvent.BackPressed) },
     )
 
-    val settingsIsBackTarget = showSettings
     val tabIsBackTarget = !showSettings && currentTab != MainTab.Home
-    val settingsProgress = homeBackState.progressFor(settingsIsBackTarget)
+    val settingsProgress = homeBackState.progressFor(showSettings)
 
     val motionScheme = MaterialTheme.motionScheme
 
@@ -161,7 +158,7 @@ fun HomeScreen(
             PredictiveBackSurface(
                 state = homeBackState,
                 spec = PredictiveBackSpec.HomeSettings,
-                active = settingsIsBackTarget,
+                active = showSettings,
             ) { settingsSurface ->
                 SettingsScreen(
                     session = session,

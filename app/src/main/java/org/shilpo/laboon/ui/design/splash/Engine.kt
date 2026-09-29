@@ -30,7 +30,7 @@ class Engine(
     var particleScale: Float = 1f
     var particleAlpha: Float = 1f
     var currentShapeData: Slots.ShapeSlots =
-        Slots.empty(tuning.slots.getSlotCount(shape))
+        Slots.empty(tuning.slots.getSlotCount())
     private var slots: List<Offset> = emptyList()
     var phaseElapsedMs: Float = 0f
         private set
@@ -60,7 +60,7 @@ class Engine(
         rebuildSlots()
 
         val center = Slots.center(w, h)
-        val activeMembers = tuning.slots.getSlotCount(shape).coerceIn(12, MAX_MEMBERS)
+        val activeMembers = tuning.slots.getSlotCount().coerceIn(12, MAX_MEMBERS)
 
         for (i in 0 until activeMembers) {
             val r = tuning.spawn.RING_INNER + Random.nextFloat() * tuning.spawn.RING_WIDTH
@@ -98,9 +98,7 @@ class Engine(
                     phase = phaseAngle,
                     breath = breath,
                     lum = lum,
-                    ring = i % 2,
                     isMember = true,
-                    isRare = isRare
                 )
             )
         }
@@ -114,9 +112,9 @@ class Engine(
             width = width,
             height = height,
             density = density,
-            totalSlots = tuning.slots.getSlotCount(shape),
+            totalSlots = tuning.slots.getSlotCount(),
             logoTargetSizeDp = tuning.effects.LOGO_TARGET_SIZE_DP,
-        ) ?: Slots.empty(tuning.slots.getSlotCount(shape))
+        ) ?: Slots.empty(tuning.slots.getSlotCount())
         bindSlots()
     }
 
@@ -269,8 +267,6 @@ class Engine(
         val isForming = currentPhase == Phase.Gather || currentPhase == Phase.Ignite
         val isBursting = currentPhase == Phase.Burst || postBurstFrames > 0
         val timeSec = currentTimeMs / 1000f
-        val center = Slots.center(width, height)
-
         val dampMember = tuning.physics.DAMPING_FORMING.pow(step)
         val dampFloater = tuning.physics.DAMPING_FREE.pow(step)
 
@@ -283,8 +279,6 @@ class Engine(
                 formStrength = formStrength,
                 isBursting = isBursting,
                 time = timeSec,
-                centerX = center.x,
-                centerY = center.y,
                 physics = tuning.physics,
                 dampMember = dampMember,
                 dampFloater = dampFloater

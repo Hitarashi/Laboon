@@ -383,7 +383,6 @@ class MainActivity : ComponentActivity() {
                                     Route.Home -> HomeScreen(
                                         state = routeState,
                                         session = sessionStore.getSession(),
-                                        credentials = sessionStore.getLastFmCredentials(),
                                         onEvent = ::dispatch,
                                         onDisconnect = {
                                             sessionStore.signOut()

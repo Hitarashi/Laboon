@@ -1,3 +1,5 @@
+@file:Suppress("PropertyName")
+
 package org.shilpo.laboon.ui.design.splash
 
 data class Tuning(
@@ -15,7 +17,7 @@ data class Tuning(
     }
 
     data class Slots(val logo: Int = 56) {
-        fun getSlotCount(shape: String): Int = logo
+        fun getSlotCount(): Int = logo
     }
 
     data class Timings(
@@ -114,8 +116,8 @@ data class Tuning(
         data class Glow(
             val HEIGHT_FACTOR: Float = 0.42f,
             val STOP_MID: Float = 0.22f,
-            val SPRITE_ALPHAS: FloatArray = floatArrayOf(1f, 0.55f, 0.22f, 0.07f, 0.015f, 0f),
-            val SPRITE_STOPS: FloatArray = floatArrayOf(0f, 0.08f, 0.2f, 0.42f, 0.72f, 1f),
+            val SPRITE_ALPHAS: List<Float> = listOf(1f, 0.55f, 0.22f, 0.07f, 0.015f, 0f),
+            val SPRITE_STOPS: List<Float> = listOf(0f, 0.08f, 0.2f, 0.42f, 0.72f, 1f),
             val STRENGTH_ALPHA_BASE: Float = 0.34f,
             val STRENGTH_ALPHA_MID: Float = 0.1f,
         )

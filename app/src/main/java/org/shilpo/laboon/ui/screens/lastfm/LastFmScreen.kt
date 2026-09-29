@@ -80,7 +80,6 @@ fun LastFmScreen(
         username = username,
         password = password,
         passwordVisible = passwordVisible,
-        credentials = credentials,
         hasSession = hasSession,
         isConnecting = isConnecting,
         error = mergeScreenErrors(remote = remoteError, local = localError),
@@ -112,7 +111,6 @@ private fun LastFmContent(
     username: String,
     password: String,
     passwordVisible: Boolean,
-    credentials: LastFmCredentials?,
     hasSession: Boolean,
     isConnecting: Boolean,
     error: ScreenError?,
@@ -280,16 +278,15 @@ private fun PasswordVisibilityIcon(
             val ux = vx / len
             val uy = vy / len
             val nx = -uy
-            val ny = ux
 
             val cutCenterX = p1X + vx * clampedProgress
             val cutCenterY = p1Y + vy * clampedProgress
             val extent = size.maxDimension * 3f
 
             val c1X = cutCenterX + nx * extent
-            val c1Y = cutCenterY + ny * extent
+            val c1Y = cutCenterY + ux * extent
             val c2X = cutCenterX - nx * extent
-            val c2Y = cutCenterY - ny * extent
+            val c2Y = cutCenterY - ux * extent
 
             val b1X = c1X - ux * extent
             val b1Y = c1Y - uy * extent
@@ -330,4 +327,3 @@ private fun PasswordVisibilityIcon(
         }
     }
 }
-

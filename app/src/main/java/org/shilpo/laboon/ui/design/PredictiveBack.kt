@@ -134,19 +134,3 @@ fun PredictiveBackSurface(
         }
     )
 }
-
-@Composable
-fun PredictiveBackSurface(
-    enabled: Boolean,
-    onBack: () -> Unit,
-    spec: PredictiveBackSpec,
-    modifier: Modifier = Modifier,
-    content: @Composable (Modifier) -> Unit,
-) {
-    PredictiveBackSurface(
-        state = rememberPredictiveBackState(enabled, onBack),
-        spec = spec,
-        modifier = modifier,
-        content = content,
-    )
-}

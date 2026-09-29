@@ -18,9 +18,7 @@ class Particle(
     var phase: Float = 0f,
     var breath: Float = 0.25f,
     var lum: Float = 1f,
-    var ring: Int = 0,
     var isMember: Boolean = false,
-    var isRare: Boolean = false,
     var slotIndex: Int = -1,
     var isLocked: Boolean = false
 ) {
