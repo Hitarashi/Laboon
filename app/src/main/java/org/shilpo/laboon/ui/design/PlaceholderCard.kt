@@ -17,9 +17,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-
-// 24dp is a deliberate app value; M3's nearest roles are largeIncreased (20dp) and
-// extraLarge (28dp), so it is declared here rather than approximated by a token.
 val AppCardShape = RoundedCornerShape(24.dp)
 
 @Composable

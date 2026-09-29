@@ -162,6 +162,13 @@ class ScreenContentTest {
     }
 
     @Test
+    fun userDisplayName_cleansEmptyQuotesSuffix() {
+        assertEquals("Hitarashi", userDisplayName(user(name = "Hitarashi (\"\");")))
+        assertEquals("Hitarashi", userDisplayName(user(name = "Hitarashi (\"\")")))
+        assertEquals("Hitarashi", userDisplayName(user(name = "Hitarashi ()")))
+    }
+
+    @Test
     fun mergeScreenErrors_remoteError_winsOverLocalValidation() {
         val remote = ScreenError.Remote("server said no")
         val local = ScreenError.Validation("type a password")

@@ -64,4 +64,19 @@
     <string name="listenbrainz_connecting">Connecting ListenBrainz…</string>
     <string name="listenbrainz_error_empty">Please enter your ListenBrainz token</string>
     <string name="listenbrainz_token_helper">Find your user token at listenbrainz.org/profile</string>
+    <string name="home_your_rotation">Your rotation</string>
+    <string name="home_your_rotation_subtitle">From your recent listening</string>
+    <string name="home_recommended">Recommended for you</string>
+    <string name="home_recommended_subtitle">Based on what you listen to</string>
+    <string name="home_top_tracks">Top tracks</string>
+    <string name="home_top_tracks_subtitle">Your most played tracks</string>
+    <string name="home_top_artists">Top artists</string>
+    <string name="home_top_artists_subtitle">Your most played artists</string>
+    <string name="home_top_albums">Top albums</string>
+    <string name="home_top_albums_subtitle">Your most played albums</string>
+    <string name="home_trending">Trending songs</string>
+    <string name="home_trending_regional">Regional</string>
+    <string name="home_trending_global">Global</string>
+    <string name="home_weekly_picks">Weekly picks</string>
+    <string name="home_weekly_picks_subtitle">Algorithmic and community discoveries</string>
 </resources>

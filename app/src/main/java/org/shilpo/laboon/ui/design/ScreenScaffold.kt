@@ -12,11 +12,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -71,16 +75,26 @@ fun ScreenList(
     appliesStatusBarPadding: Boolean = true,
     itemContent: LazyListScope.() -> Unit,
 ) {
+    val topInset = if (appliesStatusBarPadding) {
+        WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    } else {
+        0.dp
+    }
+    val navBarBottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+
     LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .then(if (appliesStatusBarPadding) Modifier.statusBarsPadding() else Modifier),
-        contentPadding = PaddingValues(horizontal = horizontalPadding, vertical = verticalPadding),
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(
+            start = horizontalPadding,
+            end = horizontalPadding,
+            top = verticalPadding + topInset,
+            bottom = verticalPadding,
+        ),
         verticalArrangement = Arrangement.spacedBy(itemSpacing),
     ) {
         itemContent()
         item {
-            Spacer(modifier = Modifier.height(bottomClearance))
+            Spacer(modifier = Modifier.height(bottomClearance + navBarBottomInset + 16.dp))
         }
     }
 }

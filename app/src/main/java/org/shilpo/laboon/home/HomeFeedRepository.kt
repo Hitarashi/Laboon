@@ -1,0 +1,1115 @@
+package org.shilpo.laboon.home
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import org.shilpo.laboon.auth.LastFmCredentials
+import org.shilpo.laboon.auth.ListenBrainzCredentials
+import org.shilpo.laboon.auth.SessionStore
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.net.HttpURLConnection
+import java.net.URL
+import java.nio.charset.StandardCharsets
+import java.util.Locale
+
+class HomeFeedRepository(
+    private val sessionStore: SessionStore,
+    private val artworkResolver: BackendArtworkResolver = BackendArtworkResolver,
+) {
+    private val cacheMutex = Mutex()
+    private var cachedRecentTracks: List<HomeTrack>? = null
+    private var cachedTopTracks: List<HomeTrack>? = null
+    private var cachedTopArtists: List<HomeArtist>? = null
+    private var cachedListenBrainzTrending: List<HomeTrack>? = null
+
+    private suspend fun getRawRecentTracks(): List<HomeTrack> {
+        cacheMutex.withLock {
+            cachedRecentTracks?.let { return it }
+        }
+        val lastFmCreds = sessionStore.getLastFmCredentials()
+        val listenBrainzCreds = sessionStore.getListenBrainzCredentials()
+        val lastFmTracks = fetchLastFmRecentTracks(lastFmCreds)
+        val listenBrainzTracks = fetchListenBrainzRecentListens(listenBrainzCreds)
+        val combinedRecent = (lastFmTracks + listenBrainzTracks)
+            .distinctBy { "${it.title.lowercase().trim()}:::${it.artist.lowercase().trim()}" }
+        cacheMutex.withLock {
+            cachedRecentTracks = combinedRecent
+        }
+        return combinedRecent
+    }
+
+    private suspend fun getRawTopTracks(): List<HomeTrack> {
+        cacheMutex.withLock {
+            cachedTopTracks?.let { return it }
+        }
+        val lastFmCreds = sessionStore.getLastFmCredentials()
+        val listenBrainzCreds = sessionStore.getListenBrainzCredentials()
+        val lastFmTopTracks = fetchLastFmTopTracks(lastFmCreds)
+        val listenBrainzTopRecordings = fetchListenBrainzTopRecordings(listenBrainzCreds)
+        val combinedTopTracks = (lastFmTopTracks + listenBrainzTopRecordings)
+            .distinctBy { "${it.title.lowercase().trim()}:::${it.artist.lowercase().trim()}" }
+        cacheMutex.withLock {
+            cachedTopTracks = combinedTopTracks
+        }
+        return combinedTopTracks
+    }
+
+    private suspend fun getRawTopArtists(): List<HomeArtist> {
+        cacheMutex.withLock {
+            cachedTopArtists?.let { return it }
+        }
+        val lastFmCreds = sessionStore.getLastFmCredentials()
+        val listenBrainzCreds = sessionStore.getListenBrainzCredentials()
+        val lastFmTopArtists = fetchLastFmTopArtists(lastFmCreds)
+        val listenBrainzTopArtists = fetchListenBrainzTopArtists(listenBrainzCreds)
+        val combinedTopArtists = (lastFmTopArtists + listenBrainzTopArtists)
+            .distinctBy { it.name.lowercase().trim() }
+        cacheMutex.withLock {
+            cachedTopArtists = combinedTopArtists
+        }
+        return combinedTopArtists
+    }
+
+    private suspend fun getRawListenBrainzTrending(): List<HomeTrack> {
+        cacheMutex.withLock {
+            cachedListenBrainzTrending?.let { return it }
+        }
+        val listenBrainzTrending = fetchListenBrainzTrendingRecordings()
+        cacheMutex.withLock {
+            cachedListenBrainzTrending = listenBrainzTrending
+        }
+        return listenBrainzTrending
+    }
+
+    fun getDisplayRegion(): String? {
+        val defaultLocale = Locale.getDefault()
+        val country = defaultLocale.country.trim()
+        if (country.isEmpty()) return null
+        val englishCountry = defaultLocale.getDisplayCountry(Locale.ENGLISH).trim()
+        if (englishCountry.isEmpty()) return null
+        return defaultLocale.displayCountry.trim().ifEmpty { englishCountry }
+    }
+
+    private fun getQueryRegion(): String? {
+        val defaultLocale = Locale.getDefault()
+        val country = defaultLocale.country.trim()
+        if (country.isEmpty()) return null
+        val englishCountry = defaultLocale.getDisplayCountry(Locale.ENGLISH).trim()
+        return englishCountry.ifEmpty { null }
+    }
+
+    suspend fun fetchRotation(): List<HomeTrack> = withContext(Dispatchers.IO) {
+        val recent = getRawRecentTracks()
+        val rawRotation = recent
+        val session = sessionStore.getSession()
+        resolveTracks(rawRotation, session?.serverUrl, session?.token)
+    }
+
+    suspend fun fetchRecommended(): List<HomeTrack> = withContext(Dispatchers.IO) {
+        val recent = getRawRecentTracks()
+        val topTracks = getRawTopTracks()
+        val topArtists = getRawTopArtists()
+        val candidateSeeds = (recent + topTracks).take(5)
+        val lastFmCreds = sessionStore.getLastFmCredentials()
+        val listenBrainzCreds = sessionStore.getListenBrainzCredentials()
+        val lastFmRecs =
+            fetchLastFmSimilarTracks(lastFmCreds, candidateSeeds, topArtists.firstOrNull()?.name)
+        val listenBrainzRecs = fetchListenBrainzRecommendations(listenBrainzCreds)
+        val rotationKeys =
+            recent.map { "${it.title.lowercase().trim()}:::${it.artist.lowercase().trim()}" }
+                .toSet()
+        val rawRecommended = (lastFmRecs + listenBrainzRecs)
+            .distinctBy { "${it.title.lowercase().trim()}:::${it.artist.lowercase().trim()}" }
+            .filterNot {
+                rotationKeys.contains(
+                    "${
+                        it.title.lowercase().trim()
+                    }:::${it.artist.lowercase().trim()}"
+                )
+            }
+            .take(10)
+        val session = sessionStore.getSession()
+        resolveTracks(rawRecommended, session?.serverUrl, session?.token)
+    }
+
+    suspend fun fetchTopArtists(): List<HomeArtist> = withContext(Dispatchers.IO) {
+        val artists = getRawTopArtists()
+        val rawArtists = artists.take(10)
+        val session = sessionStore.getSession()
+        resolveArtists(rawArtists, session?.serverUrl, session?.token)
+    }
+
+    suspend fun fetchTopAlbums(): List<HomeAlbum> = withContext(Dispatchers.IO) {
+        val lastFmCreds = sessionStore.getLastFmCredentials()
+        val listenBrainzCreds = sessionStore.getListenBrainzCredentials()
+        val lastFmTopAlbums = fetchLastFmTopAlbums(lastFmCreds)
+        val listenBrainzTopReleases = fetchListenBrainzTopReleases(listenBrainzCreds)
+        val combinedTopAlbums = (lastFmTopAlbums + listenBrainzTopReleases)
+            .distinctBy { "${it.title.lowercase().trim()}:::${it.artist.lowercase().trim()}" }
+            .take(10)
+        val session = sessionStore.getSession()
+        resolveAlbums(combinedTopAlbums, session?.serverUrl, session?.token)
+    }
+
+    suspend fun fetchTopTracks(): List<HomeTrack> = withContext(Dispatchers.IO) {
+        val topTracks = getRawTopTracks()
+        val rawTopTracks = topTracks.take(10)
+        val session = sessionStore.getSession()
+        resolveTracks(rawTopTracks, session?.serverUrl, session?.token)
+    }
+
+    suspend fun fetchRegionalTrending(region: String? = null): List<HomeTrack> =
+        withContext(Dispatchers.IO) {
+            val targetRegion = region?.trim()?.ifEmpty { null } ?: getQueryRegion()
+            ?: return@withContext emptyList()
+            val lastFmCreds = sessionStore.getLastFmCredentials()
+            val regionalTrending =
+                fetchLastFmRegionalTrendingTracks(lastFmCreds, targetRegion).take(6)
+            val session = sessionStore.getSession()
+            resolveTracks(regionalTrending, session?.serverUrl, session?.token)
+        }
+
+    suspend fun fetchGlobalTrending(): List<HomeTrack> = withContext(Dispatchers.IO) {
+        val lastFmCreds = sessionStore.getLastFmCredentials()
+        val lastFmTrending = fetchLastFmTrendingTracks(lastFmCreds)
+        val listenBrainzTrending = getRawListenBrainzTrending()
+        val globalTrending = (lastFmTrending + listenBrainzTrending)
+            .distinctBy { "${it.title.lowercase().trim()}:::${it.artist.lowercase().trim()}" }
+            .take(6)
+        val session = sessionStore.getSession()
+        resolveTracks(globalTrending, session?.serverUrl, session?.token)
+    }
+
+    suspend fun fetchWeeklyPicks(): List<HomeTrack> = withContext(Dispatchers.IO) {
+        val lastFmCreds = sessionStore.getLastFmCredentials()
+        val topArtists = getRawTopArtists()
+        val weeklyCandidateArtists = topArtists.drop(1).take(3).ifEmpty { topArtists.take(3) }
+        val recent = getRawRecentTracks()
+        val rotationKeys =
+            recent.map { "${it.title.lowercase().trim()}:::${it.artist.lowercase().trim()}" }
+                .toSet()
+        val rawWeekly = fetchWeeklyDiscoveries(lastFmCreds, weeklyCandidateArtists)
+            .distinctBy { "${it.title.lowercase().trim()}:::${it.artist.lowercase().trim()}" }
+            .filterNot {
+                rotationKeys.contains(
+                    "${
+                        it.title.lowercase().trim()
+                    }:::${it.artist.lowercase().trim()}"
+                )
+            }
+            .take(8)
+        val session = sessionStore.getSession()
+        resolveTracks(rawWeekly, session?.serverUrl, session?.token)
+    }
+
+    suspend fun loadFeed(): HomeFeedState = coroutineScope {
+        val displayRegion = getDisplayRegion().orEmpty()
+        val rotationDeferred = async { fetchRotation() }
+        val recommendedDeferred = async { fetchRecommended() }
+        val topArtistsDeferred = async { fetchTopArtists() }
+        val topAlbumsDeferred = async { fetchTopAlbums() }
+        val topTracksDeferred = async { fetchTopTracks() }
+        val regionalTrendingDeferred = async { fetchRegionalTrending() }
+        val globalTrendingDeferred = async { fetchGlobalTrending() }
+        val weeklyDeferred = async { fetchWeeklyPicks() }
+
+        val resolvedRotation = rotationDeferred.await()
+        val resolvedRecommended = recommendedDeferred.await()
+        val resolvedTopArtists = topArtistsDeferred.await()
+        val resolvedTopAlbums = topAlbumsDeferred.await()
+        val resolvedTopTracks = topTracksDeferred.await()
+        val resolvedRegional = regionalTrendingDeferred.await()
+        val resolvedGlobal = globalTrendingDeferred.await()
+        val resolvedWeekly = weeklyDeferred.await()
+
+        HomeFeedState(
+            rotation = SectionState(SectionLoadState.LOADED, resolvedRotation),
+            recommended = SectionState(SectionLoadState.LOADED, resolvedRecommended),
+            topArtists = SectionState(SectionLoadState.LOADED, resolvedTopArtists),
+            topAlbums = SectionState(SectionLoadState.LOADED, resolvedTopAlbums),
+            topTracks = SectionState(SectionLoadState.LOADED, resolvedTopTracks),
+            regionalTrending = SectionState(SectionLoadState.LOADED, resolvedRegional),
+            globalTrending = SectionState(SectionLoadState.LOADED, resolvedGlobal),
+            regionName = displayRegion,
+            weeklyPicks = SectionState(SectionLoadState.LOADED, resolvedWeekly),
+        )
+    }
+
+    private suspend fun resolveTracks(
+        tracks: List<HomeTrack>,
+        serverUrl: String?,
+        token: String?,
+    ): List<HomeTrack> = coroutineScope {
+        tracks.map { track ->
+            async {
+                val resolved = artworkResolver.resolveTrackArtwork(
+                    serverUrl = serverUrl,
+                    token = token,
+                    title = track.title,
+                    artist = track.artist,
+                    album = track.album,
+                )
+                track.copy(artworkUrl = resolved ?: track.artworkUrl)
+            }
+        }.awaitAll()
+    }
+
+    private suspend fun resolveAlbums(
+        albums: List<HomeAlbum>,
+        serverUrl: String?,
+        token: String?,
+    ): List<HomeAlbum> = coroutineScope {
+        albums.map { album ->
+            async {
+                val resolved = artworkResolver.resolveAlbumArtwork(
+                    serverUrl = serverUrl,
+                    token = token,
+                    title = album.title,
+                    artist = album.artist,
+                )
+                album.copy(artworkUrl = resolved ?: album.artworkUrl)
+            }
+        }.awaitAll()
+    }
+
+    private suspend fun resolveArtists(
+        artists: List<HomeArtist>,
+        serverUrl: String?,
+        token: String?,
+    ): List<HomeArtist> = coroutineScope {
+        artists.map { artist ->
+            async {
+                val resolved = artworkResolver.resolveArtistArtwork(
+                    serverUrl = serverUrl,
+                    token = token,
+                    artist = artist.name,
+                )
+                artist.copy(imageUrl = resolved ?: artist.imageUrl)
+            }
+        }.awaitAll()
+    }
+
+    private fun fetchLastFmRecentTracks(creds: LastFmCredentials?): List<HomeTrack> {
+        val username = creds?.username?.trim().orEmpty()
+        if (username.isEmpty()) return emptyList()
+
+        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: DEFAULT_LASTFM_API_KEY
+        val endpoint =
+            "https://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=$username&api_key=$apiKey&format=json&limit=25"
+
+        return try {
+            val url = URL(endpoint)
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 8000
+                setRequestProperty("Accept", "application/json")
+            }
+
+            if (connection.responseCode !in 200..299) return emptyList()
+
+            val text = connection.inputStream.let { stream ->
+                BufferedReader(
+                    InputStreamReader(
+                        stream,
+                        StandardCharsets.UTF_8
+                    )
+                ).use { it.readText() }
+            }
+
+            val root = JSONObject(text)
+            val recent = root.optJSONObject("recenttracks") ?: return emptyList()
+            val trackArray = recent.optJSONArray("track") ?: return emptyList()
+
+            val result = mutableListOf<HomeTrack>()
+            for (i in 0 until trackArray.length()) {
+                val obj = trackArray.optJSONObject(i) ?: continue
+                val name = obj.optString("name").trim()
+                val artistObj = obj.optJSONObject("artist")
+                val artist = (artistObj?.optString("#text") ?: obj.optString("artist")).trim()
+                if (name.isEmpty() || artist.isEmpty()) continue
+
+                val album = obj.optJSONObject("album")?.optString("#text")?.trim()
+
+                result.add(
+                    HomeTrack(
+                        id = "lfm-rec-$i",
+                        title = name,
+                        artist = artist,
+                        album = album,
+                        artworkUrl = null,
+                    )
+                )
+            }
+            result
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun fetchLastFmTopTracks(creds: LastFmCredentials?): List<HomeTrack> {
+        val username = creds?.username?.trim().orEmpty()
+        if (username.isEmpty()) return emptyList()
+
+        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: DEFAULT_LASTFM_API_KEY
+        val endpoint =
+            "https://ws.audioscrobbler.com/2.0/?method=user.gettoptracks&user=$username&api_key=$apiKey&format=json&limit=15"
+
+        return try {
+            val url = URL(endpoint)
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 8000
+                setRequestProperty("Accept", "application/json")
+            }
+
+            if (connection.responseCode !in 200..299) return emptyList()
+
+            val text = connection.inputStream.let { stream ->
+                BufferedReader(
+                    InputStreamReader(
+                        stream,
+                        StandardCharsets.UTF_8
+                    )
+                ).use { it.readText() }
+            }
+
+            val root = JSONObject(text)
+            val topTracksObj = root.optJSONObject("toptracks") ?: return emptyList()
+            val trackArray = topTracksObj.optJSONArray("track") ?: return emptyList()
+
+            val result = mutableListOf<HomeTrack>()
+            for (i in 0 until trackArray.length()) {
+                val obj = trackArray.optJSONObject(i) ?: continue
+                val name = obj.optString("name").trim()
+                val artistObj = obj.optJSONObject("artist")
+                val artist = (artistObj?.optString("name") ?: obj.optString("artist")).trim()
+                if (name.isEmpty() || artist.isEmpty()) continue
+
+                val playCount = obj.optString("playcount").toLongOrNull() ?: 0L
+
+                result.add(
+                    HomeTrack(
+                        id = "lfm-top-trk-$i",
+                        title = name,
+                        artist = artist,
+                        playCount = playCount,
+                        artworkUrl = null,
+                    )
+                )
+            }
+            result
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun fetchLastFmTopArtists(creds: LastFmCredentials?): List<HomeArtist> {
+        val username = creds?.username?.trim().orEmpty()
+        if (username.isEmpty()) return emptyList()
+
+        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: DEFAULT_LASTFM_API_KEY
+        val endpoint =
+            "https://ws.audioscrobbler.com/2.0/?method=user.gettopartists&user=$username&api_key=$apiKey&format=json&limit=15"
+
+        return try {
+            val url = URL(endpoint)
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 8000
+                setRequestProperty("Accept", "application/json")
+            }
+
+            if (connection.responseCode !in 200..299) return emptyList()
+
+            val text = connection.inputStream.let { stream ->
+                BufferedReader(
+                    InputStreamReader(
+                        stream,
+                        StandardCharsets.UTF_8
+                    )
+                ).use { it.readText() }
+            }
+
+            val root = JSONObject(text)
+            val topArtistsObj = root.optJSONObject("topartists") ?: return emptyList()
+            val artistArray = topArtistsObj.optJSONArray("artist") ?: return emptyList()
+
+            val result = mutableListOf<HomeArtist>()
+            for (i in 0 until artistArray.length()) {
+                val obj = artistArray.optJSONObject(i) ?: continue
+                val name = obj.optString("name").trim()
+                if (name.isEmpty()) continue
+
+                val playCount = obj.optString("playcount").toLongOrNull() ?: 0L
+
+                result.add(
+                    HomeArtist(
+                        id = "lfm-art-$i",
+                        name = name,
+                        playCount = playCount,
+                        imageUrl = null,
+                    )
+                )
+            }
+            result
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun fetchLastFmTopAlbums(creds: LastFmCredentials?): List<HomeAlbum> {
+        val username = creds?.username?.trim().orEmpty()
+        if (username.isEmpty()) return emptyList()
+
+        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: DEFAULT_LASTFM_API_KEY
+        val endpoint =
+            "https://ws.audioscrobbler.com/2.0/?method=user.gettopalbums&user=$username&api_key=$apiKey&format=json&limit=15"
+
+        return try {
+            val url = URL(endpoint)
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 8000
+                setRequestProperty("Accept", "application/json")
+            }
+
+            if (connection.responseCode !in 200..299) return emptyList()
+
+            val text = connection.inputStream.let { stream ->
+                BufferedReader(
+                    InputStreamReader(
+                        stream,
+                        StandardCharsets.UTF_8
+                    )
+                ).use { it.readText() }
+            }
+
+            val root = JSONObject(text)
+            val topAlbumsObj = root.optJSONObject("topalbums") ?: return emptyList()
+            val albumArray = topAlbumsObj.optJSONArray("album") ?: return emptyList()
+
+            val result = mutableListOf<HomeAlbum>()
+            for (i in 0 until albumArray.length()) {
+                val obj = albumArray.optJSONObject(i) ?: continue
+                val title = obj.optString("name").trim()
+                val artistObj = obj.optJSONObject("artist")
+                val artist = (artistObj?.optString("name") ?: obj.optString("artist")).trim()
+                if (title.isEmpty() || artist.isEmpty()) continue
+
+                val playCount = obj.optString("playcount").toLongOrNull() ?: 0L
+
+                result.add(
+                    HomeAlbum(
+                        id = "lfm-alb-$i",
+                        title = title,
+                        artist = artist,
+                        playCount = playCount,
+                        artworkUrl = null,
+                    )
+                )
+            }
+            result
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun fetchListenBrainzRecentListens(creds: ListenBrainzCredentials?): List<HomeTrack> {
+        val username = creds?.username?.trim().orEmpty()
+        if (username.isEmpty()) return emptyList()
+
+        val endpoint = "https://api.listenbrainz.org/1/user/$username/listens?count=25"
+
+        return try {
+            val url = URL(endpoint)
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 8000
+                setRequestProperty("Accept", "application/json")
+                if (!creds?.token.isNullOrBlank()) {
+                    setRequestProperty("Authorization", "Token ${creds.token.trim()}")
+                }
+            }
+
+            if (connection.responseCode !in 200..299) return emptyList()
+
+            val text = connection.inputStream.let { stream ->
+                BufferedReader(
+                    InputStreamReader(
+                        stream,
+                        StandardCharsets.UTF_8
+                    )
+                ).use { it.readText() }
+            }
+
+            val root = JSONObject(text)
+            val payload = root.optJSONObject("payload") ?: return emptyList()
+            val listensArray = payload.optJSONArray("listens") ?: return emptyList()
+
+            val result = mutableListOf<HomeTrack>()
+            for (i in 0 until listensArray.length()) {
+                val obj = listensArray.optJSONObject(i) ?: continue
+                val meta = obj.optJSONObject("track_metadata") ?: continue
+                val title = meta.optString("track_name").trim()
+                val artist = meta.optString("artist_name").trim()
+                if (title.isEmpty() || artist.isEmpty()) continue
+
+                val album = meta.optString("release_name").trim().ifEmpty { null }
+
+                result.add(
+                    HomeTrack(
+                        id = "lb-rec-$i",
+                        title = title,
+                        artist = artist,
+                        album = album,
+                        artworkUrl = null,
+                    )
+                )
+            }
+            result
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun fetchListenBrainzTopRecordings(creds: ListenBrainzCredentials?): List<HomeTrack> {
+        val username = creds?.username?.trim().orEmpty()
+        if (username.isEmpty()) return emptyList()
+
+        val endpoint =
+            "https://api.listenbrainz.org/1/stats/user/$username/recordings?range=all_time&count=15"
+
+        return try {
+            val url = URL(endpoint)
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 8000
+                setRequestProperty("Accept", "application/json")
+                if (!creds?.token.isNullOrBlank()) {
+                    setRequestProperty("Authorization", "Token ${creds.token.trim()}")
+                }
+            }
+
+            if (connection.responseCode !in 200..299) return emptyList()
+
+            val text = connection.inputStream.let { stream ->
+                BufferedReader(
+                    InputStreamReader(
+                        stream,
+                        StandardCharsets.UTF_8
+                    )
+                ).use { it.readText() }
+            }
+
+            val root = JSONObject(text)
+            val payload = root.optJSONObject("payload") ?: return emptyList()
+            val recArray = payload.optJSONArray("recordings") ?: return emptyList()
+
+            val result = mutableListOf<HomeTrack>()
+            for (i in 0 until recArray.length()) {
+                val obj = recArray.optJSONObject(i) ?: continue
+                val title = obj.optString("track_name").trim()
+                val artist = obj.optString("artist_name").trim()
+                if (title.isEmpty() || artist.isEmpty()) continue
+
+                val album = obj.optString("release_name").trim().ifEmpty { null }
+                val playCount = obj.optLong("listen_count", 0L)
+
+                result.add(
+                    HomeTrack(
+                        id = "lb-top-rec-$i",
+                        title = title,
+                        artist = artist,
+                        album = album,
+                        playCount = playCount,
+                        artworkUrl = null,
+                    )
+                )
+            }
+            result
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun fetchListenBrainzTopArtists(creds: ListenBrainzCredentials?): List<HomeArtist> {
+        val username = creds?.username?.trim().orEmpty()
+        if (username.isEmpty()) return emptyList()
+
+        val endpoint =
+            "https://api.listenbrainz.org/1/stats/user/$username/artists?range=all_time&count=15"
+
+        return try {
+            val url = URL(endpoint)
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 8000
+                setRequestProperty("Accept", "application/json")
+                if (!creds?.token.isNullOrBlank()) {
+                    setRequestProperty("Authorization", "Token ${creds.token.trim()}")
+                }
+            }
+
+            if (connection.responseCode !in 200..299) return emptyList()
+
+            val text = connection.inputStream.let { stream ->
+                BufferedReader(
+                    InputStreamReader(
+                        stream,
+                        StandardCharsets.UTF_8
+                    )
+                ).use { it.readText() }
+            }
+
+            val root = JSONObject(text)
+            val payload = root.optJSONObject("payload") ?: return emptyList()
+            val artArray = payload.optJSONArray("artists") ?: return emptyList()
+
+            val result = mutableListOf<HomeArtist>()
+            for (i in 0 until artArray.length()) {
+                val obj = artArray.optJSONObject(i) ?: continue
+                val name = obj.optString("artist_name").trim()
+                if (name.isEmpty()) continue
+
+                val playCount = obj.optLong("listen_count", 0L)
+
+                result.add(
+                    HomeArtist(
+                        id = "lb-top-art-$i",
+                        name = name,
+                        playCount = playCount,
+                        imageUrl = null,
+                    )
+                )
+            }
+            result
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun fetchListenBrainzTopReleases(creds: ListenBrainzCredentials?): List<HomeAlbum> {
+        val username = creds?.username?.trim().orEmpty()
+        if (username.isEmpty()) return emptyList()
+
+        val endpoint =
+            "https://api.listenbrainz.org/1/stats/user/$username/releases?range=all_time&count=15"
+
+        return try {
+            val url = URL(endpoint)
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 8000
+                setRequestProperty("Accept", "application/json")
+                if (!creds?.token.isNullOrBlank()) {
+                    setRequestProperty("Authorization", "Token ${creds.token.trim()}")
+                }
+            }
+
+            if (connection.responseCode !in 200..299) return emptyList()
+
+            val text = connection.inputStream.let { stream ->
+                BufferedReader(
+                    InputStreamReader(
+                        stream,
+                        StandardCharsets.UTF_8
+                    )
+                ).use { it.readText() }
+            }
+
+            val root = JSONObject(text)
+            val payload = root.optJSONObject("payload") ?: return emptyList()
+            val relArray = payload.optJSONArray("releases") ?: return emptyList()
+
+            val result = mutableListOf<HomeAlbum>()
+            for (i in 0 until relArray.length()) {
+                val obj = relArray.optJSONObject(i) ?: continue
+                val title = obj.optString("release_name").trim()
+                val artist = obj.optString("artist_name").trim()
+                if (title.isEmpty() || artist.isEmpty()) continue
+
+                val playCount = obj.optLong("listen_count", 0L)
+
+                result.add(
+                    HomeAlbum(
+                        id = "lb-top-rel-$i",
+                        title = title,
+                        artist = artist,
+                        playCount = playCount,
+                        artworkUrl = null,
+                    )
+                )
+            }
+            result
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun fetchLastFmSimilarTracks(
+        creds: LastFmCredentials?,
+        seedTracks: List<HomeTrack>,
+        topArtistName: String? = null,
+    ): List<HomeTrack> {
+        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: DEFAULT_LASTFM_API_KEY
+        val result = mutableListOf<HomeTrack>()
+
+        for (seed in seedTracks) {
+            val encodedTrack =
+                java.net.URLEncoder.encode(seed.title.trim(), StandardCharsets.UTF_8.name())
+            val encodedArtist =
+                java.net.URLEncoder.encode(seed.artist.trim(), StandardCharsets.UTF_8.name())
+            val endpoint =
+                "https://ws.audioscrobbler.com/2.0/?method=track.getsimilar&track=$encodedTrack&artist=$encodedArtist&api_key=$apiKey&format=json&limit=6"
+
+            val tracks = executeLastFmTrackList(endpoint, "similartracks", "track")
+            for (t in tracks) {
+                if (result.none {
+                        it.title.equals(
+                            t.title,
+                            ignoreCase = true
+                        ) && it.artist.equals(t.artist, ignoreCase = true)
+                    }) {
+                    result.add(t)
+                }
+            }
+            if (result.size >= 8) break
+        }
+
+        if (result.isEmpty() && !topArtistName.isNullOrBlank()) {
+            val encodedArtist =
+                java.net.URLEncoder.encode(topArtistName.trim(), StandardCharsets.UTF_8.name())
+            val similarEndpoint =
+                "https://ws.audioscrobbler.com/2.0/?method=artist.getsimilar&artist=$encodedArtist&api_key=$apiKey&format=json&limit=4"
+            val similarArtists = executeLastFmArtistList(similarEndpoint)
+            for (simArtist in similarArtists) {
+                val encSimArtist =
+                    java.net.URLEncoder.encode(simArtist.trim(), StandardCharsets.UTF_8.name())
+                val topTracksEndpoint =
+                    "https://ws.audioscrobbler.com/2.0/?method=artist.gettoptracks&artist=$encSimArtist&api_key=$apiKey&format=json&limit=2"
+                val tracks = executeLastFmTrackList(topTracksEndpoint, "toptracks", "track")
+                for (t in tracks) {
+                    if (result.none {
+                            it.title.equals(
+                                t.title,
+                                ignoreCase = true
+                            ) && it.artist.equals(t.artist, ignoreCase = true)
+                        }) {
+                        result.add(t)
+                    }
+                }
+            }
+        }
+
+        return result
+    }
+
+    private fun executeLastFmTrackList(
+        endpoint: String,
+        containerKey: String,
+        listKey: String,
+    ): List<HomeTrack> {
+        return try {
+            val url = URL(endpoint)
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 8000
+                setRequestProperty("Accept", "application/json")
+            }
+            if (connection.responseCode !in 200..299) return emptyList()
+            val text = connection.inputStream.let { stream ->
+                BufferedReader(
+                    InputStreamReader(
+                        stream,
+                        StandardCharsets.UTF_8
+                    )
+                ).use { it.readText() }
+            }
+            val root = JSONObject(text)
+            val container = root.optJSONObject(containerKey) ?: return emptyList()
+            val trackArray = container.optJSONArray(listKey) ?: return emptyList()
+            val result = mutableListOf<HomeTrack>()
+            for (i in 0 until trackArray.length()) {
+                val obj = trackArray.optJSONObject(i) ?: continue
+                val name = obj.optString("name").trim()
+                val artistObj = obj.optJSONObject("artist")
+                val artist = (artistObj?.optString("name") ?: obj.optString("artist")).trim()
+                if (name.isNotEmpty() && artist.isNotEmpty()) {
+                    result.add(
+                        HomeTrack(
+                            id = "lfm-rec-$name-$artist",
+                            title = name,
+                            artist = artist,
+                            artworkUrl = null,
+                        )
+                    )
+                }
+            }
+            result
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun executeLastFmArtistList(endpoint: String): List<String> {
+        return try {
+            val url = URL(endpoint)
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 8000
+                setRequestProperty("Accept", "application/json")
+            }
+            if (connection.responseCode !in 200..299) return emptyList()
+            val text = connection.inputStream.let { stream ->
+                BufferedReader(
+                    InputStreamReader(
+                        stream,
+                        StandardCharsets.UTF_8
+                    )
+                ).use { it.readText() }
+            }
+            val root = JSONObject(text)
+            val similarObj = root.optJSONObject("similarartists") ?: return emptyList()
+            val artistArray = similarObj.optJSONArray("artist") ?: return emptyList()
+            val result = mutableListOf<String>()
+            for (i in 0 until artistArray.length()) {
+                val obj = artistArray.optJSONObject(i) ?: continue
+                val name = obj.optString("name").trim()
+                if (name.isNotEmpty()) {
+                    result.add(name)
+                }
+            }
+            result
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun fetchListenBrainzRecommendations(creds: ListenBrainzCredentials?): List<HomeTrack> {
+        val username = creds?.username?.trim().orEmpty()
+        if (username.isEmpty()) return emptyList()
+
+        val endpoint =
+            "https://api.listenbrainz.org/1/cf/recommendation/user/$username/recording?count=15"
+
+        return try {
+            val url = URL(endpoint)
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 8000
+                setRequestProperty("Accept", "application/json")
+                if (!creds?.token.isNullOrBlank()) {
+                    setRequestProperty("Authorization", "Token ${creds.token.trim()}")
+                }
+            }
+
+            if (connection.responseCode !in 200..299) return emptyList()
+
+            val text = connection.inputStream.let { stream ->
+                BufferedReader(
+                    InputStreamReader(
+                        stream,
+                        StandardCharsets.UTF_8
+                    )
+                ).use { it.readText() }
+            }
+
+            val root = JSONObject(text)
+            val payload = root.optJSONObject("payload") ?: return emptyList()
+            val mbids = payload.optJSONArray("mbids") ?: return emptyList()
+
+            val mbidList = mutableListOf<String>()
+            for (i in 0 until mbids.length()) {
+                val obj = mbids.optJSONObject(i) ?: continue
+                val mbid = obj.optString("recording_mbid").trim()
+                if (mbid.isNotEmpty()) {
+                    mbidList.add(mbid)
+                }
+            }
+            if (mbidList.isEmpty()) return emptyList()
+
+            val metaEndpoint =
+                "https://api.listenbrainz.org/1/metadata/recording/?recording_mbids=${
+                    mbidList.joinToString(
+                        ","
+                    )
+                }&inc=artist"
+            val metaUrl = URL(metaEndpoint)
+            val metaConn = (metaUrl.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 8000
+                setRequestProperty("Accept", "application/json")
+            }
+
+            if (metaConn.responseCode !in 200..299) return emptyList()
+
+            val metaText = metaConn.inputStream.let { stream ->
+                BufferedReader(
+                    InputStreamReader(
+                        stream,
+                        StandardCharsets.UTF_8
+                    )
+                ).use { it.readText() }
+            }
+
+            val metaRoot = JSONObject(metaText)
+            val result = mutableListOf<HomeTrack>()
+            var idx = 0
+            for (key in metaRoot.keys()) {
+                val item = metaRoot.optJSONObject(key) ?: continue
+                val recObj = item.optJSONObject("recording")
+                val artObj = item.optJSONObject("artist")
+                val title = recObj?.optString("name")?.trim().orEmpty()
+                val artist = artObj?.optString("name")?.trim().orEmpty()
+                if (title.isNotEmpty() && artist.isNotEmpty()) {
+                    result.add(
+                        HomeTrack(
+                            id = "lb-rec-cf-$idx",
+                            title = title,
+                            artist = artist,
+                            artworkUrl = null,
+                        )
+                    )
+                    idx++
+                }
+            }
+            result
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun fetchLastFmTrendingTracks(creds: LastFmCredentials?): List<HomeTrack> {
+        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: DEFAULT_LASTFM_API_KEY
+        val endpoint =
+            "https://ws.audioscrobbler.com/2.0/?method=chart.gettoptracks&api_key=$apiKey&format=json&limit=10"
+        return executeLastFmTrackList(endpoint, "tracks", "track")
+    }
+
+    private fun fetchListenBrainzTrendingRecordings(): List<HomeTrack> {
+        val endpoint =
+            "https://api.listenbrainz.org/1/stats/sitewide/recordings?range=this_week&count=10"
+
+        return try {
+            val url = URL(endpoint)
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 8000
+                readTimeout = 8000
+                setRequestProperty("Accept", "application/json")
+            }
+
+            if (connection.responseCode !in 200..299) return emptyList()
+
+            val text = connection.inputStream.let { stream ->
+                BufferedReader(
+                    InputStreamReader(
+                        stream,
+                        StandardCharsets.UTF_8
+                    )
+                ).use { it.readText() }
+            }
+
+            val root = JSONObject(text)
+            val payload = root.optJSONObject("payload") ?: return emptyList()
+            val recArray = payload.optJSONArray("recordings") ?: return emptyList()
+
+            val result = mutableListOf<HomeTrack>()
+            for (i in 0 until recArray.length()) {
+                val obj = recArray.optJSONObject(i) ?: continue
+                val title = obj.optString("track_name").trim()
+                val artist = obj.optString("artist_name").trim()
+                if (title.isEmpty() || artist.isEmpty()) continue
+
+                val album = obj.optString("release_name").trim().ifEmpty { null }
+                val playCount = obj.optLong("listen_count", 0L)
+
+                result.add(
+                    HomeTrack(
+                        id = "lb-trend-$i",
+                        title = title,
+                        artist = artist,
+                        album = album,
+                        playCount = playCount,
+                        artworkUrl = null,
+                    )
+                )
+            }
+            result
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun fetchLastFmRegionalTrendingTracks(
+        creds: LastFmCredentials?,
+        country: String
+    ): List<HomeTrack> {
+        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: DEFAULT_LASTFM_API_KEY
+        val encodedCountry =
+            java.net.URLEncoder.encode(country.trim(), StandardCharsets.UTF_8.name())
+        val endpoint =
+            "https://ws.audioscrobbler.com/2.0/?method=geo.gettoptracks&country=$encodedCountry&api_key=$apiKey&format=json&limit=10"
+        return executeLastFmTrackList(endpoint, "tracks", "track")
+    }
+
+    private fun fetchWeeklyDiscoveries(
+        creds: LastFmCredentials?,
+        seedArtists: List<HomeArtist>,
+    ): List<HomeTrack> {
+        if (seedArtists.isEmpty()) return emptyList()
+        val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: DEFAULT_LASTFM_API_KEY
+        val result = mutableListOf<HomeTrack>()
+
+        for (artist in seedArtists.take(3)) {
+            val encodedArtist =
+                java.net.URLEncoder.encode(artist.name.trim(), StandardCharsets.UTF_8.name())
+            val similarEndpoint =
+                "https://ws.audioscrobbler.com/2.0/?method=artist.getsimilar&artist=$encodedArtist&api_key=$apiKey&format=json&limit=3"
+            val similarArtists = executeLastFmArtistList(similarEndpoint)
+            for (simArtist in similarArtists) {
+                val encSimArtist =
+                    java.net.URLEncoder.encode(simArtist.trim(), StandardCharsets.UTF_8.name())
+                val topTracksEndpoint =
+                    "https://ws.audioscrobbler.com/2.0/?method=artist.gettoptracks&artist=$encSimArtist&api_key=$apiKey&format=json&limit=2"
+                val tracks = executeLastFmTrackList(topTracksEndpoint, "toptracks", "track")
+                for (t in tracks) {
+                    if (result.none {
+                            it.title.equals(
+                                t.title,
+                                ignoreCase = true
+                            ) && it.artist.equals(t.artist, ignoreCase = true)
+                        }) {
+                        result.add(t)
+                    }
+                }
+                if (result.size >= 8) break
+            }
+            if (result.size >= 8) break
+        }
+
+        return result
+    }
+
+    private companion object {
+        const val DEFAULT_LASTFM_API_KEY = "426a20516a3e511c5d2ed88f710247fd"
+    }
+}

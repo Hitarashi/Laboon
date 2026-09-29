@@ -42,7 +42,6 @@ private val NavigationItemVerticalPadding = 8.dp
 internal val NavigationBarBottomPadding = 10.dp
 private val NavigationBarClearanceSlack = 8.dp
 
-// 78 + 10 + 8: the scroll clearance leaves need so content clears the bar, asserted once here.
 internal val FloatingNavBarClearance =
     NavigationBarHeight + NavigationBarBottomPadding + NavigationBarClearanceSlack
 

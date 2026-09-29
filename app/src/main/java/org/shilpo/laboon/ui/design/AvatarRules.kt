@@ -24,13 +24,17 @@ fun avatarImageSpec(session: AuthSession?): AvatarImageSpec? {
     return AvatarImageSpec(url, authorization)
 }
 
-// First candidate (name, username, firstName) that actually contains a letter wins,
-// so a blank or whitespace-only name falls through instead of blanking the avatar.
 fun avatarInitial(user: AuthUser?): Char? =
     listOfNotNull(user?.name, user?.username, user?.firstName)
         .firstNotNullOfOrNull { candidate ->
             candidate.firstOrNull(Char::isLetter)?.uppercaseChar()
         }
 
+fun cleanDisplayName(raw: String): String =
+    raw.replace(Regex("""\s*\([\"']*\)\s*;?"""), "").trim()
+
 fun userDisplayName(user: AuthUser?): String? =
-    listOfNotNull(user?.name, user?.username).firstOrNull { it.isNotBlank() }
+    listOfNotNull(user?.name, user?.username)
+        .firstOrNull { it.isNotBlank() }
+        ?.let(::cleanDisplayName)
+        ?.takeIf { it.isNotBlank() }

@@ -15,7 +15,6 @@ val GoogleSansFlex = FontFamily(
 
 private val defaultTypography = Typography()
 
-// The emphasis half below must stay in sync with the base half's fontFamily.
 val AppTypography = Typography(
     displayLarge = defaultTypography.displayLarge.copy(fontFamily = GoogleSansFlex),
     displayMedium = defaultTypography.displayMedium.copy(fontFamily = GoogleSansFlex),
