@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialShapes
@@ -117,6 +118,7 @@ private data class CookieMorphShape(
 fun MiniPlayer(
     track: HomeTrack,
     isPlaying: Boolean,
+    isBuffering: Boolean = false,
     progress: Float = 0f,
     onPlayPauseClick: () -> Unit,
     onPreviousClick: () -> Unit,
@@ -346,14 +348,26 @@ fun MiniPlayer(
                             overflow = TextOverflow.Clip,
                             modifier = Modifier.basicMarquee(iterations = if (isPlaying) Int.MAX_VALUE else 0),
                         )
-                        Text(
-                            text = track.artist,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Clip,
-                            modifier = Modifier.basicMarquee(iterations = if (isPlaying) Int.MAX_VALUE else 0),
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                text = track.artist,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Clip,
+                                modifier = Modifier
+                                    .weight(1f, fill = false)
+                                    .basicMarquee(iterations = if (isPlaying) Int.MAX_VALUE else 0),
+                            )
+                            CodecIcon(
+                                codec = track.codec,
+                                height = 9.dp,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                            )
+                        }
                     }
 
                     Box(
@@ -430,6 +444,7 @@ fun MiniPlayer(
 
                         PlayPauseButton(
                             isPlaying = isPlaying,
+                            isBuffering = isBuffering,
                             morphProgress = morphProgress,
                             rotationAngle = { rotationAnimatable.value },
                             playButtonGradient = playButtonGradient,
@@ -465,6 +480,7 @@ fun MiniPlayer(
 @Composable
 private fun PlayPauseButton(
     isPlaying: Boolean,
+    isBuffering: Boolean,
     morphProgress: Float,
     rotationAngle: () -> Float,
     playButtonGradient: Brush,
@@ -491,37 +507,61 @@ private fun PlayPauseButton(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .shadow(
-                    elevation = 2.dp,
-                    shape = animatedCookieShape,
-                    clip = false,
-                )
-                .background(
-                    brush = playButtonGradient,
-                    shape = animatedCookieShape,
-                )
-                .border(
-                    width = 0.5.dp,
-                    brush = playButtonBorderBrush,
-                    shape = animatedCookieShape,
-                ),
-        )
         Crossfade(
-            targetState = isPlaying,
+            targetState = isBuffering,
             animationSpec = motionScheme.fastEffectsSpec(),
-            label = "miniPlayerPlayPauseCrossfade",
-        ) { playing ->
-            Icon(
-                painter = painterResource(
-                    if (playing) R.drawable.ic_pause else R.drawable.ic_play,
-                ),
-                contentDescription = if (playing) "Pause" else "Play",
-                modifier = Modifier.size(22.dp),
-                tint = controlIconTint,
-            )
+            label = "miniPlayerBufferingCrossfade",
+        ) { buffering ->
+            if (buffering) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CircularWavyProgressIndicator(
+                        modifier = Modifier.size(36.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                    )
+                }
+            } else {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .shadow(
+                                elevation = 2.dp,
+                                shape = animatedCookieShape,
+                                clip = false,
+                            )
+                            .background(
+                                brush = playButtonGradient,
+                                shape = animatedCookieShape,
+                            )
+                            .border(
+                                width = 0.5.dp,
+                                brush = playButtonBorderBrush,
+                                shape = animatedCookieShape,
+                            ),
+                    )
+                    Crossfade(
+                        targetState = isPlaying,
+                        animationSpec = motionScheme.fastEffectsSpec(),
+                        label = "miniPlayerPlayPauseCrossfade",
+                    ) { playing ->
+                        Icon(
+                            painter = painterResource(
+                                if (playing) R.drawable.ic_pause else R.drawable.ic_play,
+                            ),
+                            contentDescription = if (playing) "Pause" else "Play",
+                            modifier = Modifier.size(22.dp),
+                            tint = controlIconTint,
+                        )
+                    }
+                }
+            }
         }
     }
 }

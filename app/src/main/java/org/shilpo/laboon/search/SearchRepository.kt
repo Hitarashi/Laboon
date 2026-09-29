@@ -16,9 +16,15 @@ import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
+data class PlaybackResolution(
+    val streamUrl: String,
+    val codec: String? = null,
+)
+
 interface SearchRepository {
     suspend fun search(query: String): List<HomeTrack>
     suspend fun resolvePlaybackUrl(track: HomeTrack): String?
+    suspend fun resolvePlayback(track: HomeTrack): PlaybackResolution?
 }
 
 class SearchRepositoryImpl(
@@ -63,6 +69,19 @@ class SearchRepositoryImpl(
     }
 
     override suspend fun resolvePlaybackUrl(track: HomeTrack): String? =
+        resolvePlayback(track)?.streamUrl
+
+    private fun codecScore(codec: String?): Int {
+        val c = codec?.lowercase()?.trim() ?: return 0
+        return when {
+            c == "ec-3" || c == "ec3" || c == "atmos" || c.contains("dolby") || c == "eac3" -> 3
+            c == "alac" || c == "flac" -> 2
+            c == "aac" || c.contains("mp4a") -> 1
+            else -> 0
+        }
+    }
+
+    override suspend fun resolvePlayback(track: HomeTrack): PlaybackResolution? =
         withContext(Dispatchers.IO) {
             val session = sessionStore.getSession() ?: return@withContext null
             val serverUrl = session.serverUrl.trim().removeSuffix("/")
@@ -70,12 +89,13 @@ class SearchRepositoryImpl(
             if (serverUrl.isEmpty() || token.isEmpty()) return@withContext null
 
             var backendId = track.backendTrackId
-            if (backendId == null || backendId <= 0) {
+            var foundCodec = track.codec
+            if (backendId == null || backendId <= 0 || codecScore(foundCodec) < 3) {
                 val encoded = URLEncoder.encode(
                     "${track.title} ${track.artist}",
                     StandardCharsets.UTF_8.name()
                 )
-                val searchEndpoint = "$serverUrl/api/v1/search?q=$encoded&limit=5"
+                val searchEndpoint = "$serverUrl/api/v1/search?q=$encoded&limit=10"
                 val body = executeGet(
                     searchEndpoint,
                     headers = mapOf(
@@ -88,10 +108,49 @@ class SearchRepositoryImpl(
                         val json = JSONObject(body)
                         val cachedArr = json.optJSONArray("cached")
                         if (cachedArr != null && cachedArr.length() > 0) {
-                            val first = cachedArr.optJSONObject(0)
-                            val id = first?.optInt("id") ?: 0
-                            if (id > 0) {
-                                backendId = id
+                            var chosenId = 0
+                            var chosenCodec: String? = null
+                            var bestMatchScore = -1
+                            for (i in 0 until cachedArr.length()) {
+                                val item = cachedArr.optJSONObject(i) ?: continue
+                                val id = item.optInt("id")
+                                val c = item.optString("codec").trim().ifEmpty { null }
+                                val itemTitle = item.optString("title").trim()
+                                val itemArtist = item.optString("artist").trim()
+                                if (id > 0) {
+                                    val score = codecScore(c)
+                                    val titleMatches =
+                                        itemTitle.equals(track.title, ignoreCase = true) ||
+                                                track.title.contains(
+                                                    itemTitle,
+                                                    ignoreCase = true
+                                                ) ||
+                                                itemTitle.contains(track.title, ignoreCase = true)
+                                    val artistMatches =
+                                        itemArtist.equals(track.artist, ignoreCase = true) ||
+                                                track.artist.contains(
+                                                    itemArtist,
+                                                    ignoreCase = true
+                                                ) ||
+                                                itemArtist.contains(track.artist, ignoreCase = true)
+                                    val matchBonus =
+                                        (if (titleMatches) 10 else 0) + (if (artistMatches) 10 else 0)
+                                    val totalScore = score + matchBonus
+                                    if (totalScore > bestMatchScore) {
+                                        bestMatchScore = totalScore
+                                        chosenId = id
+                                        chosenCodec = c
+                                    }
+                                }
+                            }
+                            if (chosenId > 0 && (backendId == null || backendId <= 0 || codecScore(
+                                    chosenCodec
+                                ) > codecScore(foundCodec))
+                            ) {
+                                backendId = chosenId
+                                if (chosenCodec != null) {
+                                    foundCodec = chosenCodec
+                                }
                             }
                         }
                     } catch (_: Exception) {
@@ -112,15 +171,21 @@ class SearchRepositoryImpl(
                     try {
                         val json = JSONObject(body)
                         val streamPath = json.optString("stream_url").trim()
+                        val codec = json.optString("codec").trim().ifEmpty { null } ?: foundCodec
                         if (streamPath.isNotEmpty()) {
-                            return@withContext if (streamPath.startsWith("http://") || streamPath.startsWith(
-                                    "https://"
-                                )
-                            ) {
-                                streamPath
-                            } else {
-                                "$serverUrl${if (streamPath.startsWith("/")) "" else "/"}$streamPath"
-                            }
+                            val resolvedUrl =
+                                if (streamPath.startsWith("http://") || streamPath.startsWith(
+                                        "https://"
+                                    )
+                                ) {
+                                    streamPath
+                                } else {
+                                    "$serverUrl${if (streamPath.startsWith("/")) "" else "/"}$streamPath"
+                                }
+                            return@withContext PlaybackResolution(
+                                streamUrl = resolvedUrl,
+                                codec = codec,
+                            )
                         }
                     } catch (_: Exception) {
                     }
@@ -155,6 +220,8 @@ class SearchRepositoryImpl(
             val cachedByTrackId = mutableMapOf<String, Int>()
             val cachedByNormalizedKey = mutableMapOf<String, Int>()
             val cachedArtworkById = mutableMapOf<Int, String>()
+            val cachedCodecById = mutableMapOf<Int, String>()
+            val cachedCodecByTrackId = mutableMapOf<String, String>()
 
             if (cachedArr != null) {
                 for (i in 0 until cachedArr.length()) {
@@ -163,13 +230,29 @@ class SearchRepositoryImpl(
                     val trackId = cObj.optString("track_id").trim()
                     val title = cObj.optString("title").trim()
                     val artist = cObj.optString("artist").trim()
+                    val codec = cObj.optString("codec").trim().ifEmpty { null }
                     if (id > 0) {
+                        if (codec != null) {
+                            cachedCodecById[id] = codec
+                        }
+                        val newScore = codecScore(codec)
                         if (trackId.isNotEmpty()) {
-                            cachedByTrackId[trackId] = id
+                            val prevId = cachedByTrackId[trackId]
+                            val prevScore = codecScore(prevId?.let { cachedCodecById[it] })
+                            if (prevId == null || newScore > prevScore) {
+                                cachedByTrackId[trackId] = id
+                                if (codec != null) {
+                                    cachedCodecByTrackId[trackId] = codec
+                                }
+                            }
                         }
                         if (title.isNotEmpty() && artist.isNotEmpty()) {
                             val key = BackendArtworkResolver.normalizedKey(title, artist)
-                            cachedByNormalizedKey[key] = id
+                            val prevId = cachedByNormalizedKey[key]
+                            val prevScore = codecScore(prevId?.let { cachedCodecById[it] })
+                            if (prevId == null || newScore > prevScore) {
+                                cachedByNormalizedKey[key] = id
+                            }
                         }
                     }
                 }
@@ -180,13 +263,20 @@ class SearchRepositoryImpl(
                     val canObj = canonicalArr.optJSONObject(i) ?: continue
                     val sources = canObj.optJSONArray("sources") ?: continue
                     var cachedId: Int? = null
+                    var canonicalCodec: String? = null
+                    var bestScore = -1
                     for (j in 0 until sources.length()) {
                         val sObj = sources.optJSONObject(j) ?: continue
                         val id = sObj.optInt("id")
                         val isCached = sObj.optBoolean("is_cached")
+                        val sCodec = sObj.optString("codec").trim().ifEmpty { null }
                         if (isCached && id > 0) {
-                            cachedId = id
-                            break
+                            val score = codecScore(sCodec)
+                            if (cachedId == null || score > bestScore) {
+                                cachedId = id
+                                canonicalCodec = sCodec
+                                bestScore = score
+                            }
                         }
                     }
 
@@ -202,16 +292,30 @@ class SearchRepositoryImpl(
                     }
 
                     if (cachedId != null) {
+                        if (canonicalCodec != null) {
+                            cachedCodecById[cachedId] = canonicalCodec
+                        }
                         for (j in 0 until sources.length()) {
                             val sObj = sources.optJSONObject(j) ?: continue
                             val tId = sObj.optString("track_id").trim()
                             if (tId.isNotEmpty()) {
-                                cachedByTrackId[tId] = cachedId
+                                val prevId = cachedByTrackId[tId]
+                                val prevScore = codecScore(prevId?.let { cachedCodecById[it] })
+                                if (prevId == null || bestScore > prevScore) {
+                                    cachedByTrackId[tId] = cachedId
+                                    if (canonicalCodec != null) {
+                                        cachedCodecByTrackId[tId] = canonicalCodec
+                                    }
+                                }
                             }
                         }
                         if (title.isNotEmpty() && artist.isNotEmpty()) {
                             val key = BackendArtworkResolver.normalizedKey(title, artist)
-                            cachedByNormalizedKey[key] = cachedId
+                            val prevId = cachedByNormalizedKey[key]
+                            val prevScore = codecScore(prevId?.let { cachedCodecById[it] })
+                            if (prevId == null || bestScore > prevScore) {
+                                cachedByNormalizedKey[key] = cachedId
+                            }
                         }
                         if (artUrl != null) {
                             cachedArtworkById[cachedId] = artUrl
@@ -240,6 +344,8 @@ class SearchRepositoryImpl(
                     }
 
                     val matchedCachedId = cachedByTrackId[trackId] ?: cachedByNormalizedKey[normKey]
+                    val matchedCodec = matchedCachedId?.let { cachedCodecById[it] }
+                        ?: cachedCodecByTrackId[trackId]
 
                     if (seenKeys.add(normKey)) {
                         orderedResults.add(
@@ -253,6 +359,7 @@ class SearchRepositoryImpl(
                                 source = "Apple Music",
                                 backendTrackId = matchedCachedId,
                                 isCached = matchedCachedId != null,
+                                codec = matchedCodec,
                             )
                         )
                     }
@@ -260,12 +367,17 @@ class SearchRepositoryImpl(
             }
 
             if (cachedArr != null) {
+                val cachedObjects = mutableListOf<JSONObject>()
                 for (i in 0 until cachedArr.length()) {
-                    val cObj = cachedArr.optJSONObject(i) ?: continue
+                    cachedArr.optJSONObject(i)?.let { cachedObjects.add(it) }
+                }
+                cachedObjects.sortByDescending { codecScore(it.optString("codec")) }
+                for (cObj in cachedObjects) {
                     val id = cObj.optInt("id")
                     val title = cObj.optString("title").trim()
                     val artist = cObj.optString("artist").trim()
                     val album = cObj.optString("album").trim().ifEmpty { null }
+                    val codec = cObj.optString("codec").trim().ifEmpty { null }
                     if (id <= 0 || title.isEmpty() || artist.isEmpty()) continue
 
                     val normKey = BackendArtworkResolver.normalizedKey(title, artist)
@@ -282,6 +394,7 @@ class SearchRepositoryImpl(
                                 source = "Peerless",
                                 backendTrackId = id,
                                 isCached = true,
+                                codec = codec,
                             )
                         )
                     }

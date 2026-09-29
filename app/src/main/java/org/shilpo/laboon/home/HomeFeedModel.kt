@@ -11,6 +11,7 @@ data class HomeTrack(
     val streamUrl: String? = null,
     val backendTrackId: Int? = null,
     val isCached: Boolean = false,
+    val codec: String? = null,
 )
 
 data class HomeArtist(

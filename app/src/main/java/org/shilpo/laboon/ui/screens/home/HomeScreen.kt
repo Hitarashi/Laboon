@@ -46,10 +46,11 @@ import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -61,6 +62,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -75,6 +77,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import org.shilpo.laboon.R
 import org.shilpo.laboon.auth.AuthSession
+import org.shilpo.laboon.auth.SessionStore
+import org.shilpo.laboon.auth.SharedPreferencesKeyValueStore
 import org.shilpo.laboon.home.HomeAlbum
 import org.shilpo.laboon.home.HomeArtist
 import org.shilpo.laboon.home.HomeFeedDefaults
@@ -88,6 +92,7 @@ import org.shilpo.laboon.navigation.RouteDirection
 import org.shilpo.laboon.navigation.RouteEvent
 import org.shilpo.laboon.navigation.RouteState
 import org.shilpo.laboon.navigation.tabTransitionDirection
+import org.shilpo.laboon.playback.PlaybackManagerImpl
 import org.shilpo.laboon.ui.design.FloatingCombinedClearance
 import org.shilpo.laboon.ui.design.FloatingNavBar
 import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
@@ -123,25 +128,41 @@ fun HomeScreen(
     var feedState by remember { mutableStateOf(HomeFeedDefaults.defaultFeed) }
     val coroutineScope = rememberCoroutineScope()
 
+    val context = LocalContext.current
+    val sessionStore = remember(context) { SessionStore(SharedPreferencesKeyValueStore(context)) }
+    val playbackManager = remember(context, sessionStore) {
+        PlaybackManagerImpl(context.applicationContext, sessionStore)
+    }
+    val playbackState by playbackManager.state.collectAsState()
+
+    DisposableEffect(playbackManager) {
+        onDispose {
+            playbackManager.release()
+        }
+    }
+
     val starterTrack = remember {
         HomeTrack(
             id = "starter_sample",
             title = "Sailor Song",
             artist = "Gigi Perez",
             artworkUrl = null,
+            codec = "alac",
         )
     }
-    var currentTrack by remember { mutableStateOf<HomeTrack?>(starterTrack) }
-    var isPlaying by remember { mutableStateOf(false) }
-    var playbackProgress by remember { mutableFloatStateOf(0.35f) }
+    var fallbackTrack by remember { mutableStateOf<HomeTrack?>(starterTrack) }
 
     LaunchedEffect(feedState.rotation.items) {
-        if (currentTrack == starterTrack) {
+        if (playbackState.currentTrack == null && fallbackTrack == starterTrack) {
             feedState.rotation.items.firstOrNull()?.let {
-                currentTrack = it
+                fallbackTrack = it
             }
         }
     }
+
+    val activeTrack = playbackState.currentTrack ?: fallbackTrack
+    val activeIsPlaying = playbackState.isPlaying
+    val activeProgress = if (playbackState.currentTrack != null) playbackState.progress else 0f
 
     LaunchedEffect(session) {
         val region = repository.getDisplayRegion().orEmpty()
@@ -275,8 +296,7 @@ fun HomeScreen(
                         onLoadTrending = loadTrending,
                         onLoadWeeklyPicks = loadWeeklyPicks,
                         onTrackClick = { track ->
-                            currentTrack = track
-                            isPlaying = true
+                            playbackManager.play(track)
                         },
                         lazyListState = homeScrollState,
                         modifier = Modifier.fillMaxSize(),
@@ -284,8 +304,7 @@ fun HomeScreen(
 
                     MainTab.Search -> SearchScreen(
                         onTrackClick = { track ->
-                            currentTrack = track
-                            isPlaying = true
+                            playbackManager.play(track)
                         },
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -306,7 +325,7 @@ fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(MiniPlayerSpacing),
         ) {
             AnimatedVisibility(
-                visible = currentTrack != null,
+                visible = activeTrack != null,
                 enter = slideInVertically(
                     animationSpec = motionScheme.defaultSpatialSpec(),
                     initialOffsetY = { it },
@@ -316,35 +335,24 @@ fun HomeScreen(
                     targetOffsetY = { it },
                 ) + fadeOut(animationSpec = motionScheme.defaultEffectsSpec()),
             ) {
-                currentTrack?.let { track ->
+                activeTrack?.let { track ->
                     MiniPlayer(
                         track = track,
-                        isPlaying = isPlaying,
-                        progress = playbackProgress,
-                        onPlayPauseClick = { isPlaying = !isPlaying },
-                        onPreviousClick = {
-                            val tracks = feedState.rotation.items
-                                .ifEmpty { feedState.recommended.items }
-                                .ifEmpty { feedState.topTracks.items }
-                            if (tracks.isNotEmpty()) {
-                                val currentIndex = tracks.indexOfFirst { it.id == track.id }
-                                val prevIndex =
-                                    if (currentIndex <= 0) tracks.lastIndex else currentIndex - 1
-                                currentTrack = tracks[prevIndex]
-                                playbackProgress = 0f
+                        isPlaying = activeIsPlaying,
+                        isBuffering = playbackState.isBuffering,
+                        progress = activeProgress,
+                        onPlayPauseClick = {
+                            if (playbackState.currentTrack != null) {
+                                playbackManager.togglePlayPause()
+                            } else {
+                                playbackManager.play(track)
                             }
                         },
+                        onPreviousClick = {
+                            playbackManager.seekTo(0f)
+                        },
                         onNextClick = {
-                            val tracks = feedState.rotation.items
-                                .ifEmpty { feedState.recommended.items }
-                                .ifEmpty { feedState.topTracks.items }
-                            if (tracks.isNotEmpty()) {
-                                val currentIndex = tracks.indexOfFirst { it.id == track.id }
-                                val nextIndex =
-                                    if (currentIndex == -1 || currentIndex >= tracks.lastIndex) 0 else currentIndex + 1
-                                currentTrack = tracks[nextIndex]
-                                playbackProgress = 0f
-                            }
+                            playbackManager.seekTo(0f)
                         },
                         onClick = {},
                         backdropState = liquidGlassBackdropState,
@@ -355,7 +363,7 @@ fun HomeScreen(
             FloatingNavBar(
                 selectedTab = currentTab,
                 onTabSelected = { onEvent(RouteEvent.TabSelected(it)) },
-                hasMiniPlayerAbove = currentTrack != null,
+                hasMiniPlayerAbove = activeTrack != null,
                 backdropState = liquidGlassBackdropState,
             )
         }
