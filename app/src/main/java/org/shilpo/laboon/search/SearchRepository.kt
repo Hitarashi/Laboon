@@ -10,6 +10,7 @@ import org.json.JSONObject
 import org.shilpo.laboon.auth.SessionStore
 import org.shilpo.laboon.home.BackendArtworkResolver
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.home.TrackIdentity
 import org.shilpo.laboon.net.HttpError
 import org.shilpo.laboon.net.HttpErrorKind
 import org.shilpo.laboon.net.HttpJsonClient
@@ -130,6 +131,10 @@ class SearchRepositoryImpl(
                         val encodedMbid = URLEncoder.encode(mbid, StandardCharsets.UTF_8.name())
                         add("$serverUrl/api/v1/search?q=$encoded&limit=10&recording_mbid=$encodedMbid")
                     }
+                    track.isrc?.trim()?.takeIf { it.isNotEmpty() }?.let { isrc ->
+                        val encodedIsrc = URLEncoder.encode(isrc, StandardCharsets.UTF_8.name())
+                        add("$serverUrl/api/v1/search?q=$encoded&limit=10&isrc=$encodedIsrc")
+                    }
                     add("$serverUrl/api/v1/search?q=$encoded&limit=10")
                 }
                 for (searchEndpoint in searchEndpoints) {
@@ -138,36 +143,50 @@ class SearchRepositoryImpl(
                     var chosenId = 0
                     var chosenCodec: String? = null
                     var bestMatchScore = -1
+                    val targetNormTitle = TrackIdentity.normalizedTitle(track.title)
+                    val targetNormArtist = TrackIdentity.normalizedArtist(track.artist)
                     for (i in 0 until cachedArr.length()) {
                         val item = cachedArr.objAtOrNull(i) ?: continue
                         val id = item.optInt("id")
                         val c = item.stringOrNull("codec")
                         val itemTitle = item.optString("title").trim()
                         val itemArtist = item.optString("artist").trim()
-                        if (id > 0) {
-                            val score = codecScore(c)
-                            val titleMatches =
-                                itemTitle.equals(track.title, ignoreCase = true) ||
-                                        track.title.contains(
-                                            itemTitle,
-                                            ignoreCase = true
-                                        ) ||
-                                        itemTitle.contains(track.title, ignoreCase = true)
-                            val artistMatches =
-                                itemArtist.equals(track.artist, ignoreCase = true) ||
-                                        track.artist.contains(
-                                            itemArtist,
-                                            ignoreCase = true
-                                        ) ||
-                                        itemArtist.contains(track.artist, ignoreCase = true)
-                            val matchBonus =
-                                (if (titleMatches) 10 else 0) + (if (artistMatches) 10 else 0)
-                            val totalScore = score + matchBonus
-                            if (totalScore > bestMatchScore) {
-                                bestMatchScore = totalScore
-                                chosenId = id
-                                chosenCodec = c
-                            }
+                        if (id <= 0 || itemTitle.isEmpty() || itemArtist.isEmpty()) continue
+
+                        val itemNormTitle = TrackIdentity.normalizedTitle(itemTitle)
+                        val itemNormArtist = TrackIdentity.normalizedArtist(itemArtist)
+
+                        val titleExact = itemTitle.equals(
+                            track.title,
+                            ignoreCase = true
+                        ) || itemNormTitle == targetNormTitle
+                        val titlePrefixMatch =
+                            targetNormTitle.length >= 3 && itemNormTitle.length >= 3 &&
+                                    (targetNormTitle.startsWith("$itemNormTitle ") || itemNormTitle.startsWith(
+                                        "$targetNormTitle "
+                                    ))
+                        val titleMatches = titleExact || titlePrefixMatch
+                        if (!titleMatches) continue
+
+                        val artistExact = itemArtist.equals(
+                            track.artist,
+                            ignoreCase = true
+                        ) || itemNormArtist == targetNormArtist
+                        val artistContains =
+                            targetNormArtist.length >= 3 && itemNormArtist.length >= 3 &&
+                                    (targetNormArtist.contains(itemNormArtist) || itemNormArtist.contains(
+                                        targetNormArtist
+                                    ))
+                        val artistMatches = artistExact || artistContains
+                        if (!artistMatches) continue
+
+                        val matchScore =
+                            (if (titleExact) 100 else 60) + (if (artistExact) 50 else 25)
+                        val totalScore = matchScore + codecScore(c)
+                        if (totalScore > bestMatchScore) {
+                            bestMatchScore = totalScore
+                            chosenId = id
+                            chosenCodec = c
                         }
                     }
                     if (chosenId > 0) {
@@ -229,6 +248,7 @@ class SearchRepositoryImpl(
                 val codec: String?,
                 val artworkUrl: String? = null,
                 val album: String? = null,
+                val isrc: String? = null,
             )
 
             val cachedVariantsByTrackId = mutableMapOf<String, MutableList<CachedVariant>>()
@@ -274,6 +294,7 @@ class SearchRepositoryImpl(
                     val provider = cleanProvider(cObj.stringOrNull("provider"))
                     val artUrl = cObj.stringOrNull("artwork_url")
                     val recordingMbid = cObj.stringOrNull("recording_mbid")
+                    val isrc = cObj.stringOrNull("isrc")
                     if (id > 0) {
                         if (trackId != null && recordingMbid != null) {
                             recordingMbidBySource[
@@ -283,7 +304,8 @@ class SearchRepositoryImpl(
                         if (artUrl != null) {
                             cachedArtworkById[id] = artUrl
                         }
-                        val variant = CachedVariant(id, trackId, provider, codec, artUrl, album)
+                        val variant =
+                            CachedVariant(id, trackId, provider, codec, artUrl, album, isrc)
                         if (trackId != null) {
                             val list = cachedVariantsByTrackId.getOrPut(trackId) { mutableListOf() }
                             if (list.none { it.id == id }) list.add(variant)
@@ -306,6 +328,7 @@ class SearchRepositoryImpl(
                     val artUrl = canObj.stringOrNull("artwork_url")
                     val sources = canObj.arrOrNull("sources")
                     val recordingMbid = canObj.stringOrNull("recording_mbid")
+                    val canIsrc = canObj.stringOrNull("isrc")
 
                     if (recordingMbid != null && sources != null) {
                         for (j in 0 until sources.length()) {
@@ -340,7 +363,15 @@ class SearchRepositoryImpl(
                                     cachedArtworkById[id] = artUrl
                                 }
                                 val variant =
-                                    CachedVariant(id, sTrackId, sProvider, sCodec, artUrl, album)
+                                    CachedVariant(
+                                        id,
+                                        sTrackId,
+                                        sProvider,
+                                        sCodec,
+                                        artUrl,
+                                        album,
+                                        canIsrc
+                                    )
                                 val list =
                                     cachedVariantsByNormKey.getOrPut(normKey) { mutableListOf() }
                                 if (list.none { it.id == id }) list.add(variant)
@@ -400,6 +431,7 @@ class SearchRepositoryImpl(
                                         mbid = recordingMbidBySource[
                                             recordingMbidKey(v.provider, v.trackId ?: trackId)
                                         ],
+                                        isrc = v.isrc,
                                     )
                                 )
                             }
@@ -469,6 +501,7 @@ class SearchRepositoryImpl(
                                             recordingMbidKey(cObj.stringOrNull("provider"), trackId)
                                         ]
                                     },
+                                isrc = cObj.stringOrNull("isrc"),
                             )
                         )
                     }

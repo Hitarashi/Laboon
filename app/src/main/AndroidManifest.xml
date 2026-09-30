@@ -21,6 +21,7 @@
         tools:ignore="RequestInstallPackagesPolicy" />
 
     <application
+        android:name=".LaboonApplication"
         android:allowBackup="true"
         android:appCategory="audio"
         android:dataExtractionRules="@xml/data_extraction_rules"

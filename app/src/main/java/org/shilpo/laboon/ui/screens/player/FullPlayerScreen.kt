@@ -18,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,7 +52,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
@@ -86,7 +86,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.playback.ArtworkUrlHelper
 import org.shilpo.laboon.playback.RepeatMode
+import org.shilpo.laboon.playback.SpectrumFrame
 import org.shilpo.laboon.ui.design.CodecIcon
 import org.shilpo.laboon.ui.design.ProviderIcon
 import kotlin.math.abs
@@ -143,6 +145,7 @@ fun FullPlayerScreen(
     durationMs: Long = 0L,
     isShuffle: Boolean = false,
     repeatMode: RepeatMode = RepeatMode.OFF,
+    spectrum: SpectrumFrame = SpectrumFrame(),
     onPlayPauseClick: () -> Unit,
     onPreviousClick: () -> Unit,
     onNextClick: () -> Unit,
@@ -153,6 +156,7 @@ fun FullPlayerScreen(
     onCollapse: () -> Unit,
     modifier: Modifier = Modifier,
     onMoreClick: () -> Unit = {},
+    isDark: Boolean = isSystemInDarkTheme(),
 ) {
     BackHandler(enabled = true) {
         onCollapse()
@@ -211,32 +215,12 @@ fun FullPlayerScreen(
                 )
             },
     ) {
-        if (!track.artworkUrl.isNullOrBlank()) {
-            AsyncImage(
-                model = ImageRequest.Builder(LocalPlatformContext.current)
-                    .data(track.artworkUrl)
-                    .crossfade(true)
-                    .build(),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .blur(48.dp),
-            )
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color.Black.copy(alpha = 0.50f),
-                            Color.Black.copy(alpha = 0.72f),
-                            Color.Black.copy(alpha = 0.94f),
-                        ),
-                    ),
-                ),
+        DancingGlowBackground(
+            artworkUrl = track.artworkUrl,
+            spectrum = spectrum,
+            isPlaying = isPlaying,
+            isDark = isDark,
+            modifier = Modifier.fillMaxSize(),
         )
 
         FullPlayerLayout(
@@ -249,6 +233,7 @@ fun FullPlayerScreen(
                     albumName = track.album,
                     onCollapse = onCollapse,
                     onMoreClick = onMoreClick,
+                    isDark = isDark,
                 )
             },
             cover = {
@@ -275,6 +260,7 @@ fun FullPlayerScreen(
                     onToggleShuffle = onToggleShuffle,
                     onCycleRepeatMode = onCycleRepeatMode,
                     onOpenQueue = onOpenQueue,
+                    isDark = isDark,
                 )
             },
         )
@@ -345,6 +331,7 @@ private fun FullPlayerToolbar(
     albumName: String?,
     onCollapse: () -> Unit,
     onMoreClick: () -> Unit,
+    isDark: Boolean = isSystemInDarkTheme(),
 ) {
     Box(
         modifier = Modifier
@@ -357,8 +344,13 @@ private fun FullPlayerToolbar(
                 .align(Alignment.CenterStart)
                 .size(40.dp)
                 .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.08f))
-                .border(BorderStroke(0.5.dp, Color.White.copy(alpha = 0.15f)), CircleShape)
+                .background(if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.06f))
+                .border(
+                    BorderStroke(
+                        0.5.dp,
+                        if (isDark) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.10f)
+                    ), CircleShape
+                )
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -369,7 +361,7 @@ private fun FullPlayerToolbar(
             Icon(
                 painter = painterResource(R.drawable.ic_chevron),
                 contentDescription = "Collapse",
-                tint = Color.White,
+                tint = if (isDark) Color.White else Color(0xFF191C1E),
                 modifier = Modifier.size(22.dp),
             )
         }
@@ -384,7 +376,7 @@ private fun FullPlayerToolbar(
         ) {
             Text(
                 text = "NOW PLAYING",
-                color = Color.White.copy(alpha = 0.65f),
+                color = if (isDark) Color.White.copy(alpha = 0.65f) else Color.Black.copy(alpha = 0.60f),
                 fontSize = if (albumName != null) 11.sp else 13.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.4.sp,
@@ -394,7 +386,7 @@ private fun FullPlayerToolbar(
             if (!albumName.isNullOrBlank()) {
                 Text(
                     text = albumName,
-                    color = Color.White.copy(alpha = 0.90f),
+                    color = if (isDark) Color.White.copy(alpha = 0.90f) else Color(0xFF191C1E),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
@@ -408,8 +400,13 @@ private fun FullPlayerToolbar(
                 .align(Alignment.CenterEnd)
                 .size(40.dp)
                 .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.08f))
-                .border(BorderStroke(0.5.dp, Color.White.copy(alpha = 0.15f)), CircleShape)
+                .background(if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.06f))
+                .border(
+                    BorderStroke(
+                        0.5.dp,
+                        if (isDark) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.10f)
+                    ), CircleShape
+                )
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -420,7 +417,7 @@ private fun FullPlayerToolbar(
             Icon(
                 painter = painterResource(R.drawable.ic_more_vert),
                 contentDescription = "More",
-                tint = Color.White,
+                tint = if (isDark) Color.White else Color(0xFF191C1E),
                 modifier = Modifier.size(20.dp),
             )
         }
@@ -521,10 +518,13 @@ private fun FullPlayerCoverCard(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            if (!track.artworkUrl.isNullOrBlank()) {
+            val highResUrl = remember(track.artworkUrl) {
+                ArtworkUrlHelper.toHighQuality(track.artworkUrl)
+            }
+            if (!highResUrl.isNullOrBlank()) {
                 AsyncImage(
                     model = ImageRequest.Builder(LocalPlatformContext.current)
-                        .data(track.artworkUrl)
+                        .data(highResUrl)
                         .crossfade(true)
                         .build(),
                     placeholder = painterResource(R.drawable.app_icon_small),
@@ -567,6 +567,7 @@ private fun FullPlayerControls(
     onToggleShuffle: () -> Unit,
     onCycleRepeatMode: () -> Unit,
     onOpenQueue: () -> Unit,
+    isDark: Boolean = isSystemInDarkTheme(),
 ) {
     Column(
         modifier = Modifier
@@ -583,7 +584,7 @@ private fun FullPlayerControls(
                 text = track.title,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
-                color = Color.White,
+                color = if (isDark) Color.White else Color(0xFF191C1E),
                 maxLines = 1,
                 overflow = TextOverflow.Clip,
                 modifier = Modifier.basicMarquee(),
@@ -596,7 +597,7 @@ private fun FullPlayerControls(
                 Text(
                     text = track.artist,
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.75f),
+                    color = if (isDark) Color.White.copy(alpha = 0.75f) else Color(0xFF43474E),
                     maxLines = 1,
                     overflow = TextOverflow.Clip,
                     modifier = Modifier
@@ -606,12 +607,12 @@ private fun FullPlayerControls(
                 ProviderIcon(
                     provider = track.source,
                     height = 11.dp,
-                    tint = Color.White.copy(alpha = 0.8f),
+                    tint = if (isDark) Color.White.copy(alpha = 0.8f) else Color(0xFF43474E),
                 )
                 CodecIcon(
                     codec = track.codec,
                     height = 11.dp,
-                    tint = Color.White.copy(alpha = 0.8f),
+                    tint = if (isDark) Color.White.copy(alpha = 0.8f) else Color(0xFF43474E),
                 )
             }
         }
@@ -641,9 +642,11 @@ private fun FullPlayerControls(
                 onSeek(fraction)
             },
             enabled = durationMs > 0L,
-            activeTrackColor = Color.White,
-            inactiveTrackColor = Color.White.copy(alpha = 0.24f),
-            thumbColor = Color.White,
+            activeTrackColor = if (isDark) Color.White else Color(0xFF191C1E),
+            inactiveTrackColor = if (isDark) Color.White.copy(alpha = 0.24f) else Color.Black.copy(
+                alpha = 0.16f
+            ),
+            thumbColor = if (isDark) Color.White else Color(0xFF191C1E),
             isPlaying = isPlaying,
             isVisible = true,
             modifier = Modifier
@@ -666,7 +669,7 @@ private fun FullPlayerControls(
             Text(
                 text = formatMs(displayMs),
                 style = MaterialTheme.typography.labelSmall,
-                color = Color.White.copy(alpha = 0.6f),
+                color = if (isDark) Color.White.copy(alpha = 0.6f) else Color.Black.copy(alpha = 0.6f),
             )
 
             val qualityBadgeText = when {
@@ -682,15 +685,18 @@ private fun FullPlayerControls(
                 else -> "HI-RES"
             }
             Surface(
-                color = Color.White.copy(alpha = 0.12f),
+                color = if (isDark) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.06f),
                 shape = RoundedCornerShape(4.dp),
-                border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.2f)),
+                border = BorderStroke(
+                    0.5.dp,
+                    if (isDark) Color.White.copy(alpha = 0.2f) else Color.Black.copy(alpha = 0.12f)
+                ),
             ) {
                 Text(
                     text = qualityBadgeText,
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color.White.copy(alpha = 0.85f),
+                    color = if (isDark) Color.White.copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.85f),
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                 )
             }
@@ -698,7 +704,7 @@ private fun FullPlayerControls(
             Text(
                 text = formatMs(durationMs),
                 style = MaterialTheme.typography.labelSmall,
-                color = Color.White.copy(alpha = 0.6f),
+                color = if (isDark) Color.White.copy(alpha = 0.6f) else Color.Black.copy(alpha = 0.6f),
             )
         }
 
@@ -714,6 +720,7 @@ private fun FullPlayerControls(
             onNextClick = onNextClick,
             onToggleShuffle = onToggleShuffle,
             onCycleRepeatMode = onCycleRepeatMode,
+            isDark = isDark,
         )
 
         Spacer(modifier = Modifier.height(14.dp))
@@ -738,7 +745,7 @@ private fun FullPlayerControls(
                 Icon(
                     painter = painterResource(R.drawable.ic_queue_music),
                     contentDescription = "Queue",
-                    tint = Color.White.copy(alpha = 0.8f),
+                    tint = if (isDark) Color.White.copy(alpha = 0.8f) else Color.Black.copy(alpha = 0.75f),
                     modifier = Modifier.size(28.dp),
                 )
             }
@@ -759,6 +766,7 @@ private fun FullPlayerTransportControls(
     onNextClick: () -> Unit,
     onToggleShuffle: () -> Unit,
     onCycleRepeatMode: () -> Unit,
+    isDark: Boolean = isSystemInDarkTheme(),
 ) {
     val motionScheme = MaterialTheme.motionScheme
     val rotationAnimatable = remember { Animatable(0f) }
@@ -793,7 +801,8 @@ private fun FullPlayerTransportControls(
     }
 
     val activeAccent = MaterialTheme.colorScheme.primary
-    val inactiveTint = Color.White.copy(alpha = 0.50f)
+    val inactiveTint =
+        if (isDark) Color.White.copy(alpha = 0.50f) else Color.Black.copy(alpha = 0.45f)
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -832,8 +841,8 @@ private fun FullPlayerTransportControls(
                 .background(
                     brush = Brush.verticalGradient(
                         colors = listOf(
-                            Color.White.copy(alpha = 0.16f),
-                            Color.White.copy(alpha = 0.06f),
+                            if (isDark) Color.White.copy(alpha = 0.16f) else Color.White.copy(alpha = 0.85f),
+                            if (isDark) Color.White.copy(alpha = 0.06f) else Color.White.copy(alpha = 0.50f),
                         ),
                     ),
                     shape = CircleShape,
@@ -843,8 +852,12 @@ private fun FullPlayerTransportControls(
                         0.5.dp,
                         Brush.verticalGradient(
                             colors = listOf(
-                                Color.White.copy(alpha = 0.35f),
-                                Color.White.copy(alpha = 0.08f),
+                                if (isDark) Color.White.copy(alpha = 0.35f) else Color.Black.copy(
+                                    alpha = 0.12f
+                                ),
+                                if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(
+                                    alpha = 0.04f
+                                ),
                                 Color.Transparent,
                             ),
                         ),
@@ -870,7 +883,7 @@ private fun FullPlayerTransportControls(
                 Icon(
                     painter = painterResource(R.drawable.ic_skip),
                     contentDescription = "Previous",
-                    tint = Color.White,
+                    tint = if (isDark) Color.White else Color(0xFF191C1E),
                     modifier = Modifier
                         .size(30.dp)
                         .rotate(180f),
@@ -915,8 +928,12 @@ private fun FullPlayerTransportControls(
                                 .background(
                                     brush = Brush.verticalGradient(
                                         colors = listOf(
-                                            Color.White.copy(alpha = 0.95f),
-                                            Color.White.copy(alpha = 0.75f),
+                                            if (isDark) Color.White.copy(alpha = 0.95f) else Color(
+                                                0xFF191C1E
+                                            ),
+                                            if (isDark) Color.White.copy(alpha = 0.75f) else Color(
+                                                0xFF2C3135
+                                            ),
                                         ),
                                     ),
                                     shape = animatedCookieShape,
@@ -925,8 +942,10 @@ private fun FullPlayerTransportControls(
                                     width = 0.5.dp,
                                     brush = Brush.verticalGradient(
                                         colors = listOf(
-                                            Color.White,
-                                            Color.White.copy(alpha = 0.4f),
+                                            if (isDark) Color.White else Color.Black.copy(alpha = 0.20f),
+                                            if (isDark) Color.White.copy(alpha = 0.40f) else Color.Black.copy(
+                                                alpha = 0.05f
+                                            ),
                                         ),
                                     ),
                                     shape = animatedCookieShape,
@@ -944,7 +963,7 @@ private fun FullPlayerTransportControls(
                                     ),
                                     contentDescription = if (playing) "Pause" else "Play",
                                     modifier = Modifier.size(34.dp),
-                                    tint = Color.Black.copy(alpha = 0.85f),
+                                    tint = if (isDark) Color.Black.copy(alpha = 0.85f) else Color.White,
                                 )
                             }
                         }
@@ -966,7 +985,7 @@ private fun FullPlayerTransportControls(
                 Icon(
                     painter = painterResource(R.drawable.ic_skip),
                     contentDescription = "Next",
-                    tint = Color.White,
+                    tint = if (isDark) Color.White else Color(0xFF191C1E),
                     modifier = Modifier.size(30.dp),
                 )
             }

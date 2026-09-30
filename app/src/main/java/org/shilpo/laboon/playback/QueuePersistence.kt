@@ -66,7 +66,7 @@ object QueuePersistenceCodec {
 
     private const val VERSION = "v1"
     private const val HEADER_FIELDS = 6
-    private const val ITEM_FIELDS = 12
+    private const val ITEM_FIELDS = 13
     private const val MAX_ITEMS = 200
 
     fun encode(state: QueueState): String {
@@ -138,6 +138,7 @@ object QueuePersistenceCodec {
         track.isCached.asToken(),
         encodeOptional(track.codec),
         encodeOptional(track.mbid),
+        encodeOptional(track.isrc),
     ).joinToString("\t")
 
     fun decodeTrack(line: String): HomeTrack? {
@@ -164,6 +165,7 @@ object QueuePersistenceCodec {
             isCached = isCached,
             codec = decodeOptional(values[10]),
             mbid = decodeOptional(values[11]),
+            isrc = decodeOptional(values[12]),
         )
     }
 

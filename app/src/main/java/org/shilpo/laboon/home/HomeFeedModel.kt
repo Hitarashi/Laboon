@@ -13,6 +13,7 @@ data class HomeTrack(
     val isCached: Boolean = false,
     val codec: String? = null,
     val mbid: String? = null,
+    val isrc: String? = null,
 )
 
 data class HomeArtist(

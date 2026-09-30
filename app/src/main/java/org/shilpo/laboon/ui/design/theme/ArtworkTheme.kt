@@ -19,8 +19,172 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
+data class ArtworkSpatialPalette(
+    val top: Color,
+    val center: Color,
+    val bottom: Color,
+    val accent: Color,
+    val dominant: Color,
+)
+
 object ArtworkColorExtractor {
     private val memoryCache = LruCache<String, Color>(50)
+    private val spatialCache = LruCache<String, ArtworkSpatialPalette>(50)
+
+    fun getCachedSpatialPalette(artworkUrl: String?): ArtworkSpatialPalette? {
+        if (artworkUrl.isNullOrBlank()) return null
+        return spatialCache[artworkUrl]
+    }
+
+    suspend fun extractSpatialPalette(
+        context: Context,
+        artworkUrl: String?
+    ): ArtworkSpatialPalette? {
+        if (artworkUrl.isNullOrBlank()) return null
+
+        val cached = spatialCache[artworkUrl]
+        if (cached != null) return cached
+
+        return withContext(Dispatchers.IO) {
+            try {
+                val imageLoader = SingletonImageLoader.get(context)
+                val request = ImageRequest.Builder(context)
+                    .data(artworkUrl)
+                    .size(64, 64)
+                    .allowHardware(false)
+                    .build()
+                val result = imageLoader.execute(request)
+                if (result is SuccessResult) {
+                    val bitmap = (result.image as? BitmapImage)?.bitmap ?: return@withContext null
+                    val scaled = if (bitmap.width != 48 || bitmap.height != 48) {
+                        Bitmap.createScaledBitmap(bitmap, 48, 48, false)
+                    } else bitmap
+                    val allPixels = IntArray(48 * 48)
+                    scaled.getPixels(allPixels, 0, 48, 0, 0, 48, 48)
+
+                    val topPixels = allPixels.copyOfRange(0, 48 * 16)
+                    val centerPixels = allPixels.copyOfRange(48 * 16, 48 * 32)
+                    val bottomPixels = allPixels.copyOfRange(48 * 32, 48 * 48)
+
+                    val top = extractSeedFromPixels(topPixels) ?: averageColorFromPixels(topPixels)
+                    val center =
+                        extractSeedFromPixels(centerPixels) ?: averageColorFromPixels(centerPixels)
+                    val bottom =
+                        extractSeedFromPixels(bottomPixels) ?: averageColorFromPixels(bottomPixels)
+
+                    val dominant = extractSeedFromPixels(allPixels) ?: center
+                    val dominantHsl = rgbToHsl(
+                        (dominant.red * 255).toInt(),
+                        (dominant.green * 255).toInt(),
+                        (dominant.blue * 255).toInt(),
+                    )
+                    val dominantHue = dominantHsl[0]
+
+                    val accent = extractAccentFromPixels(allPixels, dominantHue, top, bottom)
+
+                    val palette = ArtworkSpatialPalette(
+                        top = top,
+                        center = center,
+                        bottom = bottom,
+                        accent = accent,
+                        dominant = dominant,
+                    )
+                    spatialCache.put(artworkUrl, palette)
+                    palette
+                } else {
+                    null
+                }
+            } catch (_: Throwable) {
+                null
+            }
+        }
+    }
+
+    private fun averageColorFromPixels(pixels: IntArray): Color {
+        var rSum = 0L
+        var gSum = 0L
+        var bSum = 0L
+        var count = 0
+        for (pixel in pixels) {
+            val a = (pixel ushr 24) and 0xFF
+            if (a < 128) continue
+            rSum += (pixel ushr 16) and 0xFF
+            gSum += (pixel ushr 8) and 0xFF
+            bSum += pixel and 0xFF
+            count++
+        }
+        return if (count > 0) {
+            Color(
+                red = (rSum / count).toFloat() / 255f,
+                green = (gSum / count).toFloat() / 255f,
+                blue = (bSum / count).toFloat() / 255f,
+            )
+        } else {
+            Color.Gray
+        }
+    }
+
+    private fun extractAccentFromPixels(
+        pixels: IntArray,
+        dominantHue: Float,
+        fallbackTop: Color,
+        fallbackBottom: Color,
+    ): Color {
+        val binScores = FloatArray(36)
+        val binHueSum = FloatArray(36)
+        val binSatSum = FloatArray(36)
+
+        for (pixel in pixels) {
+            val a = (pixel ushr 24) and 0xFF
+            if (a < 128) continue
+            val r = (pixel ushr 16) and 0xFF
+            val g = (pixel ushr 8) and 0xFF
+            val b = pixel and 0xFF
+
+            val hsl = rgbToHsl(r, g, b)
+            val h = hsl[0]
+            val s = hsl[1]
+            val l = hsl[2]
+
+            if (s < 0.15f || l < 0.10f || l > 0.90f) continue
+
+            val weight = s * (1f - abs(2f * l - 1f))
+            val binIndex = ((h / 10f).toInt()).coerceIn(0, 35)
+
+            binScores[binIndex] += weight
+            binHueSum[binIndex] += h * weight
+            binSatSum[binIndex] += s * weight
+        }
+
+        var secondBestBin = -1
+        var secondMaxScore = 0f
+        for (i in 0 until 36) {
+            if (binScores[i] <= 0f) continue
+            val binHue = binHueSum[i] / binScores[i]
+            val diff = abs(binHue - dominantHue) % 360f
+            val dist = if (diff > 180f) 360f - diff else diff
+            if (dist >= 30f && binScores[i] > secondMaxScore) {
+                secondMaxScore = binScores[i]
+                secondBestBin = i
+            }
+        }
+
+        if (secondBestBin != -1 && secondMaxScore > 0f) {
+            val accentHue = binHueSum[secondBestBin] / binScores[secondBestBin]
+            val accentSat =
+                (binSatSum[secondBestBin] / binScores[secondBestBin]).coerceIn(0.40f, 0.90f)
+            return Color.hsl(accentHue, accentSat, 0.50f)
+        }
+
+        val topHsl = rgbToHsl(
+            (fallbackTop.red * 255).toInt(),
+            (fallbackTop.green * 255).toInt(),
+            (fallbackTop.blue * 255).toInt(),
+        )
+        val topDiff = abs(topHsl[0] - dominantHue) % 360f
+        val topDist = if (topDiff > 180f) 360f - topDiff else topDiff
+        return if (topDist >= 20f) fallbackTop else fallbackBottom
+    }
 
     suspend fun extractSeedColor(context: Context, artworkUrl: String?): Color? {
         if (artworkUrl.isNullOrBlank()) return null

@@ -150,6 +150,7 @@ fun HomeScreen(
     }
     val playbackState by playbackManager.state.collectAsState()
     val queueState by playbackManager.queueManager.state.collectAsState()
+    val spectrumState by playbackManager.spectrumState.collectAsState()
 
     var isPlayerDismissed by rememberSaveable { mutableStateOf(playbackPersistence.isPlayerDismissed()) }
     var fallbackTrack by remember { mutableStateOf<HomeTrack?>(playbackPersistence.getLastTrack()) }
@@ -476,6 +477,7 @@ fun HomeScreen(
                     durationMs = currentDurationMs,
                     isShuffle = queueState.isShuffle,
                     repeatMode = queueState.repeatMode,
+                    spectrum = spectrumState,
                     onPlayPauseClick = {
                         if (playbackState.currentTrack != null) {
                             playbackManager.togglePlayPause()

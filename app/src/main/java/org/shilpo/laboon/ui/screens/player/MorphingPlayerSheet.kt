@@ -59,7 +59,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
@@ -101,7 +100,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.playback.ArtworkUrlHelper
 import org.shilpo.laboon.playback.RepeatMode
+import org.shilpo.laboon.playback.SpectrumFrame
 import org.shilpo.laboon.ui.design.CodecIcon
 import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
 import org.shilpo.laboon.ui.design.LiquidGlassSurface
@@ -170,6 +171,7 @@ fun MorphingPlayerSheet(
     durationMs: Long = 0L,
     isShuffle: Boolean = false,
     repeatMode: RepeatMode = RepeatMode.OFF,
+    spectrum: SpectrumFrame = SpectrumFrame(),
     onPlayPauseClick: () -> Unit,
     onPreviousClick: () -> Unit,
     onNextClick: () -> Unit,
@@ -646,31 +648,12 @@ fun MorphingPlayerSheet(
                                 .fillMaxSize()
                                 .graphicsLayer { alpha = fullAlpha },
                         ) {
-                            if (!track.artworkUrl.isNullOrBlank()) {
-                                AsyncImage(
-                                    model = ImageRequest.Builder(LocalPlatformContext.current)
-                                        .data(track.artworkUrl)
-                                        .crossfade(true)
-                                        .build(),
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .blur(48.dp),
-                                )
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(
-                                        Brush.verticalGradient(
-                                            colors = listOf(
-                                                Color.Black.copy(alpha = 0.50f),
-                                                Color.Black.copy(alpha = 0.72f),
-                                                Color.Black.copy(alpha = 0.94f),
-                                            ),
-                                        ),
-                                    ),
+                            DancingGlowBackground(
+                                artworkUrl = track.artworkUrl,
+                                spectrum = spectrum,
+                                isPlaying = isPlaying,
+                                isDark = isDark,
+                                modifier = Modifier.fillMaxSize(),
                             )
                         }
                     }
@@ -805,10 +788,16 @@ fun MorphingPlayerSheet(
                             ),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (!track.artworkUrl.isNullOrBlank()) {
+                        val lowResArtworkUrl = remember(track.artworkUrl) {
+                            ArtworkUrlHelper.toLowQuality(track.artworkUrl)
+                        }
+                        val highResArtworkUrl = remember(track.artworkUrl) {
+                            ArtworkUrlHelper.toHighQuality(track.artworkUrl)
+                        }
+                        if (!lowResArtworkUrl.isNullOrBlank()) {
                             AsyncImage(
                                 model = ImageRequest.Builder(LocalPlatformContext.current)
-                                    .data(track.artworkUrl)
+                                    .data(lowResArtworkUrl)
                                     .crossfade(true)
                                     .build(),
                                 placeholder = painterResource(R.drawable.app_icon_small),
@@ -817,6 +806,21 @@ fun MorphingPlayerSheet(
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize(),
                             )
+                            if (!highResArtworkUrl.isNullOrBlank() && progress > 0.01f) {
+                                AsyncImage(
+                                    model = ImageRequest.Builder(LocalPlatformContext.current)
+                                        .data(highResArtworkUrl)
+                                        .crossfade(true)
+                                        .build(),
+                                    contentDescription = track.title,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .graphicsLayer {
+                                            alpha = ((progress - 0.01f) / 0.20f).coerceIn(0f, 1f)
+                                        },
+                                )
+                            }
                         } else {
                             Icon(
                                 painter = painterResource(R.drawable.app_icon_small),
@@ -898,7 +902,7 @@ fun MorphingPlayerSheet(
                     ) {
                         val titleColor = lerpColor(
                             if (isDark) Color.White else Color.Black.copy(alpha = 0.85f),
-                            Color.White,
+                            if (isDark) Color.White else Color(0xFF191C1E),
                             progress,
                         )
                         Text(
@@ -924,7 +928,7 @@ fun MorphingPlayerSheet(
                         ) {
                             val artistColor = lerpColor(
                                 if (isDark) Color.White.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant,
-                                Color.White.copy(alpha = 0.75f),
+                                if (isDark) Color.White.copy(alpha = 0.75f) else Color(0xFF43474E),
                                 progress,
                             )
                             Text(
@@ -941,7 +945,7 @@ fun MorphingPlayerSheet(
                                 if (isDark) Color.White.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(
                                     alpha = 0.8f
                                 ),
-                                Color.White.copy(alpha = 0.8f),
+                                if (isDark) Color.White.copy(alpha = 0.8f) else Color(0xFF43474E),
                                 progress,
                             )
                             ProviderIcon(
@@ -992,9 +996,11 @@ fun MorphingPlayerSheet(
                                     onSeek(fraction)
                                 },
                                 enabled = durationMs > 0L,
-                                activeTrackColor = Color.White,
-                                inactiveTrackColor = Color.White.copy(alpha = 0.24f),
-                                thumbColor = Color.White,
+                                activeTrackColor = if (isDark) Color.White else Color(0xFF191C1E),
+                                inactiveTrackColor = if (isDark) Color.White.copy(alpha = 0.24f) else Color.Black.copy(
+                                    alpha = 0.16f
+                                ),
+                                thumbColor = if (isDark) Color.White else Color(0xFF191C1E),
                                 isPlaying = isPlaying,
                                 isVisible = fullControlsAlpha > 0.001f,
                                 modifier = Modifier
@@ -1016,7 +1022,9 @@ fun MorphingPlayerSheet(
                                 Text(
                                     text = formatMs(displayMs),
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = Color.White.copy(alpha = 0.6f),
+                                    color = if (isDark) Color.White.copy(alpha = 0.6f) else Color.Black.copy(
+                                        alpha = 0.6f
+                                    ),
                                 )
                                 val qualityBadgeText = when {
                                     track.codec?.lowercase()?.contains("lossless") == true ||
@@ -1031,15 +1039,24 @@ fun MorphingPlayerSheet(
                                     else -> "HI-RES"
                                 }
                                 Surface(
-                                    color = Color.White.copy(alpha = 0.12f),
+                                    color = if (isDark) Color.White.copy(alpha = 0.12f) else Color.Black.copy(
+                                        alpha = 0.06f
+                                    ),
                                     shape = RoundedCornerShape(4.dp),
-                                    border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.2f)),
+                                    border = BorderStroke(
+                                        0.5.dp,
+                                        if (isDark) Color.White.copy(alpha = 0.2f) else Color.Black.copy(
+                                            alpha = 0.12f
+                                        )
+                                    ),
                                 ) {
                                     Text(
                                         text = qualityBadgeText,
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.SemiBold,
-                                        color = Color.White.copy(alpha = 0.85f),
+                                        color = if (isDark) Color.White.copy(alpha = 0.85f) else Color.Black.copy(
+                                            alpha = 0.85f
+                                        ),
                                         modifier = Modifier.padding(
                                             horizontal = 6.dp,
                                             vertical = 2.dp
@@ -1049,13 +1066,16 @@ fun MorphingPlayerSheet(
                                 Text(
                                     text = formatMs(durationMs),
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = Color.White.copy(alpha = 0.6f),
+                                    color = if (isDark) Color.White.copy(alpha = 0.6f) else Color.Black.copy(
+                                        alpha = 0.6f
+                                    ),
                                 )
                             }
                         }
 
                         val activeAccent = MaterialTheme.colorScheme.primary
-                        val inactiveTint = Color.White.copy(alpha = 0.50f)
+                        val inactiveTint =
+                            if (isDark) Color.White.copy(alpha = 0.50f) else Color.Black.copy(alpha = 0.45f)
 
                         Box(
                             modifier = Modifier
@@ -1141,7 +1161,9 @@ fun MorphingPlayerSheet(
                             Icon(
                                 painter = painterResource(R.drawable.ic_queue_music),
                                 contentDescription = "Queue",
-                                tint = Color.White.copy(alpha = 0.8f),
+                                tint = if (isDark) Color.White.copy(alpha = 0.8f) else Color.Black.copy(
+                                    alpha = 0.75f
+                                ),
                                 modifier = Modifier.size(28.dp),
                             )
                         }
@@ -1154,6 +1176,7 @@ fun MorphingPlayerSheet(
                                 }
                             },
                             onMoreClick = onMoreClick,
+                            isDark = isDark,
                             modifier = Modifier
                                 .offset(x = 0.dp, y = toolbarTop)
                                 .fillMaxWidth()
@@ -1173,14 +1196,18 @@ fun MorphingPlayerSheet(
                                 if (isDark) Color.White.copy(alpha = 0.12f) else Color.White.copy(
                                     alpha = 0.75f
                                 ),
-                                Color.White.copy(alpha = 0.16f),
+                                if (isDark) Color.White.copy(alpha = 0.16f) else Color.White.copy(
+                                    alpha = 0.85f
+                                ),
                                 progress,
                             ),
                             lerpColor(
                                 if (isDark) MaterialTheme.colorScheme.surfaceContainerHigh.copy(
                                     alpha = 0.50f
                                 ) else MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.45f),
-                                Color.White.copy(alpha = 0.06f),
+                                if (isDark) Color.White.copy(alpha = 0.06f) else Color.White.copy(
+                                    alpha = 0.50f
+                                ),
                                 progress,
                             ),
                         ),
@@ -1191,14 +1218,18 @@ fun MorphingPlayerSheet(
                                 if (isDark) Color.White.copy(alpha = 0.22f) else Color.White.copy(
                                     alpha = 0.40f
                                 ),
-                                Color.White.copy(alpha = 0.35f),
+                                if (isDark) Color.White.copy(alpha = 0.35f) else Color.Black.copy(
+                                    alpha = 0.12f
+                                ),
                                 progress,
                             ),
                             lerpColor(
                                 if (isDark) Color.White.copy(alpha = 0.05f) else Color.White.copy(
                                     alpha = 0.10f
                                 ),
-                                Color.White.copy(alpha = 0.08f),
+                                if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(
+                                    alpha = 0.04f
+                                ),
                                 progress,
                             ),
                             Color.Transparent,
@@ -1230,7 +1261,7 @@ fun MorphingPlayerSheet(
                     ) {
                         val skipIconTint = lerpColor(
                             if (isDark) Color.White else Color.Black.copy(alpha = 0.85f),
-                            Color.White,
+                            if (isDark) Color.White else Color(0xFF191C1E),
                             progress,
                         )
 
@@ -1257,46 +1288,21 @@ fun MorphingPlayerSheet(
 
                         val playButtonGradient = Brush.verticalGradient(
                             colors = listOf(
-                                lerpColor(
-                                    if (isDark) Color.White.copy(alpha = 0.18f) else Color.White.copy(
-                                        alpha = 0.85f
-                                    ),
-                                    Color.White.copy(alpha = 0.95f),
-                                    progress,
-                                ),
-                                lerpColor(
-                                    if (isDark) MaterialTheme.colorScheme.surfaceContainerHighest.copy(
-                                        alpha = 0.55f
-                                    ) else MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.50f),
-                                    Color.White.copy(alpha = 0.75f),
-                                    progress,
-                                ),
+                                if (isDark) Color.White.copy(alpha = 0.95f) else Color(0xFF191C1E),
+                                if (isDark) Color.White.copy(alpha = 0.75f) else Color(0xFF2C3135),
                             ),
                         )
                         val playButtonBorderBrush = Brush.verticalGradient(
                             colors = listOf(
-                                lerpColor(
-                                    if (isDark) Color.White.copy(alpha = 0.22f) else Color.White.copy(
-                                        alpha = 0.40f
-                                    ),
-                                    Color.White,
-                                    progress,
-                                ),
-                                lerpColor(
-                                    if (isDark) Color.White.copy(alpha = 0.05f) else Color.White.copy(
-                                        alpha = 0.10f
-                                    ),
-                                    Color.White.copy(alpha = 0.40f),
-                                    progress,
+                                if (isDark) Color.White else Color.Black.copy(alpha = 0.20f),
+                                if (isDark) Color.White.copy(alpha = 0.40f) else Color.Black.copy(
+                                    alpha = 0.05f
                                 ),
                                 Color.Transparent,
                             ),
                         )
-                        val playIconTint = lerpColor(
-                            if (isDark) Color.White else Color.Black.copy(alpha = 0.85f),
-                            Color.Black.copy(alpha = 0.85f),
-                            progress,
-                        )
+                        val playIconTint =
+                            if (isDark) Color.Black.copy(alpha = 0.85f) else Color.White
 
                         val animatedCookieShape =
                             remember(cookieMorphProgress, rotationAnimatable.value) {
@@ -1405,6 +1411,7 @@ private fun FullPlayerToolbar(
     onCollapse: () -> Unit,
     onMoreClick: () -> Unit,
     modifier: Modifier = Modifier,
+    isDark: Boolean = isSystemInDarkTheme(),
 ) {
     Box(
         modifier = modifier
@@ -1415,8 +1422,13 @@ private fun FullPlayerToolbar(
                 .align(Alignment.CenterStart)
                 .size(40.dp)
                 .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.08f))
-                .border(BorderStroke(0.5.dp, Color.White.copy(alpha = 0.15f)), CircleShape)
+                .background(if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.06f))
+                .border(
+                    BorderStroke(
+                        0.5.dp,
+                        if (isDark) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.10f)
+                    ), CircleShape
+                )
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -1427,7 +1439,7 @@ private fun FullPlayerToolbar(
             Icon(
                 painter = painterResource(R.drawable.ic_chevron),
                 contentDescription = "Collapse",
-                tint = Color.White,
+                tint = if (isDark) Color.White else Color(0xFF191C1E),
                 modifier = Modifier.size(22.dp),
             )
         }
@@ -1442,7 +1454,7 @@ private fun FullPlayerToolbar(
         ) {
             Text(
                 text = "NOW PLAYING",
-                color = Color.White.copy(alpha = 0.65f),
+                color = if (isDark) Color.White.copy(alpha = 0.65f) else Color.Black.copy(alpha = 0.60f),
                 fontSize = if (albumName != null) 11.sp else 13.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.4.sp,
@@ -1452,7 +1464,7 @@ private fun FullPlayerToolbar(
             if (!albumName.isNullOrBlank()) {
                 Text(
                     text = albumName,
-                    color = Color.White.copy(alpha = 0.90f),
+                    color = if (isDark) Color.White.copy(alpha = 0.90f) else Color(0xFF191C1E),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
@@ -1466,8 +1478,13 @@ private fun FullPlayerToolbar(
                 .align(Alignment.CenterEnd)
                 .size(40.dp)
                 .clip(CircleShape)
-                .background(Color.White.copy(alpha = 0.08f))
-                .border(BorderStroke(0.5.dp, Color.White.copy(alpha = 0.15f)), CircleShape)
+                .background(if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.06f))
+                .border(
+                    BorderStroke(
+                        0.5.dp,
+                        if (isDark) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.10f)
+                    ), CircleShape
+                )
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -1478,7 +1495,7 @@ private fun FullPlayerToolbar(
             Icon(
                 painter = painterResource(R.drawable.ic_more_vert),
                 contentDescription = "More",
-                tint = Color.White,
+                tint = if (isDark) Color.White else Color(0xFF191C1E),
                 modifier = Modifier.size(20.dp),
             )
         }

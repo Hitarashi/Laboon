@@ -80,6 +80,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.playback.ArtworkUrlHelper
 import kotlin.math.abs
 
 private val CookieMorph = Morph(MaterialShapes.Circle, MaterialShapes.Cookie12Sided)
@@ -564,10 +565,13 @@ fun MiniPlayer(
                             .background(MaterialTheme.colorScheme.surfaceContainerHigh),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (!track.artworkUrl.isNullOrBlank()) {
+                        val lowResUrl = remember(track.artworkUrl) {
+                            ArtworkUrlHelper.toLowQuality(track.artworkUrl)
+                        }
+                        if (!lowResUrl.isNullOrBlank()) {
                             AsyncImage(
                                 model = ImageRequest.Builder(LocalPlatformContext.current)
-                                    .data(track.artworkUrl)
+                                    .data(lowResUrl)
                                     .crossfade(true)
                                     .build(),
                                 placeholder = painterResource(R.drawable.app_icon_small),

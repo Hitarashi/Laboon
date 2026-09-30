@@ -3,6 +3,7 @@ package org.shilpo.laboon.playback
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -14,6 +15,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
@@ -22,6 +24,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.TeeAudioProcessor
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.session.MediaSession
@@ -45,6 +48,7 @@ import org.shilpo.laboon.search.SearchRepositoryImpl
 
 interface PlaybackManager {
     val state: StateFlow<PlaybackState>
+    val spectrumState: StateFlow<SpectrumFrame>
     val queueManager: QueueManager
     fun play(
         track: HomeTrack,
@@ -65,6 +69,7 @@ interface PlaybackManager {
     fun release()
 }
 
+@OptIn(UnstableApi::class)
 class PlaybackManagerImpl(
     private val context: Context,
     private val sessionStore: SessionStore,
@@ -77,6 +82,9 @@ class PlaybackManagerImpl(
         SharedPreferencesKeyValueStore(context),
     ),
 ) : PlaybackManager {
+
+    private val spectrumVisualizer = SpectrumVisualizer()
+    override val spectrumState: StateFlow<SpectrumFrame> = spectrumVisualizer.state
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private val _state = MutableStateFlow(
@@ -163,17 +171,23 @@ class PlaybackManagerImpl(
                 context: Context,
                 enableFloatOutput: Boolean,
                 enableAudioOutputPlaybackParams: Boolean
-            ): AudioSink = DefaultAudioSink.Builder(context)
-                .setEnableFloatOutput(true)
-                .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
-                .build()
+            ): AudioSink {
+                val teeProcessor = TeeAudioProcessor(spectrumVisualizer.sink)
+                return DefaultAudioSink.Builder(context)
+                    .setEnableFloatOutput(true)
+                    .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
+                    .setAudioProcessors(arrayOf(teeProcessor))
+                    .build()
+            }
         }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
 
         val trackSelector = DefaultTrackSelector(context).apply {
             setParameters(
                 buildUponParameters()
                     .setAudioOffloadPreferences(
-                        TrackSelectionParameters.AudioOffloadPreferences.DEFAULT
+                        TrackSelectionParameters.AudioOffloadPreferences.Builder()
+                            .setAudioOffloadMode(TrackSelectionParameters.AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_DISABLED)
+                            .build()
                     )
             )
         }
@@ -253,7 +267,12 @@ class PlaybackManagerImpl(
                         -> if (mediaItem != null) followPlayerTransition(exo)
 
 
-                    Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT -> playQueuedNextTrack()
+                    Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT -> {
+                        _state.value = _state.value.copy(
+                            currentPositionMs = 0L,
+                            progress = 0f,
+                        )
+                    }
 
                     else -> Unit
                 }
@@ -556,6 +575,7 @@ class PlaybackManagerImpl(
                 val mediaItem = buildMediaItem(nextTrack, streamUrl)
                 exo.addMediaItem(mediaItem)
             }
+            ArtworkUrlHelper.preload(context, nextTrack.artworkUrl)
             startPrecacheNext(nextTrack, streamUrl)
         }
     }
@@ -666,6 +686,7 @@ class PlaybackManagerImpl(
         }
         exo.prepare()
         exo.play()
+        ArtworkUrlHelper.preload(context, track.artworkUrl)
 
         val serviceIntent = Intent(context, PlaybackService::class.java)
         try {
@@ -751,6 +772,7 @@ class PlaybackManagerImpl(
         if (dur > 0L) {
             playbackPersistence.saveLastDuration(dur)
         }
+        spectrumVisualizer.reset()
         fadeOut(250L)
     }
 
@@ -809,6 +831,7 @@ class PlaybackManagerImpl(
         retryCount = 0
         pendingFadeIn = false
         stopProgressTracker()
+        spectrumVisualizer.reset()
         val exo = player
         if (exo != null) {
             exo.volume = 0f
@@ -843,6 +866,7 @@ class PlaybackManagerImpl(
         retryCount = 0
         pendingFadeIn = false
         stopProgressTracker()
+        spectrumVisualizer.reset()
         queueManager.release()
         val session = mediaSession
         if (session != null) {
