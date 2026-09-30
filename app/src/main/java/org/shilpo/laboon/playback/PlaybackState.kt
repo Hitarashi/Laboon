@@ -10,4 +10,7 @@ data class PlaybackState(
     val durationMs: Long = 0L,
     val progress: Float = 0f,
     val error: String? = null,
+    val canSkipNext: Boolean = false,
+    val canSkipPrevious: Boolean = false,
+    val isDiscovering: Boolean = false,
 )

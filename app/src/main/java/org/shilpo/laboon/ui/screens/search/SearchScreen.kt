@@ -25,6 +25,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -68,6 +70,9 @@ import org.shilpo.laboon.ui.design.ProviderIcon
 @Composable
 fun SearchScreen(
     onTrackClick: (HomeTrack) -> Unit = {},
+    onPlayWithContext: ((HomeTrack, List<HomeTrack>) -> Unit)? = null,
+    onPlayNext: ((HomeTrack) -> Unit)? = null,
+    onAddToQueue: ((HomeTrack) -> Unit)? = null,
     modifier: Modifier = Modifier,
     searchRepository: SearchRepository? = null,
 ) {
@@ -225,12 +230,18 @@ fun SearchScreen(
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         items(results, key = { it.id }) { track ->
+                            var menuExpanded by remember { mutableStateOf(false) }
+
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(12.dp))
                                     .clickable {
-                                        onTrackClick(track)
+                                        if (onPlayWithContext != null) {
+                                            onPlayWithContext(track, results)
+                                        } else {
+                                            onTrackClick(track)
+                                        }
                                     }
                                     .padding(horizontal = 12.dp, vertical = 8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -304,6 +315,47 @@ fun SearchScreen(
                                                 alpha = 0.8f
                                             ),
                                         )
+                                    }
+                                }
+
+                                if (onPlayNext != null || onAddToQueue != null) {
+                                    Box {
+                                        IconButton(
+                                            onClick = { menuExpanded = true },
+                                            modifier = Modifier.size(36.dp),
+                                        ) {
+                                            Icon(
+                                                painter = painterResource(R.drawable.ic_more_vert),
+                                                contentDescription = "Options",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                                    alpha = 0.7f
+                                                ),
+                                                modifier = Modifier.size(20.dp),
+                                            )
+                                        }
+                                        DropdownMenu(
+                                            expanded = menuExpanded,
+                                            onDismissRequest = { menuExpanded = false },
+                                        ) {
+                                            if (onPlayNext != null) {
+                                                DropdownMenuItem(
+                                                    text = { Text("Play Next") },
+                                                    onClick = {
+                                                        menuExpanded = false
+                                                        onPlayNext(track)
+                                                    },
+                                                )
+                                            }
+                                            if (onAddToQueue != null) {
+                                                DropdownMenuItem(
+                                                    text = { Text("Add to Queue") },
+                                                    onClick = {
+                                                        menuExpanded = false
+                                                        onAddToQueue(track)
+                                                    },
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }

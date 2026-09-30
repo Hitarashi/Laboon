@@ -1,12 +1,16 @@
 package org.shilpo.laboon.home
 
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
-import java.net.URL
+import org.shilpo.laboon.net.HttpError
+import org.shilpo.laboon.net.HttpErrorKind
+import org.shilpo.laboon.net.HttpJsonClient
+import org.shilpo.laboon.net.arrOrNull
+import org.shilpo.laboon.net.fold
+import org.shilpo.laboon.net.objAtOrNull
+import org.shilpo.laboon.net.stringOrNull
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -14,6 +18,11 @@ import java.util.concurrent.ConcurrentHashMap
 
 object BackendArtworkResolver {
     private val cache = ConcurrentHashMap<String, String>()
+
+    private val http = HttpJsonClient(
+        connectTimeoutMs = LOOKUP_TIMEOUT_MS,
+        readTimeoutMs = LOOKUP_TIMEOUT_MS,
+    )
 
     fun normalizedKey(title: String, artist: String): String =
         "${title.lowercase().trim()}:::${artist.lowercase().trim()}"
@@ -132,31 +141,24 @@ object BackendArtworkResolver {
         null
     }
 
-    fun executeGet(urlStr: String, token: String? = null): String? {
-        return try {
-            val url = URL(urlStr)
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 6000
-                readTimeout = 6000
-                setRequestProperty("Accept", "application/json")
-                if (!token.isNullOrBlank()) {
-                    setRequestProperty("Authorization", formatBearerToken(token))
-                }
+
+    private suspend fun fetchJson(url: String, token: String?): JSONObject? {
+        val headers = buildMap {
+            put("Accept", "application/json")
+            if (!token.isNullOrBlank()) {
+                put("Authorization", formatBearerToken(token))
             }
-            if (conn.responseCode in 200..299) {
-                conn.inputStream.use { stream ->
-                    BufferedReader(InputStreamReader(stream, StandardCharsets.UTF_8)).readText()
-                }
-            } else {
-                null
-            }
-        } catch (_: Exception) {
-            null
         }
+        return http.getJson(url, headers).fold(
+            onSuccess = { it },
+            onFailure = { error ->
+                logWarning("Artwork lookup failed (${describe(error)}) for $url: ${error.message}")
+                null
+            },
+        )
     }
 
-    private fun queryBackendAsset(
+    private suspend fun queryBackendAsset(
         serverUrl: String,
         token: String,
         title: String,
@@ -168,17 +170,11 @@ object BackendArtworkResolver {
         val encodedArtist = URLEncoder.encode(artist.trim(), StandardCharsets.UTF_8.name())
         val endpoint =
             "$cleanServerUrl/api/v1/assets/providers/apple/tracks/$slug/artwork?title=$encodedTitle&artist=$encodedArtist&size=600"
-        val body = executeGet(endpoint, token) ?: return null
-        return try {
-            val json = JSONObject(body)
-            val url = json.optString("url").trim()
-            if (url.isNotEmpty()) url else null
-        } catch (_: Exception) {
-            null
-        }
+        val json = fetchJson(endpoint, token) ?: return null
+        return json.stringOrNull("url")
     }
 
-    private fun queryBackendSearch(
+    private suspend fun queryBackendSearch(
         serverUrl: String,
         token: String,
         query: String,
@@ -186,28 +182,18 @@ object BackendArtworkResolver {
         val cleanServerUrl = sanitizeServerUrl(serverUrl)
         val encodedQuery = URLEncoder.encode(query.trim(), StandardCharsets.UTF_8.name())
         val endpoint = "$cleanServerUrl/api/v1/search?q=$encodedQuery&limit=1"
-        val body = executeGet(endpoint, token) ?: return null
-        return try {
-            val json = JSONObject(body)
-            val liveArr = json.optJSONArray("live")
-            val liveUrl = liveArr?.optJSONObject(0)?.optString("artwork_url")?.trim()
-            if (!liveUrl.isNullOrEmpty()) return liveUrl
+        val json = fetchJson(endpoint, token) ?: return null
 
-            val canonicalArr = json.optJSONArray("canonical")
-            val canonicalUrl = canonicalArr?.optJSONObject(0)?.optString("artwork_url")?.trim()
-            if (!canonicalUrl.isNullOrEmpty()) return canonicalUrl
+        val liveUrl = json.arrOrNull("live")?.objAtOrNull(0)?.stringOrNull("artwork_url")
+        if (liveUrl != null) return liveUrl
 
-            val cachedArr = json.optJSONArray("cached")
-            val cachedUrl = cachedArr?.optJSONObject(0)?.optString("artwork_url")?.trim()
-            if (!cachedUrl.isNullOrEmpty()) return cachedUrl
+        val canonicalUrl = json.arrOrNull("canonical")?.objAtOrNull(0)?.stringOrNull("artwork_url")
+        if (canonicalUrl != null) return canonicalUrl
 
-            null
-        } catch (_: Exception) {
-            null
-        }
+        return json.arrOrNull("cached")?.objAtOrNull(0)?.stringOrNull("artwork_url")
     }
 
-    private fun queryBackendArtistArtwork(
+    private suspend fun queryBackendArtistArtwork(
         serverUrl: String,
         token: String,
         artist: String,
@@ -216,48 +202,34 @@ object BackendArtworkResolver {
         val cleanServerUrl = sanitizeServerUrl(serverUrl)
         val encoded = URLEncoder.encode(artist.trim(), StandardCharsets.UTF_8.name())
         val endpoint = "$cleanServerUrl/api/v1/assets/artists/artwork?name=$encoded&size=$size"
-        val body = executeGet(endpoint, token) ?: return null
-        return try {
-            val json = JSONObject(body)
-            val url = json.optString("url").trim()
-            if (url.isNotEmpty()) url else null
-        } catch (_: Exception) {
-            null
-        }
+        val json = fetchJson(endpoint, token) ?: return null
+        return json.stringOrNull("url")
     }
 
-    private fun queryDeezerArtist(artist: String): String? {
+    private suspend fun queryDeezerArtist(artist: String): String? {
         val encoded = URLEncoder.encode(artist.trim(), StandardCharsets.UTF_8.name())
         val endpoint = "https://api.deezer.com/search/artist?q=$encoded&limit=5"
-        val body = executeGet(endpoint) ?: return null
-        return try {
-            val json = JSONObject(body)
-            val data = json.optJSONArray("data") ?: return null
-            val target = artist.trim().lowercase()
-            val targetNorm = target.replace(Regex("[^a-z0-9]"), "")
-            for (i in 0 until data.length()) {
-                val item = data.optJSONObject(i) ?: continue
-                val resName = item.optString("name").trim().lowercase()
-                val resNorm = resName.replace(Regex("[^a-z0-9]"), "")
-                if (resName == target || (targetNorm.isNotEmpty() && targetNorm == resNorm)) {
-                    val xl = item.optString("picture_xl").trim()
-                    val big = item.optString("picture_big").trim()
-                    val medium = item.optString("picture_medium").trim()
-                    val chosen = listOf(
-                        xl,
-                        big,
-                        medium
-                    ).firstOrNull { it.isNotEmpty() && !it.contains("/images/artist//") }
-                    if (chosen != null) return chosen
-                }
+        val json = fetchJson(endpoint, null) ?: return null
+        val data = json.arrOrNull("data") ?: return null
+        val target = artist.trim().lowercase()
+        val targetNorm = target.replace(NON_ALNUM, "")
+        for (i in 0 until data.length()) {
+            val item = data.objAtOrNull(i) ?: continue
+            val resName = item.optString("name").trim().lowercase()
+            val resNorm = resName.replace(NON_ALNUM, "")
+            if (resName == target || (targetNorm.isNotEmpty() && targetNorm == resNorm)) {
+                val chosen = listOf(
+                    item.optString("picture_xl").trim(),
+                    item.optString("picture_big").trim(),
+                    item.optString("picture_medium").trim(),
+                ).firstOrNull { it.isNotEmpty() && !it.contains("/images/artist//") }
+                if (chosen != null) return chosen
             }
-            null
-        } catch (_: Exception) {
-            null
         }
+        return null
     }
 
-    private fun queryItunesSearch(
+    private suspend fun queryItunesSearch(
         query: String,
         entity: String,
         expectedTitle: String,
@@ -265,38 +237,50 @@ object BackendArtworkResolver {
     ): String? {
         val encodedQuery = URLEncoder.encode(query.trim(), StandardCharsets.UTF_8.name())
         val endpoint = "https://itunes.apple.com/search?term=$encodedQuery&entity=$entity&limit=5"
-        val body = executeGet(endpoint) ?: return null
-        return try {
-            val json = JSONObject(body)
-            val results = json.optJSONArray("results") ?: return null
-            val expArtistNorm = expectedArtist.lowercase().replace(Regex("[^a-z0-9]"), "")
-            val expTitleNorm = expectedTitle.lowercase().replace(Regex("[^a-z0-9]"), "")
-            for (i in 0 until results.length()) {
-                val item = results.optJSONObject(i) ?: continue
-                val resArtist =
-                    item.optString("artistName").lowercase().replace(Regex("[^a-z0-9]"), "")
-                val resTitle =
-                    item.optString(if (entity == "album") "collectionName" else "trackName")
-                        .lowercase().replace(Regex("[^a-z0-9]"), "")
-                val artistMatches =
-                    expArtistNorm.isEmpty() || resArtist.contains(expArtistNorm) || expArtistNorm.contains(
-                        resArtist
-                    )
-                val titleMatches =
-                    expTitleNorm.isEmpty() || resTitle.contains(expTitleNorm) || expTitleNorm.contains(
-                        resTitle
-                    )
-                if (artistMatches && titleMatches) {
-                    val rawUrl = item.optString("artworkUrl100").trim()
-                    if (rawUrl.isNotEmpty()) {
-                        return rawUrl.replace("100x100bb", "600x600bb")
-                    }
+        val json = fetchJson(endpoint, null) ?: return null
+        val results = json.arrOrNull("results") ?: return null
+        val expArtistNorm = expectedArtist.lowercase().replace(NON_ALNUM, "")
+        val expTitleNorm = expectedTitle.lowercase().replace(NON_ALNUM, "")
+        for (i in 0 until results.length()) {
+            val item = results.objAtOrNull(i) ?: continue
+            val resArtist = item.optString("artistName").lowercase().replace(NON_ALNUM, "")
+            val resTitle = item.optString(if (entity == "album") "collectionName" else "trackName")
+                .lowercase().replace(NON_ALNUM, "")
+            val artistMatches =
+                expArtistNorm.isEmpty() || resArtist.contains(expArtistNorm) || expArtistNorm.contains(
+                    resArtist
+                )
+            val titleMatches =
+                expTitleNorm.isEmpty() || resTitle.contains(expTitleNorm) || expTitleNorm.contains(
+                    resTitle
+                )
+            if (artistMatches && titleMatches) {
+                val rawUrl = item.stringOrNull("artworkUrl100")
+                if (rawUrl != null) {
+                    return rawUrl.replace("100x100bb", "600x600bb")
                 }
             }
-            null
-        } catch (_: Exception) {
-            null
         }
+        return null
+    }
+
+
+    private fun describe(error: HttpError): String = when {
+        error.kind == HttpErrorKind.STATUS &&
+                error.message.contains("rate limited", ignoreCase = true) -> "rate limited"
+
+        error.statusCode == 401 -> "unauthorized"
+        error.statusCode == 403 -> "forbidden"
+        error.kind == HttpErrorKind.TIMEOUT -> "timed out"
+        error.kind == HttpErrorKind.NETWORK -> "network unavailable"
+        error.kind == HttpErrorKind.MALFORMED -> "malformed body"
+        else -> "unexpected error"
+    }
+
+
+    private fun logWarning(message: String) {
+        // android.util.Log is a throwing stub under JVM unit tests, so a log line must never be the thing that fails a request.
+        runCatching { Log.w(TAG, message) }
     }
 
     private fun generateSlug(title: String, artist: String): String {
@@ -327,4 +311,9 @@ object BackendArtworkResolver {
             "Bearer $trimmed"
         }
     }
+
+    private val NON_ALNUM = Regex("[^a-z0-9]")
+
+    private const val TAG = "Artwork"
+    private const val LOOKUP_TIMEOUT_MS = 6_000L
 }

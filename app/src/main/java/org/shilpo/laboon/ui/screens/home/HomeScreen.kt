@@ -110,6 +110,7 @@ import org.shilpo.laboon.ui.design.rememberLiquidGlassBackdropState
 import org.shilpo.laboon.ui.design.rememberPredictiveBackState
 import org.shilpo.laboon.ui.design.userDisplayName
 import org.shilpo.laboon.ui.screens.library.LibraryScreen
+import org.shilpo.laboon.ui.screens.queue.QueueBottomSheet
 import org.shilpo.laboon.ui.screens.search.SearchScreen
 import org.shilpo.laboon.ui.screens.settings.SettingsScreen
 
@@ -126,6 +127,7 @@ fun HomeScreen(
     val showSettings = state.settingsVisible
 
     var feedState by remember { mutableStateOf(HomeFeedDefaults.defaultFeed) }
+    var showQueueSheet by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
     val context = LocalContext.current
@@ -306,6 +308,15 @@ fun HomeScreen(
                         onTrackClick = { track ->
                             playbackManager.play(track)
                         },
+                        onPlayWithContext = { track, results ->
+                            playbackManager.play(track, results)
+                        },
+                        onPlayNext = { track ->
+                            playbackManager.playNext(track)
+                        },
+                        onAddToQueue = { track ->
+                            playbackManager.addToQueue(track)
+                        },
                         modifier = Modifier.fillMaxSize(),
                     )
 
@@ -349,12 +360,14 @@ fun HomeScreen(
                             }
                         },
                         onPreviousClick = {
-                            playbackManager.seekTo(0f)
+                            playbackManager.skipToPrevious()
                         },
                         onNextClick = {
-                            playbackManager.seekTo(0f)
+                            playbackManager.skipToNext()
                         },
-                        onClick = {},
+                        onClick = {
+                            showQueueSheet = true
+                        },
                         backdropState = liquidGlassBackdropState,
                     )
                 }
@@ -416,6 +429,36 @@ fun HomeScreen(
                     modifier = settingsSurface.fillMaxSize(),
                 )
             }
+        }
+
+        if (showQueueSheet) {
+            val queueState by playbackManager.queueManager.state.collectAsState()
+            QueueBottomSheet(
+                queueState = queueState,
+                isDiscovering = playbackState.isDiscovering,
+                onDismiss = { showQueueSheet = false },
+                onTrackClick = { track ->
+                    playbackManager.play(track)
+                },
+                onRemoveUpNext = { index ->
+                    playbackManager.queueManager.removeUpNext(index)
+                },
+                onMoveUpNext = { from, to ->
+                    playbackManager.queueManager.moveUpNext(from, to)
+                },
+                onClearUpNext = {
+                    playbackManager.queueManager.clearUpNext()
+                },
+                onToggleAutoplay = {
+                    playbackManager.queueManager.toggleAutoplay()
+                },
+                onToggleShuffle = {
+                    playbackManager.queueManager.toggleShuffle()
+                },
+                onCycleRepeatMode = {
+                    playbackManager.queueManager.cycleRepeatMode()
+                },
+            )
         }
     }
 }
@@ -909,5 +952,3 @@ private fun HomeContent(
         }
     }
 }
-
-

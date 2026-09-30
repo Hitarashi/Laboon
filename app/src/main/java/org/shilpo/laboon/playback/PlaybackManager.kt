@@ -30,14 +30,22 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.shilpo.laboon.auth.SessionStore
+import org.shilpo.laboon.auth.SharedPreferencesKeyValueStore
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.home.TrackIdentity
 import org.shilpo.laboon.search.SearchRepository
 import org.shilpo.laboon.search.SearchRepositoryImpl
 
 interface PlaybackManager {
     val state: StateFlow<PlaybackState>
-    fun play(track: HomeTrack)
+    val queueManager: QueueManager
+    fun play(track: HomeTrack, contextTracks: List<HomeTrack>? = null)
+    fun playNext(track: HomeTrack)
+    fun addToQueue(track: HomeTrack)
+    fun skipToNext()
+    fun skipToPrevious()
     fun pause()
     fun resume()
     fun togglePlayPause()
@@ -50,6 +58,10 @@ class PlaybackManagerImpl(
     private val context: Context,
     private val sessionStore: SessionStore,
     private val searchRepository: SearchRepository = SearchRepositoryImpl(sessionStore),
+    override val queueManager: QueueManager = QueueManagerImpl(
+        persistence = QueuePersistence(SharedPreferencesKeyValueStore(context)),
+    ),
+    private val discoveryEngine: QueueDiscoveryEngine = QueueDiscoveryEngine(sessionStore),
 ) : PlaybackManager {
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -60,11 +72,39 @@ class PlaybackManagerImpl(
     private var mediaSession: MediaSession? = null
     private var progressJob: Job? = null
     private var resolveJob: Job? = null
+    private var preloadJob: Job? = null
+    private var discoveryJob: Job? = null
+    private var discoveryGeneration: Long = 0L
     private var fadeJob: Job? = null
     private var pendingFadeIn: Boolean = false
 
     init {
         initPlayer()
+        scope.launch {
+            queueManager.state.collect { qState ->
+                syncPlayerModes(qState)
+                _state.value = _state.value.copy(
+                    canSkipNext = qState.hasNext,
+                    canSkipPrevious = qState.hasPrevious,
+                )
+            }
+        }
+    }
+
+
+    private fun syncPlayerModes(qState: QueueState) {
+        val exo = player ?: return
+        val targetRepeatMode = when (qState.repeatMode) {
+            RepeatMode.OFF -> Player.REPEAT_MODE_OFF
+            RepeatMode.ALL -> Player.REPEAT_MODE_ALL
+            RepeatMode.ONE -> Player.REPEAT_MODE_ONE
+        }
+        if (exo.repeatMode != targetRepeatMode) {
+            exo.repeatMode = targetRepeatMode
+        }
+        if (exo.shuffleModeEnabled != qState.isShuffle) {
+            exo.shuffleModeEnabled = qState.isShuffle
+        }
     }
 
     private fun initPlayer() {
@@ -121,17 +161,36 @@ class PlaybackManagerImpl(
                         fadeJob?.cancel()
                         pendingFadeIn = false
                         exo.volume = 1f
-                        _state.value = _state.value.copy(
-                            isPlaying = false,
-                            isBuffering = false,
-                            progress = 1.0f,
-                        )
-                        stopProgressTracker()
+                        if (queueManager.state.value.hasNext) {
+                            skipToNext()
+                        } else {
+                            _state.value = _state.value.copy(
+                                isPlaying = false,
+                                isBuffering = false,
+                                progress = 1.0f,
+                            )
+                            stopProgressTracker()
+                        }
                     }
 
                     Player.STATE_IDLE -> {
                         _state.value = _state.value.copy(isBuffering = false)
                     }
+                }
+            }
+
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                when (reason) {
+
+
+                    Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
+                    Player.MEDIA_ITEM_TRANSITION_REASON_SEEK,
+                        -> if (mediaItem != null) followPlayerTransition(exo)
+
+
+                    Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT -> playQueuedNextTrack()
+
+                    else -> Unit
                 }
             }
 
@@ -209,6 +268,14 @@ class PlaybackManagerImpl(
                         this@PlaybackManagerImpl.pause()
                     }
                 }
+
+                override fun seekToNext() {
+                    skipToNext()
+                }
+
+                override fun seekToPrevious() {
+                    skipToPrevious()
+                }
             }
             val session = MediaSession.Builder(context, forwardingPlayer)
                 .setSessionActivity(pendingIntent)
@@ -224,8 +291,75 @@ class PlaybackManagerImpl(
         player = exo
     }
 
-    override fun play(track: HomeTrack) {
+    override fun play(track: HomeTrack, contextTracks: List<HomeTrack>?) {
+        queueManager.play(track, contextTracks)
+        executePlayTrack(track)
+        scheduleDiscoveryRefillIfNeeded()
+    }
+
+    override fun playNext(track: HomeTrack) {
+        queueManager.playNext(track)
+        schedulePreloadNext()
+    }
+
+    override fun addToQueue(track: HomeTrack) {
+        queueManager.addToQueue(track)
+        schedulePreloadNext()
+    }
+
+    override fun skipToNext() {
+        val exo = player ?: return
+        if (exo.mediaItemCount > 1 && exo.currentMediaItemIndex < exo.mediaItemCount - 1) {
+            exo.seekToNextMediaItem()
+        } else {
+            playQueuedNextTrack()
+        }
+    }
+
+
+    private fun followPlayerTransition(exo: ExoPlayer) {
+        val nextTrack = queueManager.advanceToNext()
+        if (nextTrack == null) return
+        _state.value = _state.value.copy(
+            currentTrack = nextTrack,
+            currentPositionMs = 0L,
+            progress = 0f,
+        )
+        if (exo.mediaItemCount > 1 && exo.currentMediaItemIndex > 0) {
+            exo.removeMediaItem(0)
+        }
+        schedulePreloadNext()
+        scheduleDiscoveryRefillIfNeeded()
+    }
+
+
+    private fun playQueuedNextTrack() {
+        val nextTrack = queueManager.advanceToNext()
+        if (nextTrack != null) {
+            executePlayTrack(nextTrack)
+            scheduleDiscoveryRefillIfNeeded()
+        } else {
+            _state.value = _state.value.copy(isPlaying = false, progress = 1.0f)
+        }
+    }
+
+    override fun skipToPrevious() {
+        val exo = player ?: return
+        if (exo.currentPosition > 3000L) {
+            exo.seekTo(0L)
+        } else {
+            val prevTrack = queueManager.advanceToPrevious()
+            if (prevTrack != null && prevTrack.id != _state.value.currentTrack?.id) {
+                executePlayTrack(prevTrack)
+            } else {
+                exo.seekTo(0L)
+            }
+        }
+    }
+
+    private fun executePlayTrack(track: HomeTrack) {
         resolveJob?.cancel()
+        preloadJob?.cancel()
         fadeJob?.cancel()
         pendingFadeIn = false
         player?.let { exo ->
@@ -248,6 +382,7 @@ class PlaybackManagerImpl(
             val trackWithCodec = if (track.codec == null) track.copy(codec = "alac") else track
             _state.value = _state.value.copy(currentTrack = trackWithCodec)
             startPlayback(trackWithCodec, knownStream)
+            schedulePreloadNext()
         } else {
             resolveJob = scope.launch {
                 val resolution = searchRepository.resolvePlayback(track)
@@ -258,6 +393,7 @@ class PlaybackManagerImpl(
                     )
                     _state.value = _state.value.copy(currentTrack = updatedTrack)
                     startPlayback(updatedTrack, resolution.streamUrl)
+                    schedulePreloadNext()
                 } else {
                     _state.value = _state.value.copy(
                         isBuffering = false,
@@ -268,23 +404,97 @@ class PlaybackManagerImpl(
         }
     }
 
+    private fun schedulePreloadNext() {
+
+
+        if (queueManager.state.value.isShuffle) {
+            preloadJob?.cancel()
+            return
+        }
+        preloadJob?.cancel()
+        preloadJob = scope.launch {
+            delay(400)
+            val exo = player ?: return@launch
+            if (exo.mediaItemCount > 1) return@launch
+            val nextTrack = queueManager.peekNext() ?: return@launch
+
+            val streamUrl = if (!nextTrack.streamUrl.isNullOrBlank()) {
+                nextTrack.streamUrl
+            } else {
+                searchRepository.resolvePlayback(nextTrack)?.streamUrl
+            } ?: return@launch
+
+            if (!isActive || exo.mediaItemCount > 1) return@launch
+            val mediaItem = buildMediaItem(nextTrack, streamUrl)
+            exo.addMediaItem(mediaItem)
+        }
+    }
+
+
+    private fun scheduleDiscoveryRefillIfNeeded() {
+        discoveryJob?.cancel()
+        val generation = ++discoveryGeneration
+        val qState = queueManager.state.value
+        if (!qState.isAutoplayEnabled || qState.upNextCount > DISCOVERY_REFILL_THRESHOLD) {
+            _state.value = _state.value.copy(isDiscovering = false)
+            return
+        }
+        val seed = qState.currentTrack
+        if (seed == null) {
+            _state.value = _state.value.copy(isDiscovering = false)
+            return
+        }
+
+        _state.value = _state.value.copy(isDiscovering = true)
+        discoveryJob = scope.launch {
+            try {
+                val queuedKeys = queueManager.state.value.items.mapTo(HashSet()) {
+                    TrackIdentity.keyOf(it)
+                }
+                val exclude = queueManager.getRecentHistoryKeys() + queuedKeys
+                discoveryEngine.discoverNextTracks(seed, exclude, limit = 6) { discovered ->
+                    withContext(Dispatchers.Main.immediate) {
+                        if (isActive && generation == discoveryGeneration) {
+                            queueManager.appendDiscovery(discovered)
+                            schedulePreloadNext()
+                        }
+                    }
+                }
+            } finally {
+                if (generation == discoveryGeneration) {
+                    _state.value = _state.value.copy(isDiscovering = false)
+                }
+            }
+        }
+    }
+
+    private companion object {
+
+        const val DISCOVERY_REFILL_THRESHOLD = 4
+    }
+
+    private fun buildMediaItem(track: HomeTrack, streamUrl: String): MediaItem {
+        val metadataBuilder = MediaMetadata.Builder()
+            .setTitle(track.title)
+            .setArtist(track.artist)
+        track.album?.let { metadataBuilder.setAlbumTitle(it) }
+        track.artworkUrl?.let { metadataBuilder.setArtworkUri(Uri.parse(it)) }
+
+        return MediaItem.Builder()
+            .setMediaId(track.id)
+            .setUri(streamUrl)
+            .setMediaMetadata(metadataBuilder.build())
+            .build()
+    }
+
     private fun startPlayback(track: HomeTrack, streamUrl: String) {
         val exo = player ?: return
         fadeJob?.cancel()
         pendingFadeIn = true
         exo.volume = 0f
-        val metadataBuilder = MediaMetadata.Builder()
-            .setTitle(track.title)
-            .setArtist(track.artist)
 
-        track.album?.let { metadataBuilder.setAlbumTitle(it) }
-        track.artworkUrl?.let { metadataBuilder.setArtworkUri(Uri.parse(it)) }
-
-        val mediaItem = MediaItem.Builder()
-            .setUri(streamUrl)
-            .setMediaMetadata(metadataBuilder.build())
-            .build()
-
+        val mediaItem = buildMediaItem(track, streamUrl)
+        exo.clearMediaItems()
         exo.setMediaItem(mediaItem)
         exo.prepare()
         exo.play()
@@ -398,6 +608,8 @@ class PlaybackManagerImpl(
 
     override fun stop() {
         resolveJob?.cancel()
+        preloadJob?.cancel()
+        discoveryJob?.cancel()
         fadeJob?.cancel()
         pendingFadeIn = false
         stopProgressTracker()
@@ -412,9 +624,12 @@ class PlaybackManagerImpl(
 
     override fun release() {
         resolveJob?.cancel()
+        preloadJob?.cancel()
+        discoveryJob?.cancel()
         fadeJob?.cancel()
         pendingFadeIn = false
         stopProgressTracker()
+        queueManager.release()
         val session = mediaSession
         if (session != null) {
             PlaybackServiceHolder.service?.let { s ->

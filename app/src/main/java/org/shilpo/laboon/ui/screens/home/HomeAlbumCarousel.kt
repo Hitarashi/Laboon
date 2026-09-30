@@ -138,7 +138,7 @@ fun CarouselItemScope.HomeAlbumCard(
             ),
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            // Card backdrop layer (artwork + scrim overlay) captured cleanly for liquid glass refraction
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -168,7 +168,7 @@ fun CarouselItemScope.HomeAlbumCard(
                     }
                 }
 
-                // Text protection scrim overlay (drawn over artwork, behind text & glass button)
+
                 Box(
                     modifier = Modifier
                         .fillMaxSize()

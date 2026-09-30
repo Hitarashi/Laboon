@@ -49,12 +49,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.shilpo.laboon.R
 
-/**
- * Produces the vertical gradient brush for frosted glass base surfaces.
- *
- * Dark mode blends a subtle top highlight down into translucent [MaterialTheme.colorScheme.surfaceContainerHigh].
- * Light mode blends a soft luminous translucent white down into [MaterialTheme.colorScheme.surfaceContainerLow].
- */
+
 @Composable
 fun frostedGlassBaseBrush(isDark: Boolean = isSystemInDarkTheme()): Brush {
     val surfaceContainerHigh = MaterialTheme.colorScheme.surfaceContainerHigh
@@ -78,11 +73,7 @@ fun frostedGlassBaseBrush(isDark: Boolean = isSystemInDarkTheme()): Brush {
     }
 }
 
-/**
- * Produces the rim / glass border highlight brush matching FloatingNavBar and LiquidGlassPlayButton.
- *
- * Simulates overhead lighting reflecting off a beveled glass rim with a downward-fading highlight.
- */
+
 @Composable
 fun frostedGlassBorderBrush(isDark: Boolean = isSystemInDarkTheme()): Brush {
     return remember(isDark) {
@@ -106,9 +97,7 @@ fun frostedGlassBorderBrush(isDark: Boolean = isSystemInDarkTheme()): Brush {
     }
 }
 
-/**
- * Color sequence for the animated specular sheen sweeping across frosted glass surfaces.
- */
+
 @Composable
 fun frostedGlassGlintColors(isDark: Boolean = isSystemInDarkTheme()): List<Color> {
     return remember(isDark) {
@@ -132,14 +121,7 @@ fun frostedGlassGlintColors(isDark: Boolean = isSystemInDarkTheme()): List<Color
     }
 }
 
-/**
- * Applies an animated frosted glass shimmer effect.
- *
- * Renders an adaptive translucent glass base background gradient and an animated
- * specular glint sheen sweeping diagonally across the component.
- *
- * @param drawBase Whether to draw the base translucent glass fill under the specular sheen.
- */
+
 @Composable
 fun Modifier.frostedGlassShimmer(
     drawBase: Boolean = true,
@@ -183,16 +165,11 @@ fun Modifier.frostedGlassShimmer(
     }
 }
 
-/**
- * Default shimmer modifier adhering to the frosted liquid glass design language.
- */
+
 @Composable
 fun Modifier.shimmer(): Modifier = frostedGlassShimmer()
 
-/**
- * A frosted glass card container featuring translucent glass fill, an animated specular sheen,
- * and a delicate glass rim highlight border.
- */
+
 @Composable
 fun SkeletonCard(
     modifier: Modifier = Modifier,
@@ -217,9 +194,7 @@ fun SkeletonCard(
     }
 }
 
-/**
- * A pill-shaped frosted glass skeleton text line with subtle glass rim highlight.
- */
+
 @Composable
 fun SkeletonTextLine(
     width: Dp,
@@ -239,14 +214,7 @@ fun SkeletonTextLine(
     )
 }
 
-/**
- * A rich frosted glass skeleton track card matching [HomeTrackCard] layout and proportions:
- * - 186dp x 206dp card with extra large rounded corners and glass rim highlight
- * - Subtle artwork icon silhouette placeholder in upper center
- * - Text protection scrim gradient at the bottom
- * - Title and artist pill-shaped skeleton text lines
- * - Frosted glass circular play button skeleton placeholder (38dp)
- */
+
 @Composable
 fun SkeletonTrackCard(
     modifier: Modifier = Modifier,
@@ -272,7 +240,7 @@ fun SkeletonTrackCard(
                 .offset(y = (-18).dp),
         )
 
-        // Text protection scrim overlay at the bottom
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -333,11 +301,7 @@ fun SkeletonTrackCard(
     }
 }
 
-/**
- * A circular frosted glass skeleton avatar item matching [HomeArtistCard]:
- * - 112dp circular frosted glass avatar placeholder with glass rim highlight and subtle silhouette
- * - Pill-shaped artist name skeleton text line below
- */
+
 @Composable
 fun SkeletonArtistItem(
     modifier: Modifier = Modifier,
@@ -373,9 +337,7 @@ fun SkeletonArtistItem(
     }
 }
 
-/**
- * Track or artist carousel loading skeleton.
- */
+
 @Composable
 fun SkeletonTrackCarousel(
     titleWidth: Dp = 140.dp,
@@ -420,10 +382,7 @@ fun SkeletonTrackCarousel(
     }
 }
 
-/**
- * Segmented trending list loading skeleton with frosted glass toggle buttons,
- * translucent segmented list item containers, and frosted glass item elements.
- */
+
 @Composable
 fun SkeletonSegmentedList(
     modifier: Modifier = Modifier,

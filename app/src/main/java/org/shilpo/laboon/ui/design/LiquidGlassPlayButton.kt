@@ -29,21 +29,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.shilpo.laboon.R
 
-/**
- * A circular play button matching the "frosted liquid glass" design language
- * of the bottom navigation dock ([FloatingNavBar]).
- *
- * It uses [LiquidGlassSurface] with parameters calibrated specifically for a compact
- * circular component (~38dp):
- * - Gentle meniscus rim thickness (4.5dp) to avoid extreme center warping
- * - Moderate refraction intensity (0.40f) for a sleek liquid bezel
- * - Controlled frosted blur (10dp) preserving underlying artwork hue & saturation
- * - Dynamic dark/light tinting using [MaterialTheme.colorScheme] matching [FloatingNavBar]
- * - Vertical highlight border gradient with dynamic dark/light specular alphas
- * - Specular sheen reflecting overhead lighting with adaptive pill gradient
- * - Adaptive content and ripple coloring ([MaterialTheme.colorScheme.onSurface])
- * - Springy press-scale micro-interaction for tactile feedback
- */
+
 @Composable
 fun LiquidGlassPlayButton(
     onClick: () -> Unit,
