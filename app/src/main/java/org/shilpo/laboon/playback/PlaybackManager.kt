@@ -78,6 +78,8 @@ class PlaybackManagerImpl(
     private var discoveryGeneration: Long = 0L
     private var fadeJob: Job? = null
     private var pendingFadeIn: Boolean = false
+    private var retryJob: Job? = null
+    private var retryCount: Int = 0
 
     init {
         initPlayer()
@@ -151,6 +153,7 @@ class PlaybackManagerImpl(
                     }
 
                     Player.STATE_READY -> {
+                        retryCount = 0
                         val dur = exo.duration.coerceAtLeast(0L)
                         _state.value = _state.value.copy(
                             isBuffering = false,
@@ -234,12 +237,50 @@ class PlaybackManagerImpl(
             override fun onPlayerError(error: PlaybackException) {
                 fadeJob?.cancel()
                 pendingFadeIn = false
-                _state.value = _state.value.copy(
-                    isPlaying = false,
-                    isBuffering = false,
-                    error = error.message,
-                )
-                stopProgressTracker()
+                val isTransient =
+                    error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
+                            error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+                            error.errorCode == PlaybackException.ERROR_CODE_IO_UNSPECIFIED ||
+                            error.cause?.cause is java.net.SocketTimeoutException ||
+                            error.cause?.cause is java.net.SocketException
+                if (isTransient && retryCount < MAX_RETRIES) {
+                    retryCount++
+                    val backoffMs = 1000L * retryCount
+                    _state.value = _state.value.copy(
+                        isBuffering = true,
+                        isPlaying = false,
+                        error = null,
+                    )
+                    retryJob?.cancel()
+                    retryJob = scope.launch {
+                        delay(backoffMs)
+                        val track = _state.value.currentTrack ?: return@launch
+                        val resolution = searchRepository.resolvePlayback(track)
+                        if (resolution != null) {
+                            val updatedTrack = track.copy(
+                                streamUrl = resolution.streamUrl,
+                                codec = resolution.codec ?: track.codec ?: "alac",
+                            )
+                            _state.value = _state.value.copy(currentTrack = updatedTrack)
+                            startPlayback(updatedTrack, resolution.streamUrl)
+                        } else {
+                            _state.value = _state.value.copy(
+                                isPlaying = false,
+                                isBuffering = false,
+                                error = "Unable to resolve stream after retry",
+                            )
+                            stopProgressTracker()
+                        }
+                    }
+                } else {
+                    retryCount = 0
+                    _state.value = _state.value.copy(
+                        isPlaying = false,
+                        isBuffering = false,
+                        error = error.message,
+                    )
+                    stopProgressTracker()
+                }
             }
         })
 
@@ -362,6 +403,8 @@ class PlaybackManagerImpl(
         resolveJob?.cancel()
         preloadJob?.cancel()
         fadeJob?.cancel()
+        retryJob?.cancel()
+        retryCount = 0
         pendingFadeIn = false
         player?.let { exo ->
             if (exo.isPlaying) {
@@ -472,6 +515,7 @@ class PlaybackManagerImpl(
     private companion object {
 
         const val DISCOVERY_REFILL_THRESHOLD = 4
+        const val MAX_RETRIES = 3
     }
 
     private fun buildMediaItem(track: HomeTrack, streamUrl: String): MediaItem {
@@ -612,6 +656,8 @@ class PlaybackManagerImpl(
         preloadJob?.cancel()
         discoveryJob?.cancel()
         fadeJob?.cancel()
+        retryJob?.cancel()
+        retryCount = 0
         pendingFadeIn = false
         stopProgressTracker()
         val exo = player
@@ -642,6 +688,8 @@ class PlaybackManagerImpl(
         preloadJob?.cancel()
         discoveryJob?.cancel()
         fadeJob?.cancel()
+        retryJob?.cancel()
+        retryCount = 0
         pendingFadeIn = false
         stopProgressTracker()
         queueManager.release()

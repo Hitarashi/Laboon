@@ -44,10 +44,10 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.ProgressIndicatorDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -72,7 +72,9 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Matrix
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asComposePath
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
@@ -702,12 +704,28 @@ fun MorphingPlayerSheet(
                         )
                     }
 
+                    val miniIndicatorAlpha =
+                        (miniAlpha * (1f - (progress / 0.15f))).coerceIn(0f, 1f)
+                    val miniArtworkScale by animateFloatAsState(
+                        targetValue = if (isPlaying) 0.80f else 1.0f,
+                        animationSpec = tween(durationMillis = 450),
+                        label = "morphingMiniArtworkScale",
+                    )
+                    val effectiveArtScale = lerpFloat(miniArtworkScale, 1.0f, progress)
+                    val animatedWavyAmplitude by animateFloatAsState(
+                        targetValue = if (isPlaying) 1f else 0f,
+                        animationSpec = ProgressIndicatorDefaults.ProgressAnimationSpec,
+                        label = "morphingWavyAmplitude",
+                    )
+
                     Box(
                         modifier = Modifier
                             .offset(x = artX, y = artY)
                             .size(artSize)
                             .graphicsLayer {
                                 translationX = coverOffsetX.value
+                                scaleX = effectiveArtScale
+                                scaleY = effectiveArtScale
                             }
                             .shadow(
                                 elevation = artElevation,
@@ -815,6 +833,38 @@ fun MorphingPlayerSheet(
                         }
                     }
 
+                    if (miniIndicatorAlpha > 0.001f) {
+                        CircularWavyProgressIndicator(
+                            progress = { playbackProgress.coerceIn(0f, 1f) },
+                            modifier = Modifier
+                                .offset(x = artX - 3.dp, y = artY - 3.dp)
+                                .size(artSize + 6.dp)
+                                .graphicsLayer {
+                                    alpha = miniIndicatorAlpha
+                                    translationX = coverOffsetX.value
+                                },
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = if (isDark) Color.White.copy(alpha = 0.15f) else MaterialTheme.colorScheme.onSurface.copy(
+                                alpha = 0.12f
+                            ),
+                            stroke = remember(density) {
+                                Stroke(
+                                    width = with(density) { 2.5.dp.toPx() },
+                                    cap = StrokeCap.Round
+                                )
+                            },
+                            trackStroke = remember(density) {
+                                Stroke(
+                                    width = with(density) { 2.5.dp.toPx() },
+                                    cap = StrokeCap.Round
+                                )
+                            },
+                            amplitude = { p -> if (p > 0f) animatedWavyAmplitude else 0f },
+                            wavelength = WavyProgressIndicatorDefaults.CircularWavelength,
+                            waveSpeed = if (isPlaying) WavyProgressIndicatorDefaults.CircularWavelength / 2f else 0.dp,
+                        )
+                    }
+
                     val effectiveLeftFade = leftFadeAlpha.value * miniAlpha
                     Column(
                         modifier = Modifier
@@ -910,7 +960,15 @@ fun MorphingPlayerSheet(
                     if (fullControlsAlpha > 0.001f) {
                         var isSeeking by remember { mutableStateOf(false) }
                         var seekPosition by remember { mutableFloatStateOf(0f) }
-                        val currentSliderValue = if (isSeeking) seekPosition else playbackProgress
+
+                        val (smoothProgressFraction, displayedPosition) = rememberSmoothProgress(
+                            isPlayingProvider = { isPlaying },
+                            currentPositionProvider = {
+                                if (isSeeking) (seekPosition * durationMs.coerceAtLeast(0L)).toLong() else currentPositionMs
+                            },
+                            totalDuration = durationMs.coerceAtLeast(0L),
+                            isVisible = fullControlsAlpha > 0.001f,
+                        )
 
                         Column(
                             modifier = Modifier
@@ -923,22 +981,25 @@ fun MorphingPlayerSheet(
                                     translationY = fullControlsCounterY
                                 },
                         ) {
-                            Slider(
-                                value = currentSliderValue.coerceIn(0f, 1f),
-                                onValueChange = {
+                            WavySliderExpressive(
+                                value = { if (isSeeking) seekPosition else smoothProgressFraction.value },
+                                onValueChange = { fraction ->
                                     isSeeking = true
-                                    seekPosition = it
+                                    seekPosition = fraction
                                 },
-                                onValueChangeFinished = {
+                                onValueCommit = { fraction ->
                                     isSeeking = false
-                                    onSeek(seekPosition)
+                                    onSeek(fraction)
                                 },
-                                colors = SliderDefaults.colors(
-                                    thumbColor = Color.White,
-                                    activeTrackColor = Color.White,
-                                    inactiveTrackColor = Color.White.copy(alpha = 0.2f),
-                                ),
-                                modifier = Modifier.fillMaxWidth(),
+                                enabled = durationMs > 0L,
+                                activeTrackColor = Color.White,
+                                inactiveTrackColor = Color.White.copy(alpha = 0.24f),
+                                thumbColor = Color.White,
+                                isPlaying = isPlaying,
+                                isVisible = fullControlsAlpha > 0.001f,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(36.dp),
                             )
                             Row(
                                 modifier = Modifier
@@ -950,7 +1011,7 @@ fun MorphingPlayerSheet(
                                 val displayMs = if (isSeeking) {
                                     (seekPosition * durationMs).toLong()
                                 } else {
-                                    currentPositionMs
+                                    displayedPosition.value
                                 }
                                 Text(
                                     text = formatMs(displayMs),

@@ -33,7 +33,9 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ProgressIndicatorDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -53,7 +55,9 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Matrix
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asComposePath
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -531,35 +535,80 @@ fun MiniPlayer(
                     }
                 }
 
+                val miniArtworkScale by animateFloatAsState(
+                    targetValue = if (isPlaying) 0.80f else 1.0f,
+                    animationSpec = tween(durationMillis = 450),
+                    label = "miniArtworkScale",
+                )
+                val animatedWavyAmplitude by animateFloatAsState(
+                    targetValue = if (isPlaying) 1f else 0f,
+                    animationSpec = ProgressIndicatorDefaults.ProgressAnimationSpec,
+                    label = "miniWavyAmplitude",
+                )
+
                 Box(
                     modifier = Modifier
                         .size(48.dp)
-                        .align(Alignment.CenterStart)
-                        .clip(artworkShape)
-                        .border(1.dp, Color.White.copy(alpha = 0.2f), artworkShape)
-                        .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                        .align(Alignment.CenterStart),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (!track.artworkUrl.isNullOrBlank()) {
-                        AsyncImage(
-                            model = ImageRequest.Builder(LocalPlatformContext.current)
-                                .data(track.artworkUrl)
-                                .crossfade(true)
-                                .build(),
-                            placeholder = painterResource(R.drawable.app_icon_small),
-                            error = painterResource(R.drawable.app_icon_small),
-                            contentDescription = track.title,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    } else {
-                        Icon(
-                            painter = painterResource(R.drawable.app_icon_small),
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                            modifier = Modifier.size(24.dp),
-                        )
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .graphicsLayer {
+                                scaleX = miniArtworkScale
+                                scaleY = miniArtworkScale
+                            }
+                            .clip(artworkShape)
+                            .border(1.dp, Color.White.copy(alpha = 0.2f), artworkShape)
+                            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (!track.artworkUrl.isNullOrBlank()) {
+                            AsyncImage(
+                                model = ImageRequest.Builder(LocalPlatformContext.current)
+                                    .data(track.artworkUrl)
+                                    .crossfade(true)
+                                    .build(),
+                                placeholder = painterResource(R.drawable.app_icon_small),
+                                error = painterResource(R.drawable.app_icon_small),
+                                contentDescription = track.title,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        } else {
+                            Icon(
+                                painter = painterResource(R.drawable.app_icon_small),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                                modifier = Modifier.size(24.dp),
+                            )
+                        }
                     }
+
+                    CircularWavyProgressIndicator(
+                        progress = { progress.coerceIn(0f, 1f) },
+                        modifier = Modifier.size(54.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = if (isDark) Color.White.copy(alpha = 0.15f) else MaterialTheme.colorScheme.onSurface.copy(
+                            alpha = 0.12f
+                        ),
+                        stroke = remember(density) {
+                            Stroke(
+                                width = with(density) { 2.5.dp.toPx() },
+                                cap = StrokeCap.Round
+                            )
+                        },
+                        trackStroke = remember(density) {
+                            Stroke(
+                                width = with(density) { 2.5.dp.toPx() },
+                                cap = StrokeCap.Round
+                            )
+                        },
+                        amplitude = { p -> if (p > 0f) animatedWavyAmplitude else 0f },
+                        wavelength = WavyProgressIndicatorDefaults.CircularWavelength,
+                        waveSpeed = if (isPlaying) WavyProgressIndicatorDefaults.CircularWavelength / 2f else 0.dp,
+                    )
                 }
 
                 Row(

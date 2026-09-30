@@ -39,8 +39,6 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -623,24 +621,34 @@ private fun FullPlayerControls(
         var isSeeking by remember { mutableStateOf(false) }
         var seekPosition by remember { mutableFloatStateOf(0f) }
 
-        val currentSliderValue = if (isSeeking) seekPosition else progress
+        val (smoothProgressFraction, displayedPosition) = rememberSmoothProgress(
+            isPlayingProvider = { isPlaying },
+            currentPositionProvider = {
+                if (isSeeking) (seekPosition * durationMs.coerceAtLeast(0L)).toLong() else currentPositionMs
+            },
+            totalDuration = durationMs.coerceAtLeast(0L),
+            isVisible = true,
+        )
 
-        Slider(
-            value = currentSliderValue.coerceIn(0f, 1f),
-            onValueChange = {
+        WavySliderExpressive(
+            value = { if (isSeeking) seekPosition else smoothProgressFraction.value },
+            onValueChange = { fraction ->
                 isSeeking = true
-                seekPosition = it
+                seekPosition = fraction
             },
-            onValueChangeFinished = {
+            onValueCommit = { fraction ->
                 isSeeking = false
-                onSeek(seekPosition)
+                onSeek(fraction)
             },
-            colors = SliderDefaults.colors(
-                thumbColor = Color.White,
-                activeTrackColor = Color.White,
-                inactiveTrackColor = Color.White.copy(alpha = 0.2f),
-            ),
-            modifier = Modifier.fillMaxWidth(),
+            enabled = durationMs > 0L,
+            activeTrackColor = Color.White,
+            inactiveTrackColor = Color.White.copy(alpha = 0.24f),
+            thumbColor = Color.White,
+            isPlaying = isPlaying,
+            isVisible = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(36.dp),
         )
 
         Row(
@@ -653,7 +661,7 @@ private fun FullPlayerControls(
             val displayMs = if (isSeeking) {
                 (seekPosition * durationMs).toLong()
             } else {
-                currentPositionMs
+                displayedPosition.value
             }
             Text(
                 text = formatMs(displayMs),
