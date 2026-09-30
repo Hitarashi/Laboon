@@ -30,12 +30,15 @@ import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalAutofillManager
 import androidx.compose.ui.platform.LocalContext
@@ -63,6 +66,7 @@ import org.shilpo.laboon.navigation.transitionDirection
 import org.shilpo.laboon.permissions.AndroidPermissionState
 import org.shilpo.laboon.permissions.PermissionCatalogue
 import org.shilpo.laboon.permissions.canLeaveOnboarding
+import org.shilpo.laboon.playback.PlaybackPersistence
 import org.shilpo.laboon.splash.Overlay
 import org.shilpo.laboon.splash.Tuning
 import org.shilpo.laboon.splash.VectorLoader
@@ -70,6 +74,9 @@ import org.shilpo.laboon.ui.design.PredictiveBackSpec
 import org.shilpo.laboon.ui.design.PredictiveBackSurface
 import org.shilpo.laboon.ui.design.rememberPredictiveBackState
 import org.shilpo.laboon.ui.design.theme.AppTypography
+import org.shilpo.laboon.ui.design.theme.ArtworkColorExtractor
+import org.shilpo.laboon.ui.design.theme.ArtworkColorSchemeGenerator
+import org.shilpo.laboon.ui.design.theme.animateColorScheme
 import org.shilpo.laboon.ui.screens.connect.ConnectScreen
 import org.shilpo.laboon.ui.screens.home.HomeScreen
 import org.shilpo.laboon.ui.screens.lastfm.LastFmScreen
@@ -87,6 +94,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var authClient: AuthClient
     private lateinit var onboardingProgress: OnboardingProgress
     private lateinit var homeFeedRepository: HomeFeedRepository
+    private lateinit var playbackPersistence: PlaybackPersistence
 
     private var routeState by mutableStateOf(RouteState())
     private var isExchangingCode by mutableStateOf(false)
@@ -131,6 +139,7 @@ class MainActivity : ComponentActivity() {
         authClient = AuthClient(sessionStore)
         onboardingProgress = OnboardingProgress(keyValueStore)
         homeFeedRepository = HomeFeedRepository(sessionStore)
+        playbackPersistence = PlaybackPersistence(keyValueStore)
         verifySessionIfPresent()
 
         val restoredTokens = savedInstanceState?.getStringArrayList(ROUTE_STATE_KEY)
@@ -189,11 +198,33 @@ class MainActivity : ComponentActivity() {
             val permissionState = remember(context) {
                 AndroidPermissionState(context) { permission -> permissionLauncher.launch(permission) }
             }
-            val colorScheme = if (darkTheme) {
+            var isPlayerDismissed by rememberSaveable { mutableStateOf(playbackPersistence.isPlayerDismissed()) }
+            val initialTrack = remember { playbackPersistence.getLastTrack() }
+            var activeArtworkUrl by remember { mutableStateOf(if (isPlayerDismissed) null else initialTrack?.artworkUrl) }
+            var artworkSeedColor by remember { mutableStateOf<Color?>(null) }
+
+            LaunchedEffect(activeArtworkUrl, isPlayerDismissed) {
+                if (isPlayerDismissed || activeArtworkUrl.isNullOrBlank()) {
+                    artworkSeedColor = null
+                } else {
+                    artworkSeedColor =
+                        ArtworkColorExtractor.extractSeedColor(context, activeArtworkUrl)
+                }
+            }
+
+            val systemColorScheme = if (darkTheme) {
                 dynamicDarkColorScheme(context)
             } else {
                 dynamicLightColorScheme(context)
             }
+
+            val targetColorScheme = if (isPlayerDismissed || artworkSeedColor == null) {
+                systemColorScheme
+            } else {
+                ArtworkColorSchemeGenerator.generateColorScheme(artworkSeedColor!!, darkTheme)
+            }
+
+            val colorScheme = animateColorScheme(targetColorScheme)
 
             MaterialExpressiveTheme(
                 colorScheme = colorScheme,
@@ -387,10 +418,17 @@ class MainActivity : ComponentActivity() {
                                         state = routeState,
                                         session = sessionStore.getSession(),
                                         repository = homeFeedRepository,
+                                        onActiveTrackChange = { track, dismissed ->
+                                            isPlayerDismissed = dismissed
+                                            activeArtworkUrl =
+                                                if (dismissed) null else track?.artworkUrl
+                                        },
                                         onEvent = ::dispatch,
                                         onDisconnect = {
                                             sessionStore.signOut()
                                             onboardingProgress.reset()
+                                            isPlayerDismissed = true
+                                            activeArtworkUrl = null
                                             dispatch(RouteEvent.SessionEnded)
                                         },
                                         modifier = Modifier.fillMaxSize(),

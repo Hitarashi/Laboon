@@ -80,7 +80,7 @@ object QueuePersistenceCodec {
             append(state.isAutoplayEnabled.asToken()).append('\t')
             append(items.size)
             items.forEach { track ->
-                append('\n').append(encodeItem(track))
+                append('\n').append(encodeTrack(track))
             }
         }
     }
@@ -99,7 +99,7 @@ object QueuePersistenceCodec {
         val itemCount = header[5].toIntOrNull()?.takeIf { it >= 0 } ?: return QueueState()
         if (itemCount != lines.size - 1) return QueueState()
 
-        val decoded = lines.drop(1).map { line -> decodeItem(line) ?: return QueueState() }
+        val decoded = lines.drop(1).map { line -> decodeTrack(line) ?: return QueueState() }
         val items = dedupe(decoded)
         val currentKey = decoded.getOrNull(currentIndex)?.let { TrackIdentity.keyOf(it) }
         val restoredIndex = currentKey
@@ -125,7 +125,7 @@ object QueuePersistenceCodec {
         return state.items.take(head) + state.items.drop(head).take(MAX_ITEMS - head)
     }
 
-    private fun encodeItem(track: HomeTrack): String = listOf(
+    fun encodeTrack(track: HomeTrack): String = listOf(
         escape(track.id),
         escape(track.title),
         escape(track.artist),
@@ -140,7 +140,7 @@ object QueuePersistenceCodec {
         encodeOptional(track.mbid),
     ).joinToString("\t")
 
-    private fun decodeItem(line: String): HomeTrack? {
+    fun decodeTrack(line: String): HomeTrack? {
         val fields = line.split('\t')
         if (fields.size != ITEM_FIELDS) return null
 

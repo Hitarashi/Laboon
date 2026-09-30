@@ -43,6 +43,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -53,6 +56,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -82,6 +86,7 @@ import org.shilpo.laboon.auth.SessionStore
 import org.shilpo.laboon.auth.SharedPreferencesKeyValueStore
 import org.shilpo.laboon.home.HomeAlbum
 import org.shilpo.laboon.home.HomeArtist
+import org.shilpo.laboon.home.HomeFeedCache
 import org.shilpo.laboon.home.HomeFeedDefaults
 import org.shilpo.laboon.home.HomeFeedRepository
 import org.shilpo.laboon.home.HomeFeedState
@@ -94,6 +99,7 @@ import org.shilpo.laboon.navigation.RouteEvent
 import org.shilpo.laboon.navigation.RouteState
 import org.shilpo.laboon.navigation.tabTransitionDirection
 import org.shilpo.laboon.playback.PlaybackManagerImpl
+import org.shilpo.laboon.playback.PlaybackPersistence
 import org.shilpo.laboon.ui.design.FloatingCombinedClearance
 import org.shilpo.laboon.ui.design.FloatingNavBar
 import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
@@ -121,17 +127,24 @@ fun HomeScreen(
     session: AuthSession?,
     repository: HomeFeedRepository,
     modifier: Modifier = Modifier,
+    onActiveTrackChange: ((HomeTrack?, Boolean) -> Unit)? = null,
     onDisconnect: () -> Unit = {},
 ) {
     val currentTab = state.currentTab
     val showSettings = state.settingsVisible
 
-    var feedState by remember { mutableStateOf(HomeFeedDefaults.defaultFeed) }
+    val context = LocalContext.current
+    val homeFeedCache = remember(context) { HomeFeedCache(SharedPreferencesKeyValueStore(context)) }
+    val playbackPersistence =
+        remember(context) { PlaybackPersistence(SharedPreferencesKeyValueStore(context)) }
+
+    val initialCachedFeed = remember { homeFeedCache.load() }
+    var feedState by remember { mutableStateOf(initialCachedFeed ?: HomeFeedDefaults.defaultFeed) }
     var showQueueSheet by remember { mutableStateOf(false) }
     var playerExpansionProgress by remember { mutableFloatStateOf(0f) }
+    var isRefreshing by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
-    val context = LocalContext.current
     val sessionStore = remember(context) { SessionStore(SharedPreferencesKeyValueStore(context)) }
     val playbackManager = remember(context, sessionStore) {
         PlaybackManagerImpl(context.applicationContext, sessionStore)
@@ -145,54 +158,131 @@ fun HomeScreen(
         }
     }
 
-    val starterTrack = remember {
-        HomeTrack(
-            id = "starter_sample",
-            title = "Sailor Song",
-            artist = "Gigi Perez",
-            artworkUrl = null,
-            codec = "alac",
-        )
-    }
-    var isPlayerDismissed by remember { mutableStateOf(false) }
-    var fallbackTrack by remember { mutableStateOf<HomeTrack?>(starterTrack) }
+    var isPlayerDismissed by rememberSaveable { mutableStateOf(playbackPersistence.isPlayerDismissed()) }
+    var fallbackTrack by remember { mutableStateOf<HomeTrack?>(playbackPersistence.getLastTrack()) }
 
-    LaunchedEffect(feedState.rotation.items) {
-        if (!isPlayerDismissed && playbackState.currentTrack == null && fallbackTrack == starterTrack) {
-            feedState.rotation.items.firstOrNull()?.let {
-                fallbackTrack = it
-            }
+    LaunchedEffect(playbackState.currentTrack) {
+        val current = playbackState.currentTrack
+        if (current != null) {
+            isPlayerDismissed = false
+            fallbackTrack = current
+            playbackPersistence.setPlayerDismissed(false)
+            playbackPersistence.saveLastTrack(current)
         }
     }
 
-    LaunchedEffect(playbackState.currentTrack) {
-        if (playbackState.currentTrack != null) {
-            isPlayerDismissed = false
+    LaunchedEffect(playbackState.currentPositionMs) {
+        if (playbackState.currentPositionMs > 0) {
+            playbackPersistence.saveLastPosition(playbackState.currentPositionMs)
+        }
+    }
+
+    LaunchedEffect(playbackState.durationMs) {
+        if (playbackState.durationMs > 0) {
+            playbackPersistence.saveLastDuration(playbackState.durationMs)
         }
     }
 
     val activeTrack = if (isPlayerDismissed) null else (playbackState.currentTrack ?: fallbackTrack)
+    LaunchedEffect(activeTrack, isPlayerDismissed) {
+        onActiveTrackChange?.invoke(activeTrack, isPlayerDismissed)
+    }
     val activeIsPlaying = playbackState.isPlaying
-    val activeProgress = if (playbackState.currentTrack != null) playbackState.progress else 0f
+    val savedPosition = remember(playbackPersistence) { playbackPersistence.getLastPosition() }
+    val savedDuration = remember(playbackPersistence) { playbackPersistence.getLastDuration() }
+    val currentPositionMs =
+        if (playbackState.currentTrack != null) playbackState.currentPositionMs else savedPosition
+    val currentDurationMs =
+        if (playbackState.currentTrack != null) playbackState.durationMs else savedDuration
+    val activeProgress = if (playbackState.currentTrack != null) {
+        playbackState.progress
+    } else if (savedDuration > 0) {
+        (savedPosition.toFloat() / savedDuration.toFloat()).coerceIn(0f, 1f)
+    } else 0f
 
     LaunchedEffect(session) {
         val region = repository.getDisplayRegion().orEmpty()
-        feedState = HomeFeedDefaults.defaultFeed.copy(regionName = region)
+        val cached = homeFeedCache.load()
+        feedState = if (cached != null) {
+            cached.copy(regionName = region)
+        } else {
+            HomeFeedDefaults.defaultFeed.copy(regionName = region)
+        }
         launch {
             val rot = repository.fetchRotation()
             feedState = feedState.copy(rotation = SectionState(SectionLoadState.LOADED, rot))
+            homeFeedCache.save(feedState)
         }
         launch {
             val rec = repository.fetchRecommended()
             feedState = feedState.copy(recommended = SectionState(SectionLoadState.LOADED, rec))
+            homeFeedCache.save(feedState)
         }
         launch {
             val art = repository.fetchTopArtists()
             feedState = feedState.copy(topArtists = SectionState(SectionLoadState.LOADED, art))
+            homeFeedCache.save(feedState)
         }
         launch {
             val alb = repository.fetchTopAlbums()
             feedState = feedState.copy(topAlbums = SectionState(SectionLoadState.LOADED, alb))
+            homeFeedCache.save(feedState)
+        }
+    }
+
+    val onRefresh: () -> Unit = {
+        if (!isRefreshing) {
+            isRefreshing = true
+            coroutineScope.launch {
+                try {
+                    repository.clearCache()
+                    val rotJob = async { repository.fetchRotation() }
+                    val recJob = async { repository.fetchRecommended() }
+                    val artJob = async { repository.fetchTopArtists() }
+                    val albJob = async { repository.fetchTopAlbums() }
+                    val rot = rotJob.await()
+                    val rec = recJob.await()
+                    val art = artJob.await()
+                    val alb = albJob.await()
+                    feedState = feedState.copy(
+                        rotation = SectionState(SectionLoadState.LOADED, rot),
+                        recommended = SectionState(SectionLoadState.LOADED, rec),
+                        topArtists = SectionState(SectionLoadState.LOADED, art),
+                        topAlbums = SectionState(SectionLoadState.LOADED, alb),
+                    )
+                    if (feedState.topTracks.status == SectionLoadState.LOADED) {
+                        val tracks = repository.fetchTopTracks()
+                        feedState = feedState.copy(
+                            topTracks = SectionState(
+                                SectionLoadState.LOADED,
+                                tracks
+                            )
+                        )
+                    }
+                    if (feedState.regionalTrending.status == SectionLoadState.LOADED || feedState.globalTrending.status == SectionLoadState.LOADED) {
+                        val regJob = async { repository.fetchRegionalTrending() }
+                        val globJob = async { repository.fetchGlobalTrending() }
+                        val reg = regJob.await()
+                        val glob = globJob.await()
+                        feedState = feedState.copy(
+                            regionalTrending = SectionState(SectionLoadState.LOADED, reg),
+                            globalTrending = SectionState(SectionLoadState.LOADED, glob),
+                        )
+                    }
+                    if (feedState.weeklyPicks.status == SectionLoadState.LOADED) {
+                        val weekly = repository.fetchWeeklyPicks()
+                        feedState = feedState.copy(
+                            weeklyPicks = SectionState(
+                                SectionLoadState.LOADED,
+                                weekly
+                            )
+                        )
+                    }
+                    homeFeedCache.save(feedState)
+                } finally {
+                    isRefreshing = false
+                }
+            }
         }
     }
 
@@ -203,6 +293,7 @@ fun HomeScreen(
                 val tracks = repository.fetchTopTracks()
                 feedState =
                     feedState.copy(topTracks = SectionState(SectionLoadState.LOADED, tracks))
+                homeFeedCache.save(feedState)
             }
         }
     }
@@ -222,6 +313,7 @@ fun HomeScreen(
                     regionalTrending = SectionState(SectionLoadState.LOADED, regional),
                     globalTrending = SectionState(SectionLoadState.LOADED, global),
                 )
+                homeFeedCache.save(feedState)
             }
         }
     }
@@ -233,6 +325,7 @@ fun HomeScreen(
                 val weekly = repository.fetchWeeklyPicks()
                 feedState =
                     feedState.copy(weeklyPicks = SectionState(SectionLoadState.LOADED, weekly))
+                homeFeedCache.save(feedState)
             }
         }
     }
@@ -303,6 +396,8 @@ fun HomeScreen(
                         onOpenSettings = { onEvent(RouteEvent.SettingsOpened) },
                         onNavigate = { onEvent(RouteEvent.TabSelected(it)) },
                         feedState = feedState,
+                        isRefreshing = isRefreshing,
+                        onRefresh = onRefresh,
                         onLoadTopTracks = loadTopTracks,
                         onLoadTrending = loadTrending,
                         onLoadWeeklyPicks = loadWeeklyPicks,
@@ -384,8 +479,8 @@ fun HomeScreen(
                     isPlaying = activeIsPlaying,
                     isBuffering = playbackState.isBuffering,
                     playbackProgress = activeProgress,
-                    currentPositionMs = playbackState.currentPositionMs,
-                    durationMs = playbackState.durationMs,
+                    currentPositionMs = currentPositionMs,
+                    durationMs = currentDurationMs,
                     isShuffle = queueState.isShuffle,
                     repeatMode = queueState.repeatMode,
                     onPlayPauseClick = {
@@ -416,7 +511,9 @@ fun HomeScreen(
                     onDismiss = {
                         isPlayerDismissed = true
                         fallbackTrack = null
+                        playbackPersistence.setPlayerDismissed(true)
                         playbackManager.dismiss()
+                        onActiveTrackChange?.invoke(null, true)
                     },
                     backdropState = liquidGlassBackdropState,
                     onExpansionProgressChange = { progress ->
@@ -583,6 +680,8 @@ private fun HomeContent(
     modifier: Modifier = Modifier,
     lazyListState: LazyListState = rememberLazyListState(),
     feedState: HomeFeedState = HomeFeedDefaults.defaultFeed,
+    isRefreshing: Boolean = false,
+    onRefresh: () -> Unit = {},
     onLoadTopTracks: () -> Unit = {},
     onLoadTrending: () -> Unit = {},
     onLoadWeeklyPicks: () -> Unit = {},
@@ -599,10 +698,24 @@ private fun HomeContent(
         WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val bottomClearance = FloatingCombinedClearance + navBarBottomInset + 16.dp
 
-    Box(
+    val pullToRefreshState = rememberPullToRefreshState()
+
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = onRefresh,
+        state = pullToRefreshState,
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(MaterialTheme.colorScheme.background),
+        indicator = {
+            PullToRefreshDefaults.LoadingIndicator(
+                state = pullToRefreshState,
+                isRefreshing = isRefreshing,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = topClearance),
+            )
+        },
     ) {
         if (feedState.isAllEmpty && !feedState.isInitialLoading && feedState.regionalTrending.status == SectionLoadState.LOADED) {
             Box(

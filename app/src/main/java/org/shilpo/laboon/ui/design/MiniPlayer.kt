@@ -682,7 +682,7 @@ private fun PlayPauseButton(
                     CircularWavyProgressIndicator(
                         modifier = Modifier.size(36.dp),
                         color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                        trackColor = Color.Transparent,
                     )
                 }
             } else {

@@ -33,6 +33,15 @@ class HomeFeedRepository(
     private var cachedTopArtists: List<HomeArtist>? = null
     private var cachedListenBrainzTrending: List<HomeTrack>? = null
 
+    suspend fun clearCache() {
+        cacheMutex.withLock {
+            cachedRecentTracks = null
+            cachedTopTracks = null
+            cachedTopArtists = null
+            cachedListenBrainzTrending = null
+        }
+    }
+
     private suspend fun getRawRecentTracks(): List<HomeTrack> {
         cacheMutex.withLock {
             cachedRecentTracks?.let { return it }
@@ -796,7 +805,6 @@ class HomeFeedRepository(
 
 
     private fun logWarning(message: String) {
-        // android.util.Log is a throwing stub under JVM unit tests, so a log line must never be the thing that fails a request.
         runCatching { Log.w(TAG, message) }
     }
 

@@ -1268,9 +1268,7 @@ fun MorphingPlayerSheet(
                                         CircularWavyProgressIndicator(
                                             modifier = Modifier.size(bufferingSize),
                                             color = MaterialTheme.colorScheme.primary,
-                                            trackColor = MaterialTheme.colorScheme.primary.copy(
-                                                alpha = 0.2f
-                                            ),
+                                            trackColor = Color.Transparent,
                                         )
                                     }
                                 } else {
