@@ -125,54 +125,57 @@ class SearchRepositoryImpl(
                     "${track.title} ${track.artist}",
                     StandardCharsets.UTF_8.name()
                 )
-                val searchEndpoint = "$serverUrl/api/v1/search?q=$encoded&limit=10"
-                fetchJson(searchEndpoint, token)?.let { json ->
-                    val cachedArr = json.arrOrNull("cached")
-                    if (cachedArr != null && cachedArr.length() > 0) {
-                        var chosenId = 0
-                        var chosenCodec: String? = null
-                        var bestMatchScore = -1
-                        for (i in 0 until cachedArr.length()) {
-                            val item = cachedArr.objAtOrNull(i) ?: continue
-                            val id = item.optInt("id")
-                            val c = item.stringOrNull("codec")
-                            val itemTitle = item.optString("title").trim()
-                            val itemArtist = item.optString("artist").trim()
-                            if (id > 0) {
-                                val score = codecScore(c)
-                                val titleMatches =
-                                    itemTitle.equals(track.title, ignoreCase = true) ||
-                                            track.title.contains(
-                                                itemTitle,
-                                                ignoreCase = true
-                                            ) ||
-                                            itemTitle.contains(track.title, ignoreCase = true)
-                                val artistMatches =
-                                    itemArtist.equals(track.artist, ignoreCase = true) ||
-                                            track.artist.contains(
-                                                itemArtist,
-                                                ignoreCase = true
-                                            ) ||
-                                            itemArtist.contains(track.artist, ignoreCase = true)
-                                val matchBonus =
-                                    (if (titleMatches) 10 else 0) + (if (artistMatches) 10 else 0)
-                                val totalScore = score + matchBonus
-                                if (totalScore > bestMatchScore) {
-                                    bestMatchScore = totalScore
-                                    chosenId = id
-                                    chosenCodec = c
-                                }
+                val searchEndpoints = buildList {
+                    track.mbid?.trim()?.takeIf { it.isNotEmpty() }?.let { mbid ->
+                        val encodedMbid = URLEncoder.encode(mbid, StandardCharsets.UTF_8.name())
+                        add("$serverUrl/api/v1/search?q=$encoded&limit=10&recording_mbid=$encodedMbid")
+                    }
+                    add("$serverUrl/api/v1/search?q=$encoded&limit=10")
+                }
+                for (searchEndpoint in searchEndpoints) {
+                    val cachedArr = fetchJson(searchEndpoint, token)?.arrOrNull("cached")
+                        ?: continue
+                    var chosenId = 0
+                    var chosenCodec: String? = null
+                    var bestMatchScore = -1
+                    for (i in 0 until cachedArr.length()) {
+                        val item = cachedArr.objAtOrNull(i) ?: continue
+                        val id = item.optInt("id")
+                        val c = item.stringOrNull("codec")
+                        val itemTitle = item.optString("title").trim()
+                        val itemArtist = item.optString("artist").trim()
+                        if (id > 0) {
+                            val score = codecScore(c)
+                            val titleMatches =
+                                itemTitle.equals(track.title, ignoreCase = true) ||
+                                        track.title.contains(
+                                            itemTitle,
+                                            ignoreCase = true
+                                        ) ||
+                                        itemTitle.contains(track.title, ignoreCase = true)
+                            val artistMatches =
+                                itemArtist.equals(track.artist, ignoreCase = true) ||
+                                        track.artist.contains(
+                                            itemArtist,
+                                            ignoreCase = true
+                                        ) ||
+                                        itemArtist.contains(track.artist, ignoreCase = true)
+                            val matchBonus =
+                                (if (titleMatches) 10 else 0) + (if (artistMatches) 10 else 0)
+                            val totalScore = score + matchBonus
+                            if (totalScore > bestMatchScore) {
+                                bestMatchScore = totalScore
+                                chosenId = id
+                                chosenCodec = c
                             }
                         }
-                        if (chosenId > 0 && (backendId == null || backendId <= 0 || codecScore(
-                                chosenCodec
-                            ) > codecScore(foundCodec))
-                        ) {
-                            backendId = chosenId
-                            if (chosenCodec != null) {
-                                foundCodec = chosenCodec
-                            }
+                    }
+                    if (chosenId > 0) {
+                        backendId = chosenId
+                        if (chosenCodec != null) {
+                            foundCodec = chosenCodec
                         }
+                        break
                     }
                 }
             }
@@ -231,6 +234,18 @@ class SearchRepositoryImpl(
             val cachedVariantsByTrackId = mutableMapOf<String, MutableList<CachedVariant>>()
             val cachedVariantsByNormKey = mutableMapOf<String, MutableList<CachedVariant>>()
             val cachedArtworkById = mutableMapOf<Int, String>()
+            val recordingMbidBySource = mutableMapOf<String, String>()
+
+            fun recordingMbidKey(provider: String?, trackId: String): String {
+                val normalizedProvider = when {
+                    provider.orEmpty().contains("qobuz", ignoreCase = true) -> "qobuz"
+                    provider.orEmpty().contains("apple", ignoreCase = true) ||
+                            provider.orEmpty().contains("itunes", ignoreCase = true) -> "apple"
+
+                    else -> provider?.trim()?.lowercase().orEmpty()
+                }
+                return "$normalizedProvider::$trackId"
+            }
 
             fun cleanProvider(provider: String?): String {
                 val p = provider?.trim()?.lowercase() ?: ""
@@ -258,7 +273,13 @@ class SearchRepositoryImpl(
                     val codec = cObj.stringOrNull("codec")
                     val provider = cleanProvider(cObj.stringOrNull("provider"))
                     val artUrl = cObj.stringOrNull("artwork_url")
+                    val recordingMbid = cObj.stringOrNull("recording_mbid")
                     if (id > 0) {
+                        if (trackId != null && recordingMbid != null) {
+                            recordingMbidBySource[
+                                recordingMbidKey(cObj.stringOrNull("provider"), trackId)
+                            ] = recordingMbid
+                        }
                         if (artUrl != null) {
                             cachedArtworkById[id] = artUrl
                         }
@@ -284,6 +305,19 @@ class SearchRepositoryImpl(
                     val album = canObj.stringOrNull("album")
                     val artUrl = canObj.stringOrNull("artwork_url")
                     val sources = canObj.arrOrNull("sources")
+                    val recordingMbid = canObj.stringOrNull("recording_mbid")
+
+                    if (recordingMbid != null && sources != null) {
+                        for (j in 0 until sources.length()) {
+                            val source = sources.objAtOrNull(j) ?: continue
+                            source.stringOrNull("track_id")?.let { trackId ->
+                                recordingMbidBySource.putIfAbsent(
+                                    recordingMbidKey(source.stringOrNull("provider"), trackId),
+                                    recordingMbid,
+                                )
+                            }
+                        }
+                    }
 
                     if (artUrl != null && title.isNotEmpty() && artist.isNotEmpty()) {
                         BackendArtworkResolver.putCached(
@@ -363,6 +397,9 @@ class SearchRepositoryImpl(
                                         backendTrackId = v.id,
                                         isCached = true,
                                         codec = v.codec,
+                                        mbid = recordingMbidBySource[
+                                            recordingMbidKey(v.provider, v.trackId ?: trackId)
+                                        ],
                                     )
                                 )
                             }
@@ -382,6 +419,12 @@ class SearchRepositoryImpl(
                                     backendTrackId = null,
                                     isCached = false,
                                     codec = null,
+                                    mbid = recordingMbidBySource[
+                                        recordingMbidKey(
+                                            lObj.stringOrNull("provider") ?: "apple",
+                                            trackId
+                                        )
+                                    ],
                                 )
                             )
                         }
@@ -420,6 +463,12 @@ class SearchRepositoryImpl(
                                 backendTrackId = id,
                                 isCached = true,
                                 codec = codec,
+                                mbid = cObj.stringOrNull("recording_mbid")
+                                    ?: cObj.stringOrNull("track_id")?.let { trackId ->
+                                        recordingMbidBySource[
+                                            recordingMbidKey(cObj.stringOrNull("provider"), trackId)
+                                        ]
+                                    },
                             )
                         )
                     }
