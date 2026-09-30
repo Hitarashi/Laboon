@@ -110,6 +110,7 @@ import org.shilpo.laboon.ui.design.rememberLiquidGlassBackdropState
 import org.shilpo.laboon.ui.design.rememberPredictiveBackState
 import org.shilpo.laboon.ui.design.userDisplayName
 import org.shilpo.laboon.ui.screens.library.LibraryScreen
+import org.shilpo.laboon.ui.screens.player.FullPlayerScreen
 import org.shilpo.laboon.ui.screens.queue.QueueBottomSheet
 import org.shilpo.laboon.ui.screens.search.SearchScreen
 import org.shilpo.laboon.ui.screens.settings.SettingsScreen
@@ -128,6 +129,7 @@ fun HomeScreen(
 
     var feedState by remember { mutableStateOf(HomeFeedDefaults.defaultFeed) }
     var showQueueSheet by remember { mutableStateOf(false) }
+    var showFullPlayer by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
     val context = LocalContext.current
@@ -136,6 +138,7 @@ fun HomeScreen(
         PlaybackManagerImpl(context.applicationContext, sessionStore)
     }
     val playbackState by playbackManager.state.collectAsState()
+    val queueState by playbackManager.queueManager.state.collectAsState()
 
     DisposableEffect(playbackManager) {
         onDispose {
@@ -373,7 +376,10 @@ fun HomeScreen(
                             playbackManager.skipToNext()
                         },
                         onClick = {
-                            showQueueSheet = true
+                            showFullPlayer = true
+                        },
+                        onExpand = {
+                            showFullPlayer = true
                         },
                         onDismiss = {
                             isPlayerDismissed = true
@@ -443,8 +449,60 @@ fun HomeScreen(
             }
         }
 
+        AnimatedVisibility(
+            visible = showFullPlayer && activeTrack != null,
+            enter = slideInVertically(
+                animationSpec = motionScheme.defaultSpatialSpec(),
+                initialOffsetY = { it },
+            ) + fadeIn(animationSpec = motionScheme.defaultEffectsSpec()),
+            exit = slideOutVertically(
+                animationSpec = motionScheme.defaultSpatialSpec(),
+                targetOffsetY = { it },
+            ) + fadeOut(animationSpec = motionScheme.defaultEffectsSpec()),
+        ) {
+            activeTrack?.let { track ->
+                FullPlayerScreen(
+                    track = track,
+                    isPlaying = activeIsPlaying,
+                    isBuffering = playbackState.isBuffering,
+                    progress = activeProgress,
+                    currentPositionMs = playbackState.currentPositionMs,
+                    durationMs = playbackState.durationMs,
+                    isShuffle = queueState.isShuffle,
+                    repeatMode = queueState.repeatMode,
+                    onPlayPauseClick = {
+                        if (playbackState.currentTrack != null) {
+                            playbackManager.togglePlayPause()
+                        } else {
+                            playbackManager.play(track)
+                        }
+                    },
+                    onPreviousClick = {
+                        playbackManager.skipToPrevious()
+                    },
+                    onNextClick = {
+                        playbackManager.skipToNext()
+                    },
+                    onSeek = { targetProgress ->
+                        playbackManager.seekTo(targetProgress)
+                    },
+                    onToggleShuffle = {
+                        playbackManager.queueManager.toggleShuffle()
+                    },
+                    onCycleRepeatMode = {
+                        playbackManager.queueManager.cycleRepeatMode()
+                    },
+                    onOpenQueue = {
+                        showQueueSheet = true
+                    },
+                    onCollapse = {
+                        showFullPlayer = false
+                    },
+                )
+            }
+        }
+
         if (showQueueSheet) {
-            val queueState by playbackManager.queueManager.state.collectAsState()
             QueueBottomSheet(
                 queueState = queueState,
                 isDiscovering = playbackState.isDiscovering,

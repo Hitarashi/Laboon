@@ -43,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
@@ -123,6 +124,7 @@ fun MiniPlayer(
     onNextClick: () -> Unit,
     modifier: Modifier = Modifier,
     onClick: () -> Unit = {},
+    onExpand: () -> Unit = {},
     onDismiss: () -> Unit = {},
     backdropState: LiquidGlassBackdropState? = null,
 ) {
@@ -285,7 +287,10 @@ fun MiniPlayer(
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
-                    onClick = onClick,
+                    onClick = {
+                        onClick()
+                        onExpand()
+                    },
                 ),
             backdropState = backdropState,
             shape = miniPlayerShape,
@@ -370,6 +375,18 @@ fun MiniPlayer(
                                         }
                                     }
 
+                                    3 -> {
+                                        val currentOffsetY = offsetYAnimatable.value
+                                        val expandThreshold = with(density) { 32.dp.toPx() }
+                                        if (currentOffsetY < -expandThreshold || totalDragY < -expandThreshold) {
+                                            onExpand()
+                                        }
+                                        coroutineScope.launch {
+                                            launch { offsetYAnimatable.animateTo(0f, springSpec) }
+                                            launch { alphaAnimatable.animateTo(1f, springSpec) }
+                                        }
+                                    }
+
                                     else -> {
                                         coroutineScope.launch {
                                             launch { offsetXAnimatable.animateTo(0f, springSpec) }
@@ -407,6 +424,9 @@ fun MiniPlayer(
                                             }
                                         } else {
                                             dragDirection = 3
+                                            coroutineScope.launch {
+                                                offsetYAnimatable.snapTo(totalDragY)
+                                            }
                                         }
                                     }
                                 }
@@ -433,6 +453,16 @@ fun MiniPlayer(
                                                     1f
                                                 )
                                             alphaAnimatable.snapTo(fade)
+                                        }
+                                    }
+
+                                    3 -> {
+                                        coroutineScope.launch {
+                                            val nextY =
+                                                (offsetYAnimatable.value + dragAmount.y).coerceAtMost(
+                                                    0f
+                                                )
+                                            offsetYAnimatable.snapTo(nextY)
                                         }
                                     }
                                 }
@@ -566,9 +596,11 @@ fun MiniPlayer(
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
-                            painter = painterResource(R.drawable.ic_skip_previous),
+                            painter = painterResource(R.drawable.ic_skip),
                             contentDescription = "Previous",
-                            modifier = Modifier.size(20.dp),
+                            modifier = Modifier
+                                .size(20.dp)
+                                .rotate(180f),
                             tint = controlIconTint,
                         )
                     }
@@ -595,7 +627,7 @@ fun MiniPlayer(
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
-                            painter = painterResource(R.drawable.ic_skip_next),
+                            painter = painterResource(R.drawable.ic_skip),
                             contentDescription = "Next",
                             modifier = Modifier.size(20.dp),
                             tint = controlIconTint,
