@@ -8,9 +8,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -51,6 +49,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -60,9 +59,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -97,8 +98,6 @@ import org.shilpo.laboon.ui.design.FloatingCombinedClearance
 import org.shilpo.laboon.ui.design.FloatingNavBar
 import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
 import org.shilpo.laboon.ui.design.LiquidGlassSurface
-import org.shilpo.laboon.ui.design.MiniPlayer
-import org.shilpo.laboon.ui.design.MiniPlayerSpacing
 import org.shilpo.laboon.ui.design.NavigationBarBottomPadding
 import org.shilpo.laboon.ui.design.PredictiveBackSpec
 import org.shilpo.laboon.ui.design.PredictiveBackSurface
@@ -110,7 +109,7 @@ import org.shilpo.laboon.ui.design.rememberLiquidGlassBackdropState
 import org.shilpo.laboon.ui.design.rememberPredictiveBackState
 import org.shilpo.laboon.ui.design.userDisplayName
 import org.shilpo.laboon.ui.screens.library.LibraryScreen
-import org.shilpo.laboon.ui.screens.player.FullPlayerScreen
+import org.shilpo.laboon.ui.screens.player.MorphingPlayerSheet
 import org.shilpo.laboon.ui.screens.queue.QueueBottomSheet
 import org.shilpo.laboon.ui.screens.search.SearchScreen
 import org.shilpo.laboon.ui.screens.settings.SettingsScreen
@@ -129,7 +128,7 @@ fun HomeScreen(
 
     var feedState by remember { mutableStateOf(HomeFeedDefaults.defaultFeed) }
     var showQueueSheet by remember { mutableStateOf(false) }
-    var showFullPlayer by remember { mutableStateOf(false) }
+    var playerExpansionProgress by remember { mutableFloatStateOf(0f) }
     val coroutineScope = rememberCoroutineScope()
 
     val context = LocalContext.current
@@ -337,73 +336,20 @@ fun HomeScreen(
             }
         }
 
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, bottom = NavigationBarBottomPadding),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(MiniPlayerSpacing),
-        ) {
-            AnimatedVisibility(
-                visible = activeTrack != null,
-                enter = slideInVertically(
-                    animationSpec = motionScheme.defaultSpatialSpec(),
-                    initialOffsetY = { it },
-                ) + fadeIn(animationSpec = motionScheme.defaultEffectsSpec()),
-                exit = slideOutVertically(
-                    animationSpec = motionScheme.defaultSpatialSpec(),
-                    targetOffsetY = { it },
-                ) + fadeOut(animationSpec = motionScheme.defaultEffectsSpec()),
-            ) {
-                activeTrack?.let { track ->
-                    MiniPlayer(
-                        track = track,
-                        isPlaying = activeIsPlaying,
-                        isBuffering = playbackState.isBuffering,
-                        progress = activeProgress,
-                        onPlayPauseClick = {
-                            if (playbackState.currentTrack != null) {
-                                playbackManager.togglePlayPause()
-                            } else {
-                                playbackManager.play(track)
-                            }
-                        },
-                        onPreviousClick = {
-                            playbackManager.skipToPrevious()
-                        },
-                        onNextClick = {
-                            playbackManager.skipToNext()
-                        },
-                        onClick = {
-                            showFullPlayer = true
-                        },
-                        onExpand = {
-                            showFullPlayer = true
-                        },
-                        onDismiss = {
-                            isPlayerDismissed = true
-                            fallbackTrack = null
-                            playbackManager.dismiss()
-                        },
-                        backdropState = liquidGlassBackdropState,
-                    )
-                }
-            }
-
-            FloatingNavBar(
-                selectedTab = currentTab,
-                onTabSelected = { onEvent(RouteEvent.TabSelected(it)) },
-                hasMiniPlayerAbove = activeTrack != null,
-                backdropState = liquidGlassBackdropState,
-            )
-        }
+        val density = LocalDensity.current
 
         AnimatedVisibility(
             visible = currentTab == MainTab.Home,
             enter = fadeIn(animationSpec = motionScheme.defaultEffectsSpec()),
             exit = fadeOut(animationSpec = motionScheme.defaultEffectsSpec()),
-            modifier = Modifier.align(Alignment.TopCenter),
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .graphicsLayer {
+                    val topBarExitProgress =
+                        ((playerExpansionProgress - 0.75f) / 0.25f).coerceIn(0f, 1f)
+                    alpha = (1f - topBarExitProgress).coerceIn(0f, 1f)
+                    translationY = with(density) { (-topBarExitProgress * 120.dp.toPx()) }
+                },
         ) {
             HomeTopBar(
                 session = session,
@@ -411,6 +357,74 @@ fun HomeScreen(
                 backdropState = liquidGlassBackdropState,
                 collapseProgress = topBarCollapseProgress,
             )
+        }
+
+        FloatingNavBar(
+            selectedTab = currentTab,
+            onTabSelected = { onEvent(RouteEvent.TabSelected(it)) },
+            hasMiniPlayerAbove = activeTrack != null,
+            backdropState = liquidGlassBackdropState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(start = 16.dp, end = 16.dp, bottom = NavigationBarBottomPadding)
+                .graphicsLayer {
+                    translationY = with(density) { (playerExpansionProgress * 120.dp.toPx()) }
+                },
+        )
+
+        AnimatedVisibility(
+            visible = activeTrack != null,
+            enter = fadeIn(animationSpec = motionScheme.defaultEffectsSpec()),
+            exit = fadeOut(animationSpec = motionScheme.defaultEffectsSpec()),
+        ) {
+            activeTrack?.let { track ->
+                MorphingPlayerSheet(
+                    track = track,
+                    isPlaying = activeIsPlaying,
+                    isBuffering = playbackState.isBuffering,
+                    playbackProgress = activeProgress,
+                    currentPositionMs = playbackState.currentPositionMs,
+                    durationMs = playbackState.durationMs,
+                    isShuffle = queueState.isShuffle,
+                    repeatMode = queueState.repeatMode,
+                    onPlayPauseClick = {
+                        if (playbackState.currentTrack != null) {
+                            playbackManager.togglePlayPause()
+                        } else {
+                            playbackManager.play(track)
+                        }
+                    },
+                    onPreviousClick = {
+                        playbackManager.skipToPrevious()
+                    },
+                    onNextClick = {
+                        playbackManager.skipToNext()
+                    },
+                    onSeek = { targetProgress ->
+                        playbackManager.seekTo(targetProgress)
+                    },
+                    onToggleShuffle = {
+                        playbackManager.queueManager.toggleShuffle()
+                    },
+                    onCycleRepeatMode = {
+                        playbackManager.queueManager.cycleRepeatMode()
+                    },
+                    onOpenQueue = {
+                        showQueueSheet = true
+                    },
+                    onDismiss = {
+                        isPlayerDismissed = true
+                        fallbackTrack = null
+                        playbackManager.dismiss()
+                    },
+                    backdropState = liquidGlassBackdropState,
+                    onExpansionProgressChange = { progress ->
+                        playerExpansionProgress = progress
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
         }
 
         if (showSettings || scrimAlpha > 0.01f) {
@@ -445,59 +459,6 @@ fun HomeScreen(
                         onDisconnect()
                     },
                     modifier = settingsSurface.fillMaxSize(),
-                )
-            }
-        }
-
-        AnimatedVisibility(
-            visible = showFullPlayer && activeTrack != null,
-            enter = slideInVertically(
-                animationSpec = motionScheme.defaultSpatialSpec(),
-                initialOffsetY = { it },
-            ) + fadeIn(animationSpec = motionScheme.defaultEffectsSpec()),
-            exit = slideOutVertically(
-                animationSpec = motionScheme.defaultSpatialSpec(),
-                targetOffsetY = { it },
-            ) + fadeOut(animationSpec = motionScheme.defaultEffectsSpec()),
-        ) {
-            activeTrack?.let { track ->
-                FullPlayerScreen(
-                    track = track,
-                    isPlaying = activeIsPlaying,
-                    isBuffering = playbackState.isBuffering,
-                    progress = activeProgress,
-                    currentPositionMs = playbackState.currentPositionMs,
-                    durationMs = playbackState.durationMs,
-                    isShuffle = queueState.isShuffle,
-                    repeatMode = queueState.repeatMode,
-                    onPlayPauseClick = {
-                        if (playbackState.currentTrack != null) {
-                            playbackManager.togglePlayPause()
-                        } else {
-                            playbackManager.play(track)
-                        }
-                    },
-                    onPreviousClick = {
-                        playbackManager.skipToPrevious()
-                    },
-                    onNextClick = {
-                        playbackManager.skipToNext()
-                    },
-                    onSeek = { targetProgress ->
-                        playbackManager.seekTo(targetProgress)
-                    },
-                    onToggleShuffle = {
-                        playbackManager.queueManager.toggleShuffle()
-                    },
-                    onCycleRepeatMode = {
-                        playbackManager.queueManager.cycleRepeatMode()
-                    },
-                    onOpenQueue = {
-                        showQueueSheet = true
-                    },
-                    onCollapse = {
-                        showFullPlayer = false
-                    },
                 )
             }
         }

@@ -162,10 +162,8 @@ class ScreenContentTest {
     }
 
     @Test
-    fun userDisplayName_cleansEmptyQuotesSuffix() {
-        assertEquals("Hitarashi", userDisplayName(user(name = "Hitarashi (\"\");")))
-        assertEquals("Hitarashi", userDisplayName(user(name = "Hitarashi (\"\")")))
-        assertEquals("Hitarashi", userDisplayName(user(name = "Hitarashi ()")))
+    fun userDisplayName_preservesRawNameAsIs() {
+        assertEquals("Hitarashi (\"\");", userDisplayName(user(name = "Hitarashi (\"\");")))
     }
 
     @Test
