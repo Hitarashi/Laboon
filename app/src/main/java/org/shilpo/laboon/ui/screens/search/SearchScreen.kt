@@ -63,6 +63,7 @@ import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.search.SearchRepository
 import org.shilpo.laboon.search.SearchRepositoryImpl
 import org.shilpo.laboon.ui.design.CodecIcon
+import org.shilpo.laboon.ui.design.ProviderIcon
 
 @Composable
 fun SearchScreen(
@@ -288,6 +289,13 @@ fun SearchScreen(
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                             modifier = Modifier.weight(1f, fill = false),
+                                        )
+                                        ProviderIcon(
+                                            provider = track.source,
+                                            height = 10.dp,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                                alpha = 0.8f
+                                            ),
                                         )
                                         CodecIcon(
                                             codec = track.codec,

@@ -20,11 +20,11 @@ fun CodecIcon(
 ) {
     val normalized = codec?.trim()?.lowercase() ?: return
     when (normalized) {
-        "alac" -> {
+        "lossless", "alac", "flac" -> {
             val width = height * (15f / 9f)
             Icon(
-                painter = painterResource(R.drawable.ic_codec_alac),
-                contentDescription = "ALAC",
+                painter = painterResource(R.drawable.ic_codec_lossless),
+                contentDescription = "Lossless",
                 tint = tint,
                 modifier = modifier.size(width = width, height = height),
             )
@@ -35,6 +35,37 @@ fun CodecIcon(
             Icon(
                 painter = painterResource(R.drawable.ic_codec_dolby),
                 contentDescription = "Dolby",
+                tint = tint,
+                modifier = modifier.size(width = width, height = height),
+            )
+        }
+    }
+}
+
+@Composable
+fun ProviderIcon(
+    provider: String?,
+    modifier: Modifier = Modifier,
+    height: Dp = 10.dp,
+    tint: Color = LocalContentColor.current,
+) {
+    val normalized = provider?.trim()?.lowercase() ?: return
+    when {
+        normalized.contains("apple") || normalized.contains("itunes") -> {
+            val width = height * (814f / 1000f)
+            Icon(
+                painter = painterResource(R.drawable.ic_provider_apple),
+                contentDescription = "Apple Music",
+                tint = tint,
+                modifier = modifier.size(width = width, height = height),
+            )
+        }
+
+        normalized.contains("qobuz") -> {
+            val width = height * (1667f / 661f)
+            Icon(
+                painter = painterResource(R.drawable.ic_provider_qobuz),
+                contentDescription = "Qobuz",
                 tint = tint,
                 modifier = modifier.size(width = width, height = height),
             )

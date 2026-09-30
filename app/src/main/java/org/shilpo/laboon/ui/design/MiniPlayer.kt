@@ -362,6 +362,11 @@ fun MiniPlayer(
                                     .weight(1f, fill = false)
                                     .basicMarquee(iterations = if (isPlaying) Int.MAX_VALUE else 0),
                             )
+                            ProviderIcon(
+                                provider = track.source,
+                                height = 9.dp,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                            )
                             CodecIcon(
                                 codec = track.codec,
                                 height = 9.dp,
