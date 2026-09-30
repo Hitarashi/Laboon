@@ -51,6 +51,7 @@ interface PlaybackManager {
     fun togglePlayPause()
     fun seekTo(progress: Float)
     fun stop()
+    fun dismiss()
     fun release()
 }
 
@@ -617,9 +618,23 @@ class PlaybackManagerImpl(
         if (exo != null) {
             exo.volume = 0f
             exo.stop()
+            exo.clearMediaItems()
             exo.volume = 1f
         }
+        PlaybackServiceHolder.service?.let { s ->
+            runCatching {
+                s.stopForeground(android.app.Service.STOP_FOREGROUND_REMOVE)
+                s.stopSelf()
+            }
+        }
+        val notificationManager =
+            context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+        notificationManager?.cancelAll()
         _state.value = PlaybackState()
+    }
+
+    override fun dismiss() {
+        stop()
     }
 
     override fun release() {

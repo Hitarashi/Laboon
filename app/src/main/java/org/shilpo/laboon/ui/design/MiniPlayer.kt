@@ -13,7 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -63,7 +62,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.graphics.shapes.Morph
@@ -77,7 +75,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
-import kotlin.math.roundToInt
+import kotlin.math.abs
 
 private val CookieMorph = Morph(MaterialShapes.Circle, MaterialShapes.Cookie12Sided)
 
@@ -125,17 +123,28 @@ fun MiniPlayer(
     onNextClick: () -> Unit,
     modifier: Modifier = Modifier,
     onClick: () -> Unit = {},
+    onDismiss: () -> Unit = {},
     backdropState: LiquidGlassBackdropState? = null,
 ) {
     val motionScheme = MaterialTheme.motionScheme
     val density = LocalDensity.current
     val coroutineScope = rememberCoroutineScope()
     val offsetXAnimatable = remember { Animatable(0f) }
+    val offsetYAnimatable = remember { Animatable(0f) }
+    val alphaAnimatable = remember { Animatable(1f) }
     val swipeThreshold = with(density) { 56.dp.toPx() }
+    val dismissThreshold = with(density) { 48.dp.toPx() }
     val springSpec = spring<Float>(
         dampingRatio = Spring.DampingRatioNoBouncy,
         stiffness = Spring.StiffnessLow,
     )
+
+    LaunchedEffect(track.id, isPlaying) {
+        if (isPlaying) {
+            offsetYAnimatable.snapTo(0f)
+            alphaAnimatable.snapTo(1f)
+        }
+    }
 
     val rotationAnimatable = remember { Animatable(0f) }
     LaunchedEffect(isPlaying) {
@@ -268,6 +277,11 @@ fun MiniPlayer(
                 .widthIn(max = NavigationBarMaxWidth)
                 .fillMaxWidth()
                 .height(MiniPlayerHeight)
+                .graphicsLayer {
+                    translationX = offsetXAnimatable.value
+                    translationY = offsetYAnimatable.value
+                    alpha = alphaAnimatable.value
+                }
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -281,200 +295,311 @@ fun MiniPlayer(
             shadowElevation = 6.dp,
         ) {
             Box(
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .offset { IntOffset(offsetXAnimatable.value.roundToInt(), 0) }
-                        .pointerInput(Unit) {
-                            detectHorizontalDragGestures(
-                                onDragCancel = {
-                                    coroutineScope.launch {
-                                        offsetXAnimatable.animateTo(0f, springSpec)
-                                    }
-                                },
-                                onDragEnd = {
-                                    val currentOffset = offsetXAnimatable.value
-                                    if (currentOffset > swipeThreshold) {
-                                        onPreviousClick()
-                                    } else if (currentOffset < -swipeThreshold) {
-                                        onNextClick()
-                                    }
-                                    coroutineScope.launch {
-                                        offsetXAnimatable.animateTo(0f, springSpec)
-                                    }
-                                },
-                                onHorizontalDrag = { change, dragAmount ->
-                                    change.consume()
-                                    coroutineScope.launch {
-                                        offsetXAnimatable.snapTo(offsetXAnimatable.value + dragAmount)
-                                    }
-                                },
-                            )
-                        }
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    contentAlignment = Alignment.CenterStart,
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .align(Alignment.CenterStart)
-                            .padding(start = 60.dp, end = 140.dp)
-                            .graphicsLayer {
-                                compositingStrategy = CompositingStrategy.Offscreen
-                            }
-                            .drawWithContent {
-                                drawContent()
-                                val leftEdgeColor =
-                                    Color.Black.copy(alpha = 1f - leftFadeAlpha.value)
-                                drawRect(
-                                    brush = Brush.horizontalGradient(
-                                        0.0f to leftEdgeColor,
-                                        0.10f to Color.Black,
-                                        0.90f to Color.Black,
-                                        1.0f to Color.Transparent,
-                                    ),
-                                    blendMode = BlendMode.DstIn,
-                                )
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        var dragDirection = 0
+                        var totalDragX = 0f
+                        var totalDragY = 0f
+                        val slop = 8.dp.toPx()
+                        detectDragGestures(
+                            onDragStart = {
+                                dragDirection = 0
+                                totalDragX = 0f
+                                totalDragY = 0f
                             },
-                        verticalArrangement = Arrangement.Center,
+                            onDragCancel = {
+                                dragDirection = 0
+                                totalDragX = 0f
+                                totalDragY = 0f
+                                coroutineScope.launch {
+                                    launch { offsetXAnimatable.animateTo(0f, springSpec) }
+                                    launch { offsetYAnimatable.animateTo(0f, springSpec) }
+                                    launch { alphaAnimatable.animateTo(1f, springSpec) }
+                                }
+                            },
+                            onDragEnd = {
+                                when (dragDirection) {
+                                    1 -> {
+                                        val currentOffset = offsetXAnimatable.value
+                                        if (currentOffset > swipeThreshold) {
+                                            onPreviousClick()
+                                        } else if (currentOffset < -swipeThreshold) {
+                                            onNextClick()
+                                        }
+                                        coroutineScope.launch {
+                                            offsetXAnimatable.animateTo(0f, springSpec)
+                                        }
+                                    }
+
+                                    2 -> {
+                                        val currentOffsetY = offsetYAnimatable.value
+                                        if (currentOffsetY > dismissThreshold) {
+                                            coroutineScope.launch {
+                                                launch {
+                                                    offsetYAnimatable.animateTo(
+                                                        currentOffsetY + 160.dp.toPx(),
+                                                        tween(
+                                                            durationMillis = 180,
+                                                            easing = LinearEasing
+                                                        ),
+                                                    )
+                                                }
+                                                launch {
+                                                    alphaAnimatable.animateTo(
+                                                        0f,
+                                                        tween(
+                                                            durationMillis = 180,
+                                                            easing = LinearEasing
+                                                        ),
+                                                    )
+                                                }
+                                                delay(180)
+                                                onDismiss()
+                                            }
+                                        } else {
+                                            coroutineScope.launch {
+                                                launch {
+                                                    offsetYAnimatable.animateTo(
+                                                        0f,
+                                                        springSpec
+                                                    )
+                                                }
+                                                launch { alphaAnimatable.animateTo(1f, springSpec) }
+                                            }
+                                        }
+                                    }
+
+                                    else -> {
+                                        coroutineScope.launch {
+                                            launch { offsetXAnimatable.animateTo(0f, springSpec) }
+                                            launch { offsetYAnimatable.animateTo(0f, springSpec) }
+                                            launch { alphaAnimatable.animateTo(1f, springSpec) }
+                                        }
+                                    }
+                                }
+                                dragDirection = 0
+                                totalDragX = 0f
+                                totalDragY = 0f
+                            },
+                            onDrag = { change, dragAmount ->
+                                if (dragDirection == 0) {
+                                    totalDragX += dragAmount.x
+                                    totalDragY += dragAmount.y
+                                    val absX = abs(totalDragX)
+                                    val absY = abs(totalDragY)
+                                    if (absX > slop || absY > slop) {
+                                        if (absX >= absY) {
+                                            dragDirection = 1
+                                            coroutineScope.launch {
+                                                offsetXAnimatable.snapTo(totalDragX)
+                                            }
+                                        } else if (totalDragY > 0f) {
+                                            dragDirection = 2
+                                            coroutineScope.launch {
+                                                offsetYAnimatable.snapTo(totalDragY)
+                                                val fade =
+                                                    (1f - (totalDragY / (dismissThreshold * 1.5f))).coerceIn(
+                                                        0.2f,
+                                                        1f
+                                                    )
+                                                alphaAnimatable.snapTo(fade)
+                                            }
+                                        } else {
+                                            dragDirection = 3
+                                        }
+                                    }
+                                }
+                                if (dragDirection != 0) {
+                                    change.consume()
+                                }
+                                when (dragDirection) {
+                                    1 -> {
+                                        coroutineScope.launch {
+                                            offsetXAnimatable.snapTo(offsetXAnimatable.value + dragAmount.x)
+                                        }
+                                    }
+
+                                    2 -> {
+                                        coroutineScope.launch {
+                                            val nextY =
+                                                (offsetYAnimatable.value + dragAmount.y).coerceAtLeast(
+                                                    0f
+                                                )
+                                            offsetYAnimatable.snapTo(nextY)
+                                            val fade =
+                                                (1f - (nextY / (dismissThreshold * 1.5f))).coerceIn(
+                                                    0.2f,
+                                                    1f
+                                                )
+                                            alphaAnimatable.snapTo(fade)
+                                        }
+                                    }
+                                }
+                            }
+                        )
+                    }
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.CenterStart)
+                        .padding(start = 60.dp, end = 140.dp)
+                        .graphicsLayer {
+                            compositingStrategy = CompositingStrategy.Offscreen
+                        }
+                        .drawWithContent {
+                            drawContent()
+                            val leftEdgeColor =
+                                Color.Black.copy(alpha = 1f - leftFadeAlpha.value)
+                            drawRect(
+                                brush = Brush.horizontalGradient(
+                                    0.0f to leftEdgeColor,
+                                    0.10f to Color.Black,
+                                    0.90f to Color.Black,
+                                    1.0f to Color.Transparent,
+                                ),
+                                blendMode = BlendMode.DstIn,
+                            )
+                        },
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        text = track.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Clip,
+                        modifier = Modifier.basicMarquee(iterations = if (isPlaying) Int.MAX_VALUE else 0),
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(
-                            text = track.title,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
+                            text = track.artist,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Clip,
-                            modifier = Modifier.basicMarquee(iterations = if (isPlaying) Int.MAX_VALUE else 0),
+                            modifier = Modifier
+                                .weight(1f, fill = false)
+                                .basicMarquee(iterations = if (isPlaying) Int.MAX_VALUE else 0),
                         )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Text(
-                                text = track.artist,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Clip,
-                                modifier = Modifier
-                                    .weight(1f, fill = false)
-                                    .basicMarquee(iterations = if (isPlaying) Int.MAX_VALUE else 0),
-                            )
-                            ProviderIcon(
-                                provider = track.source,
-                                height = 9.dp,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                            )
-                            CodecIcon(
-                                codec = track.codec,
-                                height = 9.dp,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                            )
-                        }
+                        ProviderIcon(
+                            provider = track.source,
+                            height = 9.dp,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                        )
+                        CodecIcon(
+                            codec = track.codec,
+                            height = 9.dp,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                        )
                     }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .align(Alignment.CenterStart)
+                        .clip(artworkShape)
+                        .border(1.dp, Color.White.copy(alpha = 0.2f), artworkShape)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (!track.artworkUrl.isNullOrBlank()) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalPlatformContext.current)
+                                .data(track.artworkUrl)
+                                .crossfade(true)
+                                .build(),
+                            placeholder = painterResource(R.drawable.app_icon_small),
+                            error = painterResource(R.drawable.app_icon_small),
+                            contentDescription = track.title,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    } else {
+                        Icon(
+                            painter = painterResource(R.drawable.app_icon_small),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .height(52.dp)
+                        .shadow(
+                            elevation = 2.dp,
+                            shape = CircleShape,
+                            clip = false,
+                        )
+                        .background(
+                            brush = pillGradient,
+                            shape = CircleShape,
+                        )
+                        .border(
+                            width = 0.5.dp,
+                            brush = borderBrush,
+                            shape = CircleShape,
+                        )
+                        .clip(CircleShape)
+                        .padding(horizontal = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = onPreviousClick,
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_skip_previous),
+                            contentDescription = "Previous",
+                            modifier = Modifier.size(20.dp),
+                            tint = controlIconTint,
+                        )
+                    }
+
+                    PlayPauseButton(
+                        isPlaying = isPlaying,
+                        isBuffering = isBuffering,
+                        morphProgress = morphProgress,
+                        rotationAngle = { rotationAnimatable.value },
+                        playButtonGradient = playButtonGradient,
+                        playButtonBorderBrush = playButtonBorderBrush,
+                        controlIconTint = controlIconTint,
+                        onPlayPauseClick = onPlayPauseClick,
+                    )
 
                     Box(
                         modifier = Modifier
-                            .size(48.dp)
-                            .align(Alignment.CenterStart)
-                            .clip(artworkShape)
-                            .border(1.dp, Color.White.copy(alpha = 0.2f), artworkShape)
-                            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                            .size(36.dp)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = onNextClick,
+                            ),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (!track.artworkUrl.isNullOrBlank()) {
-                            AsyncImage(
-                                model = ImageRequest.Builder(LocalPlatformContext.current)
-                                    .data(track.artworkUrl)
-                                    .crossfade(true)
-                                    .build(),
-                                placeholder = painterResource(R.drawable.app_icon_small),
-                                error = painterResource(R.drawable.app_icon_small),
-                                contentDescription = track.title,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        } else {
-                            Icon(
-                                painter = painterResource(R.drawable.app_icon_small),
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                                modifier = Modifier.size(24.dp),
-                            )
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .align(Alignment.CenterEnd)
-                            .height(52.dp)
-                            .shadow(
-                                elevation = 2.dp,
-                                shape = CircleShape,
-                                clip = false,
-                            )
-                            .background(
-                                brush = pillGradient,
-                                shape = CircleShape,
-                            )
-                            .border(
-                                width = 0.5.dp,
-                                brush = borderBrush,
-                                shape = CircleShape,
-                            )
-                            .clip(CircleShape)
-                            .padding(horizontal = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    onClick = onPreviousClick,
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_skip_previous),
-                                contentDescription = "Previous",
-                                modifier = Modifier.size(20.dp),
-                                tint = controlIconTint,
-                            )
-                        }
-
-                        PlayPauseButton(
-                            isPlaying = isPlaying,
-                            isBuffering = isBuffering,
-                            morphProgress = morphProgress,
-                            rotationAngle = { rotationAnimatable.value },
-                            playButtonGradient = playButtonGradient,
-                            playButtonBorderBrush = playButtonBorderBrush,
-                            controlIconTint = controlIconTint,
-                            onPlayPauseClick = onPlayPauseClick,
+                        Icon(
+                            painter = painterResource(R.drawable.ic_skip_next),
+                            contentDescription = "Next",
+                            modifier = Modifier.size(20.dp),
+                            tint = controlIconTint,
                         )
-
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    onClick = onNextClick,
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_skip_next),
-                                contentDescription = "Next",
-                                modifier = Modifier.size(20.dp),
-                                tint = controlIconTint,
-                            )
-                        }
                     }
                 }
             }

@@ -152,17 +152,24 @@ fun HomeScreen(
             codec = "alac",
         )
     }
+    var isPlayerDismissed by remember { mutableStateOf(false) }
     var fallbackTrack by remember { mutableStateOf<HomeTrack?>(starterTrack) }
 
     LaunchedEffect(feedState.rotation.items) {
-        if (playbackState.currentTrack == null && fallbackTrack == starterTrack) {
+        if (!isPlayerDismissed && playbackState.currentTrack == null && fallbackTrack == starterTrack) {
             feedState.rotation.items.firstOrNull()?.let {
                 fallbackTrack = it
             }
         }
     }
 
-    val activeTrack = playbackState.currentTrack ?: fallbackTrack
+    LaunchedEffect(playbackState.currentTrack) {
+        if (playbackState.currentTrack != null) {
+            isPlayerDismissed = false
+        }
+    }
+
+    val activeTrack = if (isPlayerDismissed) null else (playbackState.currentTrack ?: fallbackTrack)
     val activeIsPlaying = playbackState.isPlaying
     val activeProgress = if (playbackState.currentTrack != null) playbackState.progress else 0f
 
@@ -367,6 +374,11 @@ fun HomeScreen(
                         },
                         onClick = {
                             showQueueSheet = true
+                        },
+                        onDismiss = {
+                            isPlayerDismissed = true
+                            fallbackTrack = null
+                            playbackManager.dismiss()
                         },
                         backdropState = liquidGlassBackdropState,
                     )
