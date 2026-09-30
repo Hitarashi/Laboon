@@ -11,6 +11,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,6 +48,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -99,6 +101,7 @@ import org.shilpo.laboon.navigation.RouteState
 import org.shilpo.laboon.navigation.tabTransitionDirection
 import org.shilpo.laboon.playback.PlaybackManagerHolder
 import org.shilpo.laboon.playback.PlaybackPersistence
+import org.shilpo.laboon.rip.RipWebSocketClient
 import org.shilpo.laboon.ui.design.FloatingCombinedClearance
 import org.shilpo.laboon.ui.design.FloatingNavBar
 import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
@@ -116,6 +119,7 @@ import org.shilpo.laboon.ui.design.userDisplayName
 import org.shilpo.laboon.ui.screens.library.LibraryScreen
 import org.shilpo.laboon.ui.screens.player.MorphingPlayerSheet
 import org.shilpo.laboon.ui.screens.queue.QueueBottomSheet
+import org.shilpo.laboon.ui.screens.rip.RipVisualizerScreen
 import org.shilpo.laboon.ui.screens.search.SearchScreen
 import org.shilpo.laboon.ui.screens.settings.SettingsScreen
 
@@ -145,6 +149,18 @@ fun HomeScreen(
     val coroutineScope = rememberCoroutineScope()
 
     val sessionStore = remember(context) { SessionStore(SharedPreferencesKeyValueStore(context)) }
+    val ripWsClient = remember(sessionStore) { RipWebSocketClient(sessionStore) }
+    var showRipVisualizer by rememberSaveable { mutableStateOf(false) }
+
+    DisposableEffect(showRipVisualizer) {
+        if (showRipVisualizer) {
+            ripWsClient.start()
+        }
+        onDispose {
+            ripWsClient.stop()
+        }
+    }
+
     val playbackManager = remember(context, sessionStore) {
         PlaybackManagerHolder.getInstance(context.applicationContext, sessionStore)
     }
@@ -329,13 +345,23 @@ fun HomeScreen(
         onBack = { onEvent(RouteEvent.BackPressed) },
     )
 
+    val ripVisualizerBackState = rememberPredictiveBackState(
+        enabled = showRipVisualizer,
+        onBack = { showRipVisualizer = false },
+    )
+
     val tabIsBackTarget = !showSettings && currentTab != MainTab.Home
     val settingsProgress = homeBackState.progressFor(showSettings)
+    val visualizerProgress = ripVisualizerBackState.progressFor(showRipVisualizer)
 
     val motionScheme = MaterialTheme.motionScheme
 
     val scrimAlpha by animateFloatAsState(
-        targetValue = if (showSettings) (1f - settingsProgress) * 0.4f else 0f,
+        targetValue = when {
+            showRipVisualizer -> (1f - visualizerProgress) * 0.4f
+            showSettings -> (1f - settingsProgress) * 0.4f
+            else -> 0f
+        },
         animationSpec = motionScheme.fastEffectsSpec(),
         label = "settingsScrim",
     )
@@ -443,6 +469,7 @@ fun HomeScreen(
             HomeTopBar(
                 session = session,
                 onOpenSettings = { onEvent(RouteEvent.SettingsOpened) },
+                onOpenRipVisualizer = { showRipVisualizer = true },
                 backdropState = liquidGlassBackdropState,
                 collapseProgress = topBarCollapseProgress,
             )
@@ -520,7 +547,7 @@ fun HomeScreen(
             }
         }
 
-        if (showSettings || scrimAlpha > 0.01f) {
+        if (showSettings || showRipVisualizer || scrimAlpha > 0.01f) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -552,6 +579,31 @@ fun HomeScreen(
                         onDisconnect()
                     },
                     modifier = settingsSurface.fillMaxSize(),
+                )
+            }
+        }
+
+        AnimatedVisibility(
+            visible = showRipVisualizer,
+            enter = slideInHorizontally(
+                animationSpec = motionScheme.defaultSpatialSpec(),
+                initialOffsetX = { it },
+            ) + fadeIn(animationSpec = motionScheme.defaultEffectsSpec()),
+            exit = slideOutHorizontally(
+                animationSpec = motionScheme.defaultSpatialSpec(),
+                targetOffsetX = { it },
+            ) + fadeOut(animationSpec = motionScheme.defaultEffectsSpec()),
+        ) {
+            PredictiveBackSurface(
+                state = ripVisualizerBackState,
+                spec = PredictiveBackSpec.HomeSettings,
+                active = showRipVisualizer,
+            ) { visualizerSurface ->
+                RipVisualizerScreen(
+                    client = ripWsClient,
+                    session = session,
+                    onBack = { showRipVisualizer = false },
+                    modifier = visualizerSurface.fillMaxSize(),
                 )
             }
         }
@@ -591,6 +643,7 @@ fun HomeScreen(
 private fun HomeTopBar(
     session: AuthSession?,
     onOpenSettings: () -> Unit,
+    onOpenRipVisualizer: () -> Unit,
     backdropState: LiquidGlassBackdropState?,
     modifier: Modifier = Modifier,
     collapseProgress: Float = 0f,
@@ -632,9 +685,12 @@ private fun HomeTopBar(
             ) {
                 Icon(
                     painter = painterResource(R.drawable.app_icon_small),
-                    contentDescription = null,
+                    contentDescription = "Rip Mission Control",
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(iconSize),
+                    modifier = Modifier
+                        .size(iconSize)
+                        .clip(CircleShape)
+                        .clickable { onOpenRipVisualizer() },
                 )
                 Column {
                     Text(
