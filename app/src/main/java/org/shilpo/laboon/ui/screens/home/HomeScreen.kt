@@ -47,7 +47,6 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -98,7 +97,7 @@ import org.shilpo.laboon.navigation.RouteDirection
 import org.shilpo.laboon.navigation.RouteEvent
 import org.shilpo.laboon.navigation.RouteState
 import org.shilpo.laboon.navigation.tabTransitionDirection
-import org.shilpo.laboon.playback.PlaybackManagerImpl
+import org.shilpo.laboon.playback.PlaybackManagerHolder
 import org.shilpo.laboon.playback.PlaybackPersistence
 import org.shilpo.laboon.ui.design.FloatingCombinedClearance
 import org.shilpo.laboon.ui.design.FloatingNavBar
@@ -147,16 +146,10 @@ fun HomeScreen(
 
     val sessionStore = remember(context) { SessionStore(SharedPreferencesKeyValueStore(context)) }
     val playbackManager = remember(context, sessionStore) {
-        PlaybackManagerImpl(context.applicationContext, sessionStore)
+        PlaybackManagerHolder.getInstance(context.applicationContext, sessionStore)
     }
     val playbackState by playbackManager.state.collectAsState()
     val queueState by playbackManager.queueManager.state.collectAsState()
-
-    DisposableEffect(playbackManager) {
-        onDispose {
-            playbackManager.release()
-        }
-    }
 
     var isPlayerDismissed by rememberSaveable { mutableStateOf(playbackPersistence.isPlayerDismissed()) }
     var fallbackTrack by remember { mutableStateOf<HomeTrack?>(playbackPersistence.getLastTrack()) }
@@ -487,7 +480,8 @@ fun HomeScreen(
                         if (playbackState.currentTrack != null) {
                             playbackManager.togglePlayPause()
                         } else {
-                            playbackManager.play(track)
+                            val startPos = if (savedPosition > 0L) savedPosition else null
+                            playbackManager.play(track, startPositionMs = startPos)
                         }
                     },
                     onPreviousClick = {
