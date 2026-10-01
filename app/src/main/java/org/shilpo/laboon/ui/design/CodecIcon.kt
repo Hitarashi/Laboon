@@ -19,8 +19,17 @@ fun CodecIcon(
     tint: Color = LocalContentColor.current,
 ) {
     val normalized = codec?.trim()?.lowercase() ?: return
-    when (normalized) {
-        "lossless", "alac", "flac" -> {
+    when {
+        normalized.contains("hires") || normalized == "hi-res" || normalized.contains("24-") -> {
+            Icon(
+                painter = painterResource(R.drawable.ic_codec_hires),
+                contentDescription = "Hi-Res",
+                tint = tint,
+                modifier = modifier.size(height),
+            )
+        }
+
+        normalized == "lossless" || normalized == "alac" || normalized == "flac" -> {
             val width = height * (15f / 9f)
             Icon(
                 painter = painterResource(R.drawable.ic_codec_lossless),
@@ -30,7 +39,7 @@ fun CodecIcon(
             )
         }
 
-        "ec-3", "ec3", "atmos", "dolby", "dolby_atmos" -> {
+        normalized == "ec-3" || normalized == "ec3" || normalized == "atmos" || normalized == "dolby" || normalized == "dolby_atmos" -> {
             val width = height * (103f / 73f)
             Icon(
                 painter = painterResource(R.drawable.ic_codec_dolby),

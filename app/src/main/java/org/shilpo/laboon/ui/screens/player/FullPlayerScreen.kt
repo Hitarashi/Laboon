@@ -40,7 +40,6 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -55,6 +54,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -63,9 +63,12 @@ import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asComposePath
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -87,10 +90,12 @@ import kotlinx.coroutines.launch
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.playback.ArtworkUrlHelper
+import org.shilpo.laboon.playback.AudioQualityInfo
 import org.shilpo.laboon.playback.RepeatMode
 import org.shilpo.laboon.playback.SpectrumFrame
-import org.shilpo.laboon.ui.design.CodecIcon
-import org.shilpo.laboon.ui.design.ProviderIcon
+import org.shilpo.laboon.ui.design.AudioQualityBadge
+import org.shilpo.laboon.ui.design.liquidGlassBackdropProducer
+import org.shilpo.laboon.ui.design.rememberLiquidGlassBackdropState
 import kotlin.math.abs
 
 private val FullPlayerCookieMorph = Morph(MaterialShapes.Circle, MaterialShapes.Cookie12Sided)
@@ -143,6 +148,7 @@ fun FullPlayerScreen(
     progress: Float = 0f,
     currentPositionMs: Long = 0L,
     durationMs: Long = 0L,
+    audioQuality: AudioQualityInfo? = null,
     isShuffle: Boolean = false,
     repeatMode: RepeatMode = RepeatMode.OFF,
     spectrum: SpectrumFrame = SpectrumFrame(),
@@ -166,6 +172,11 @@ fun FullPlayerScreen(
     val coroutineScope = rememberCoroutineScope()
     val collapseOffsetY = remember { Animatable(0f) }
     val collapseThreshold = with(density) { 100.dp.toPx() }
+
+    var showAudioInfo by remember { mutableStateOf(false) }
+    var audioBadgeBounds by remember { mutableStateOf<Rect?>(null) }
+    val playerBackdropState = rememberLiquidGlassBackdropState()
+    val playerBackdropLayer = rememberGraphicsLayer()
 
     LaunchedEffect(track.id) {
         collapseOffsetY.snapTo(0f)
@@ -215,54 +226,74 @@ fun FullPlayerScreen(
                 )
             },
     ) {
-        DancingGlowBackground(
-            artworkUrl = track.artworkUrl,
-            spectrum = spectrum,
-            isPlaying = isPlaying,
-            isDark = isDark,
-            modifier = Modifier.fillMaxSize(),
-        )
-
-        FullPlayerLayout(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding(),
-            toolbar = {
-                FullPlayerToolbar(
-                    albumName = track.album,
-                    onCollapse = onCollapse,
-                    onMoreClick = onMoreClick,
-                    isDark = isDark,
-                )
-            },
-            cover = {
-                FullPlayerCoverCard(
-                    track = track,
-                    onPreviousClick = onPreviousClick,
-                    onNextClick = onNextClick,
-                )
-            },
-            controls = {
-                FullPlayerControls(
-                    track = track,
-                    isPlaying = isPlaying,
-                    isBuffering = isBuffering,
-                    progress = progress,
-                    currentPositionMs = currentPositionMs,
-                    durationMs = durationMs,
-                    isShuffle = isShuffle,
-                    repeatMode = repeatMode,
-                    onPlayPauseClick = onPlayPauseClick,
-                    onPreviousClick = onPreviousClick,
-                    onNextClick = onNextClick,
-                    onSeek = onSeek,
-                    onToggleShuffle = onToggleShuffle,
-                    onCycleRepeatMode = onCycleRepeatMode,
-                    onOpenQueue = onOpenQueue,
-                    isDark = isDark,
-                )
-            },
+                .liquidGlassBackdropProducer(playerBackdropState, playerBackdropLayer),
+        ) {
+            DancingGlowBackground(
+                artworkUrl = track.artworkUrl,
+                spectrum = spectrum,
+                isPlaying = isPlaying,
+                isDark = isDark,
+                modifier = Modifier.fillMaxSize(),
+            )
+
+            FullPlayerLayout(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding(),
+                toolbar = {
+                    FullPlayerToolbar(
+                        albumName = track.album,
+                        onCollapse = onCollapse,
+                        onMoreClick = onMoreClick,
+                        isDark = isDark,
+                    )
+                },
+                cover = {
+                    FullPlayerCoverCard(
+                        track = track,
+                        onPreviousClick = onPreviousClick,
+                        onNextClick = onNextClick,
+                    )
+                },
+                controls = {
+                    FullPlayerControls(
+                        track = track,
+                        isPlaying = isPlaying,
+                        isBuffering = isBuffering,
+                        progress = progress,
+                        currentPositionMs = currentPositionMs,
+                        durationMs = durationMs,
+                        audioQuality = audioQuality,
+                        isShuffle = isShuffle,
+                        repeatMode = repeatMode,
+                        onPlayPauseClick = onPlayPauseClick,
+                        onPreviousClick = onPreviousClick,
+                        onNextClick = onNextClick,
+                        onSeek = onSeek,
+                        onToggleShuffle = onToggleShuffle,
+                        onCycleRepeatMode = onCycleRepeatMode,
+                        onOpenQueue = onOpenQueue,
+                        onAudioQualityClick = { showAudioInfo = true },
+                        onAudioQualityPositioned = { coords -> audioBadgeBounds = coords },
+                        isDark = isDark,
+                    )
+                },
+            )
+        }
+
+        AudioInfoDialog(
+            isOpen = showAudioInfo,
+            onDismiss = { showAudioInfo = false },
+            pipeline = audioQuality?.pipelineDetails,
+            track = track,
+            durationMs = durationMs,
+            originBounds = audioBadgeBounds,
+            backdropState = playerBackdropState,
+            isDark = isDark,
         )
     }
 }
@@ -558,6 +589,7 @@ private fun FullPlayerControls(
     progress: Float,
     currentPositionMs: Long,
     durationMs: Long,
+    audioQuality: AudioQualityInfo? = null,
     isShuffle: Boolean,
     repeatMode: RepeatMode,
     onPlayPauseClick: () -> Unit,
@@ -567,6 +599,8 @@ private fun FullPlayerControls(
     onToggleShuffle: () -> Unit,
     onCycleRepeatMode: () -> Unit,
     onOpenQueue: () -> Unit,
+    onAudioQualityClick: () -> Unit = {},
+    onAudioQualityPositioned: ((Rect) -> Unit)? = null,
     isDark: Boolean = isSystemInDarkTheme(),
 ) {
     Column(
@@ -589,35 +623,19 @@ private fun FullPlayerControls(
                 overflow = TextOverflow.Clip,
                 modifier = Modifier.basicMarquee(),
             )
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.padding(top = 4.dp),
-            ) {
-                Text(
-                    text = track.artist,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (isDark) Color.White.copy(alpha = 0.75f) else Color(0xFF43474E),
-                    maxLines = 1,
-                    overflow = TextOverflow.Clip,
-                    modifier = Modifier
-                        .weight(1f, fill = false)
-                        .basicMarquee(),
-                )
-                ProviderIcon(
-                    provider = track.source,
-                    height = 11.dp,
-                    tint = if (isDark) Color.White.copy(alpha = 0.8f) else Color(0xFF43474E),
-                )
-                CodecIcon(
-                    codec = track.codec,
-                    height = 11.dp,
-                    tint = if (isDark) Color.White.copy(alpha = 0.8f) else Color(0xFF43474E),
-                )
-            }
+            Text(
+                text = track.artist,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (isDark) Color.White.copy(alpha = 0.75f) else Color(0xFF43474E),
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
+                modifier = Modifier
+                    .padding(top = 4.dp)
+                    .basicMarquee(),
+            )
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         var isSeeking by remember { mutableStateOf(false) }
         var seekPosition by remember { mutableFloatStateOf(0f) }
@@ -654,6 +672,8 @@ private fun FullPlayerControls(
                 .height(36.dp),
         )
 
+        Spacer(modifier = Modifier.height(6.dp))
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -672,34 +692,18 @@ private fun FullPlayerControls(
                 color = if (isDark) Color.White.copy(alpha = 0.6f) else Color.Black.copy(alpha = 0.6f),
             )
 
-            val qualityBadgeText = when {
-                track.codec?.lowercase()?.contains("lossless") == true ||
-                        track.codec?.lowercase() == "alac" ||
-                        track.codec?.lowercase() == "flac" -> "LOSSLESS"
-
-                track.codec?.lowercase()?.contains("dolby") == true ||
-                        track.codec?.lowercase()?.contains("atmos") == true ||
-                        track.codec?.lowercase() == "ec-3" -> "DOLBY ATMOS"
-
-                !track.codec.isNullOrBlank() -> track.codec.uppercase()
-                else -> "HI-RES"
-            }
-            Surface(
-                color = if (isDark) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.06f),
-                shape = RoundedCornerShape(4.dp),
-                border = BorderStroke(
-                    0.5.dp,
-                    if (isDark) Color.White.copy(alpha = 0.2f) else Color.Black.copy(alpha = 0.12f)
-                ),
-            ) {
-                Text(
-                    text = qualityBadgeText,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = if (isDark) Color.White.copy(alpha = 0.85f) else Color.Black.copy(alpha = 0.85f),
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                )
-            }
+            AudioQualityBadge(
+                quality = audioQuality,
+                fallbackCodec = track.codec,
+                track = track,
+                isDark = isDark,
+                modifier = if (onAudioQualityPositioned != null) {
+                    Modifier.onGloballyPositioned { coords ->
+                        onAudioQualityPositioned(coords.boundsInRoot())
+                    }
+                } else Modifier,
+                onClick = onAudioQualityClick,
+            )
 
             Text(
                 text = formatMs(durationMs),

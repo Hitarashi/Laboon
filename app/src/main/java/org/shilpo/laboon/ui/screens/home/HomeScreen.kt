@@ -502,6 +502,7 @@ fun HomeScreen(
                     playbackProgress = activeProgress,
                     currentPositionMs = currentPositionMs,
                     durationMs = currentDurationMs,
+                    audioQuality = playbackState.audioQuality,
                     isShuffle = queueState.isShuffle,
                     repeatMode = queueState.repeatMode,
                     spectrum = spectrumState,

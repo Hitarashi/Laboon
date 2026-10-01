@@ -2,11 +2,14 @@ package org.shilpo.laboon.playback
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.net.Uri
 import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -20,12 +23,18 @@ import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.CacheWriter
+import androidx.media3.datasource.cache.ContentMetadata
+import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.audio.ForwardingAudioSink
 import androidx.media3.exoplayer.audio.TeeAudioProcessor
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.LoadEventInfo
+import androidx.media3.exoplayer.source.MediaLoadData
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.session.MediaSession
 import kotlinx.coroutines.CoroutineScope
@@ -45,6 +54,7 @@ import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.home.TrackIdentity
 import org.shilpo.laboon.search.SearchRepository
 import org.shilpo.laboon.search.SearchRepositoryImpl
+import kotlin.math.roundToInt
 
 interface PlaybackManager {
     val state: StateFlow<PlaybackState>
@@ -128,6 +138,22 @@ class PlaybackManagerImpl(
     private var retryJob: Job? = null
     private var retryCount: Int = 0
 
+    @Volatile
+    private var currentDecoderName: String? = null
+
+    @Volatile
+    private var currentAudioFormat: Format? = null
+
+    @Volatile
+    private var sinkInputFormat: Format? = null
+
+    @Volatile
+    private var sinkAudioTrackConfig: AudioSink.AudioTrackConfig? = null
+
+    @Volatile
+    private var currentStreamContentLength: Long = 0L
+    private val songCache by lazy { SongCache.getInstance(context) }
+
     init {
         initPlayer()
         scope.launch {
@@ -173,11 +199,33 @@ class PlaybackManagerImpl(
                 enableAudioOutputPlaybackParams: Boolean
             ): AudioSink {
                 val teeProcessor = TeeAudioProcessor(spectrumVisualizer.sink)
-                return DefaultAudioSink.Builder(context)
+                val defaultSink = DefaultAudioSink.Builder(context)
                     .setEnableFloatOutput(true)
                     .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
                     .setAudioProcessors(arrayOf(teeProcessor))
                     .build()
+
+                return object : ForwardingAudioSink(defaultSink) {
+                    override fun configure(audioSinkConfig: AudioSink.AudioSinkConfig) {
+                        sinkInputFormat = audioSinkConfig.format
+                        scope.launch {
+                            player?.let { updateAudioQuality(it) }
+                        }
+                        super.configure(audioSinkConfig)
+                    }
+
+                    override fun setListener(listener: AudioSink.Listener) {
+                        super.setListener(object : AudioSink.Listener by listener {
+                            override fun onAudioTrackInitialized(audioTrackConfig: AudioSink.AudioTrackConfig) {
+                                listener.onAudioTrackInitialized(audioTrackConfig)
+                                sinkAudioTrackConfig = audioTrackConfig
+                                scope.launch {
+                                    player?.let { updateAudioQuality(it) }
+                                }
+                            }
+                        })
+                    }
+                }
             }
         }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
 
@@ -197,7 +245,7 @@ class PlaybackManagerImpl(
             .setReadTimeoutMs(20_000)
             .setAllowCrossProtocolRedirects(true)
 
-        val songCache = SongCache.getInstance(context)
+        val songCache = this.songCache
         val factory = CacheDataSource.Factory()
             .setCache(songCache)
             .setUpstreamDataSourceFactory(upstreamHttpFactory)
@@ -214,6 +262,48 @@ class PlaybackManagerImpl(
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(ExponentialLoadControl())
             .build()
+
+        exo.addAnalyticsListener(object : AnalyticsListener {
+            override fun onAudioDecoderInitialized(
+                eventTime: AnalyticsListener.EventTime,
+                decoderName: String,
+                initializedTimestampMs: Long,
+                initializationDurationMs: Long
+            ) {
+                if (exo.currentMediaItem?.mediaId == _state.value.currentTrack?.id) {
+                    currentDecoderName = decoderName
+                    updateAudioQuality(exo)
+                }
+            }
+
+            override fun onLoadCompleted(
+                eventTime: AnalyticsListener.EventTime,
+                loadEventInfo: LoadEventInfo,
+                mediaLoadData: MediaLoadData
+            ) {
+                if (exo.currentMediaItem?.mediaId == _state.value.currentTrack?.id) {
+                    val lengthHeader =
+                        loadEventInfo.responseHeaders["Content-Length"]?.firstOrNull()
+                            ?.toLongOrNull()
+                            ?: loadEventInfo.bytesLoaded.takeIf { it > 0 }
+                    if (lengthHeader != null && lengthHeader > 0 && lengthHeader > currentStreamContentLength) {
+                        currentStreamContentLength = lengthHeader
+                        updateAudioQuality(exo)
+                    }
+                }
+            }
+
+            override fun onAudioInputFormatChanged(
+                eventTime: AnalyticsListener.EventTime,
+                format: Format,
+                decoderReuseEvaluation: DecoderReuseEvaluation?
+            ) {
+                if (exo.currentMediaItem?.mediaId == _state.value.currentTrack?.id) {
+                    currentAudioFormat = format
+                    updateAudioQuality(exo)
+                }
+            }
+        })
 
         exo.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -234,6 +324,7 @@ class PlaybackManagerImpl(
                             currentPositionMs = pos,
                             progress = prog,
                         )
+                        updateAudioQuality(exo)
                     }
 
                     Player.STATE_ENDED -> {
@@ -292,25 +383,18 @@ class PlaybackManagerImpl(
             }
 
             override fun onTracksChanged(tracks: Tracks) {
-                val format = exo.audioFormat
-                val mimeType = format?.sampleMimeType
-                if (mimeType != null) {
-                    val resolvedCodec = when {
-                        mimeType == MimeTypes.AUDIO_E_AC3_JOC ||
-                                mimeType == MimeTypes.AUDIO_E_AC3 ||
-                                mimeType.contains("dolby") ||
-                                mimeType.contains("eac3") ||
-                                (format.channelCount > 2) -> "ec-3"
-
-                        mimeType.contains("flac") -> "flac"
-                        mimeType.contains("alac") -> "alac"
-                        else -> null
+                if (exo.currentMediaItem?.mediaId == _state.value.currentTrack?.id) {
+                    for (group in tracks.groups) {
+                        if (group.type == C.TRACK_TYPE_AUDIO) {
+                            for (i in 0 until group.length) {
+                                if (group.isTrackSelected(i)) {
+                                    currentAudioFormat = group.getTrackFormat(i)
+                                    break
+                                }
+                            }
+                        }
                     }
-                    if (resolvedCodec != null && _state.value.currentTrack?.codec != resolvedCodec) {
-                        _state.value = _state.value.copy(
-                            currentTrack = _state.value.currentTrack?.copy(codec = resolvedCodec)
-                        )
-                    }
+                    updateAudioQuality(exo)
                 }
             }
 
@@ -339,7 +423,7 @@ class PlaybackManagerImpl(
                         if (resolution != null) {
                             val updatedTrack = track.copy(
                                 streamUrl = resolution.streamUrl,
-                                codec = resolution.codec ?: track.codec ?: "alac",
+                                codec = resolution.codec ?: track.codec,
                             )
                             _state.value = _state.value.copy(currentTrack = updatedTrack)
                             val currentPos = _state.value.currentPositionMs
@@ -440,11 +524,22 @@ class PlaybackManagerImpl(
     }
 
 
+    private fun resetPipelineForTrack() {
+        currentAudioFormat = null
+        sinkInputFormat = null
+        sinkAudioTrackConfig = null
+        currentDecoderName = null
+        currentStreamContentLength = 0L
+    }
+
     private fun followPlayerTransition(exo: ExoPlayer) {
         val nextTrack = queueManager.advanceToNext()
         if (nextTrack == null) return
+        resetPipelineForTrack()
+        val initialQuality = resolveQualityFromMetadata(nextTrack)
         _state.value = _state.value.copy(
             currentTrack = nextTrack,
+            audioQuality = initialQuality,
             currentPositionMs = 0L,
             progress = 0f,
         )
@@ -494,6 +589,8 @@ class PlaybackManagerImpl(
                 exo.pause()
             }
         }
+        resetPipelineForTrack()
+        val initialQuality = resolveQualityFromMetadata(track)
         val dur = _state.value.durationMs.takeIf { it > 0L }
             ?: playbackPersistence.getLastDuration().coerceAtLeast(0L)
         val initialProg = if (startPositionMs > 0 && dur > 0) {
@@ -503,6 +600,7 @@ class PlaybackManagerImpl(
         }
         _state.value = _state.value.copy(
             currentTrack = track,
+            audioQuality = initialQuality,
             isBuffering = true,
             isPlaying = false,
             currentPositionMs = startPositionMs,
@@ -521,9 +619,8 @@ class PlaybackManagerImpl(
 
         val knownStream = track.streamUrl
         if (!knownStream.isNullOrBlank()) {
-            val trackWithCodec = if (track.codec == null) track.copy(codec = "alac") else track
-            _state.value = _state.value.copy(currentTrack = trackWithCodec)
-            startPlayback(trackWithCodec, knownStream, startPositionMs)
+            _state.value = _state.value.copy(currentTrack = track)
+            startPlayback(track, knownStream, startPositionMs)
             schedulePreloadNext()
         } else {
             resolveJob = scope.launch {
@@ -531,7 +628,7 @@ class PlaybackManagerImpl(
                 if (resolution != null) {
                     val updatedTrack = track.copy(
                         streamUrl = resolution.streamUrl,
-                        codec = resolution.codec ?: track.codec ?: "alac",
+                        codec = resolution.codec ?: track.codec,
                     )
                     _state.value = _state.value.copy(currentTrack = updatedTrack)
                     startPlayback(updatedTrack, resolution.streamUrl, startPositionMs)
@@ -671,11 +768,431 @@ class PlaybackManagerImpl(
             .build()
     }
 
+    private fun resolveQualityFromMetadata(track: HomeTrack?): AudioQualityInfo? {
+        val codec = track?.codec?.trim()?.lowercase() ?: return null
+        val isLossless = codec.contains("hires") || codec == "hi-res" || codec.contains("24-") ||
+                codec == "lossless" || codec == "alac" || codec == "flac"
+        val isDolby =
+            codec.contains("dolby") || codec.contains("atmos") || codec == "ec-3" || codec == "ec3"
+        val resolved = when {
+            isLossless -> if (codec.contains("alac")) "alac" else "flac"
+            isDolby -> "ec-3"
+            codec.contains("aac") || codec.contains("mp4a") -> "aac"
+            codec.contains("opus") -> "opus"
+            codec.contains("mp3") || codec.contains("mpeg") -> "mp3"
+            else -> codec
+        }
+        val (deviceName, deviceType, deviceProtocol) = resolveOutputDevice(context)
+        val initialPipeline = AudioPipelineDetails(
+            trackId = track.id,
+            isLocked = false,
+            trackCodec = resolved.uppercase(),
+            container = resolved.uppercase(),
+            bitDepth = null,
+            sampleRateHz = null,
+            bitrateKbps = null,
+            channelCount = 2,
+            decoderName = null,
+            decodedFormat = null,
+            inputSampleRateHz = null,
+            outputSampleRateHz = 48000,
+            isResampled = false,
+            processingMode = "DefaultAudioSink",
+            outputEngine = "AudioTrack (Android AudioFlinger)",
+            bufferSizeFrames = 3072,
+            latencyMs = 64,
+            deviceName = deviceName,
+            deviceType = deviceType,
+            deviceProtocol = deviceProtocol,
+        )
+        return when {
+            isLossless -> AudioQualityInfo(
+                trackId = track.id,
+                isLocked = false,
+                codec = "LOSSLESS",
+                isLossless = true,
+                isHiRes = false,
+                sampleRate = null,
+                pipelineDetails = initialPipeline,
+            )
+
+            isDolby -> AudioQualityInfo(
+                trackId = track.id,
+                isLocked = false,
+                codec = "DOLBY ATMOS",
+                isLossless = false,
+                isDolby = true,
+                sampleRate = null,
+                pipelineDetails = initialPipeline,
+            )
+
+            else -> AudioQualityInfo(
+                trackId = track.id,
+                isLocked = false,
+                codec = resolved.uppercase(),
+                sampleRate = null,
+                pipelineDetails = initialPipeline,
+            )
+        }
+    }
+
+    private fun updateAudioQuality(exo: ExoPlayer) {
+        val currentTrack = _state.value.currentTrack ?: return
+        val currentMediaItem = exo.currentMediaItem
+        if (currentMediaItem != null && currentMediaItem.mediaId != currentTrack.id) {
+            return
+        }
+
+        val format = currentAudioFormat
+        val trackCodecLower = currentTrack.codec?.lowercase()
+        val mimeType = format?.sampleMimeType?.lowercase()
+        val codecs = format?.codecs?.lowercase()
+        val effectiveFormat = sinkInputFormat ?: format
+        val sampleRate = sinkInputFormat?.sampleRate?.takeIf { it > 0 }
+            ?: effectiveFormat?.sampleRate?.takeIf { it > 0 }
+        val pcmEncoding = sinkInputFormat?.pcmEncoding ?: effectiveFormat?.pcmEncoding
+        val isSampleRateHiRes = sampleRate != null && sampleRate > 48000
+        val isBitDepthHiRes = pcmEncoding == C.ENCODING_PCM_24BIT ||
+                pcmEncoding == C.ENCODING_PCM_32BIT ||
+                pcmEncoding == C.ENCODING_PCM_FLOAT
+
+        val isExplicitDolbyMime = mimeType == MimeTypes.AUDIO_E_AC3_JOC ||
+                mimeType == MimeTypes.AUDIO_E_AC3 ||
+                mimeType == MimeTypes.AUDIO_AC3 ||
+                mimeType?.contains("dolby") == true ||
+                mimeType?.contains("eac3") == true ||
+                codecs?.contains("ec-3") == true ||
+                codecs?.contains("ec3") == true
+
+        val isExplicitLosslessMime = mimeType == MimeTypes.AUDIO_FLAC ||
+                mimeType == MimeTypes.AUDIO_ALAC ||
+                mimeType == MimeTypes.AUDIO_WAV ||
+                codecs?.contains("flac") == true ||
+                codecs?.contains("alac") == true
+
+        val isDolby = when {
+            isExplicitLosslessMime -> false
+            isExplicitDolbyMime -> true
+            else -> trackCodecLower?.let { it.contains("dolby") || it.contains("atmos") || it == "ec-3" || it == "ec3" } == true
+        }
+
+        val isLossless = !isDolby && (
+                isExplicitLosslessMime ||
+                        mimeType == MimeTypes.AUDIO_RAW ||
+                        trackCodecLower?.let {
+                            it == "alac" || it == "flac" || it.contains("lossless") ||
+                                    it.contains("hires") || it == "hi-res" || it.contains("24-")
+                        } == true
+                )
+
+        val isHiRes = isLossless && (isSampleRateHiRes || isBitDepthHiRes)
+
+        val resolvedCodec: String = when {
+            isDolby -> "ec-3"
+            isLossless -> when {
+                mimeType?.contains("alac") == true || codecs?.contains("alac") == true || trackCodecLower?.contains(
+                    "alac"
+                ) == true -> "alac"
+
+                mimeType?.contains("wav") == true -> "wav"
+                else -> "flac"
+            }
+
+            else -> when {
+                mimeType == MimeTypes.AUDIO_AAC || mimeType?.contains("mp4a") == true || codecs?.contains(
+                    "mp4a"
+                ) == true || trackCodecLower?.contains("aac") == true -> "aac"
+
+                mimeType == MimeTypes.AUDIO_OPUS || mimeType?.contains("opus") == true || codecs?.contains(
+                    "opus"
+                ) == true || trackCodecLower?.contains("opus") == true -> "opus"
+
+                mimeType == MimeTypes.AUDIO_MPEG || mimeType?.contains("mpeg") == true || mimeType?.contains(
+                    "mp3"
+                ) == true || trackCodecLower?.contains("mp3") == true -> "mp3"
+
+                else -> "mp3"
+            }
+        }
+
+        val isLocked = sinkInputFormat != null || format != null
+
+        val pipeline = resolvePipelineDetails(
+            exo = exo,
+            format = format,
+            currentTrack = currentTrack,
+            resolvedCodec = resolvedCodec,
+            isLossless = isLossless,
+            isHiRes = isHiRes,
+            isDolby = isDolby,
+            sampleRate = sampleRate,
+            isLocked = isLocked,
+        )
+
+        val qualityInfo: AudioQualityInfo = when {
+            isHiRes -> {
+                AudioQualityInfo(
+                    trackId = currentTrack.id,
+                    isLocked = isLocked,
+                    codec = "HI-RES",
+                    isLossless = true,
+                    isHiRes = true,
+                    isDolby = false,
+                    sampleRate = sampleRate,
+                    bitDepth = if (pipeline.bitDepth?.contains("24") == true) 24 else if (pipeline.bitDepth?.contains(
+                            "32"
+                        ) == true
+                    ) 32 else 16,
+                    pipelineDetails = pipeline,
+                )
+            }
+
+            isLossless -> {
+                AudioQualityInfo(
+                    trackId = currentTrack.id,
+                    isLocked = isLocked,
+                    codec = "LOSSLESS",
+                    isLossless = true,
+                    isHiRes = false,
+                    isDolby = false,
+                    sampleRate = sampleRate,
+                    bitDepth = if (pipeline.bitDepth?.contains("24") == true) 24 else 16,
+                    pipelineDetails = pipeline,
+                )
+            }
+
+            isDolby -> {
+                AudioQualityInfo(
+                    trackId = currentTrack.id,
+                    isLocked = isLocked,
+                    codec = "DOLBY ATMOS",
+                    isLossless = false,
+                    isHiRes = false,
+                    isDolby = true,
+                    sampleRate = sampleRate,
+                    bitDepth = 24,
+                    pipelineDetails = pipeline,
+                )
+            }
+
+            else -> {
+                AudioQualityInfo(
+                    trackId = currentTrack.id,
+                    isLocked = isLocked,
+                    codec = resolvedCodec.uppercase(),
+                    isLossless = false,
+                    isHiRes = false,
+                    isDolby = false,
+                    sampleRate = sampleRate,
+                    bitDepth = null,
+                    pipelineDetails = pipeline,
+                )
+            }
+        }
+
+        if (_state.value.audioQuality != qualityInfo) {
+            _state.value = _state.value.copy(
+                audioQuality = qualityInfo,
+            )
+        }
+    }
+
+    private fun resolveOutputDevice(context: Context): Triple<String, OutputDeviceType, String> {
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            ?: return Triple(
+                "Built-in Speaker",
+                OutputDeviceType.PHONE_SPEAKER,
+                "Phone Loudspeaker"
+            )
+
+        val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+        for (d in devices) {
+            val name = d.productName?.toString().orEmpty()
+            val lower = name.lowercase()
+            when (d.type) {
+                AudioDeviceInfo.TYPE_USB_DEVICE, AudioDeviceInfo.TYPE_USB_HEADSET -> {
+                    val devType =
+                        if (lower.contains("dac") || lower.contains("amp") || lower.contains("fiio") || lower.contains(
+                                "dongle"
+                            ) || lower.contains("audio") || lower.contains("quest")
+                        ) {
+                            OutputDeviceType.USB_DAC
+                        } else {
+                            OutputDeviceType.EARBUDS
+                        }
+                    val label =
+                        name.ifBlank { if (devType == OutputDeviceType.USB_DAC) "USB Hi-Res DAC" else "USB Audio Device" }
+                    return Triple(label, devType, "USB Audio")
+                }
+
+                AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_BLE_SPEAKER -> {
+                    val devType = when {
+                        lower.contains("car") || lower.contains("sync") || lower.contains("uconnect") || lower.contains(
+                            "bt_car"
+                        ) -> OutputDeviceType.CAR_AUDIO
+
+                        d.type == AudioDeviceInfo.TYPE_BLE_SPEAKER || lower.contains("speaker") || lower.contains(
+                            "soundlink"
+                        ) || lower.contains("flip") || lower.contains("charge") || lower.contains("boom") || lower.contains(
+                            "echo"
+                        ) -> OutputDeviceType.BLUETOOTH_SPEAKER
+
+                        lower.contains("buds") || lower.contains("airpods") || lower.contains("earbuds") || lower.contains(
+                            "wf-"
+                        ) || lower.contains("tws") || lower.contains("freebuds") -> OutputDeviceType.EARBUDS
+
+                        else -> OutputDeviceType.OVER_EAR
+                    }
+                    val label = name.ifBlank { "Bluetooth Audio" }
+                    val protocol =
+                        if (d.type == AudioDeviceInfo.TYPE_BLE_HEADSET || d.type == AudioDeviceInfo.TYPE_BLE_SPEAKER) "BLE Audio" else "Bluetooth A2DP"
+                    return Triple(label, devType, protocol)
+                }
+
+                AudioDeviceInfo.TYPE_WIRED_HEADPHONES -> {
+                    val label = name.ifBlank { "Wired Headphones" }
+                    return Triple(label, OutputDeviceType.OVER_EAR, "3.5mm Headphone Jack")
+                }
+
+                AudioDeviceInfo.TYPE_WIRED_HEADSET -> {
+                    val label = name.ifBlank { "Wired Earphones" }
+                    return Triple(label, OutputDeviceType.EARBUDS, "3.5mm Headset Jack")
+                }
+
+                AudioDeviceInfo.TYPE_HDMI, AudioDeviceInfo.TYPE_HDMI_ARC, AudioDeviceInfo.TYPE_HDMI_EARC -> {
+                    val label = name.ifBlank { "HDMI Display" }
+                    return Triple(label, OutputDeviceType.MONITOR_HDMI, "HDMI / eARC")
+                }
+            }
+        }
+        return Triple("Built-in Speaker", OutputDeviceType.PHONE_SPEAKER, "Phone Loudspeaker")
+    }
+
+    private fun resolvePipelineDetails(
+        exo: ExoPlayer,
+        format: Format?,
+        currentTrack: HomeTrack?,
+        resolvedCodec: String?,
+        isLossless: Boolean,
+        isHiRes: Boolean,
+        isDolby: Boolean,
+        sampleRate: Int?,
+        isLocked: Boolean = true,
+    ): AudioPipelineDetails {
+        val (deviceName, deviceType, deviceProtocol) = resolveOutputDevice(context)
+
+        val effectiveEncoding = sinkInputFormat?.pcmEncoding ?: format?.pcmEncoding
+        val bitDepthStr = when (effectiveEncoding) {
+            C.ENCODING_PCM_24BIT -> "24-bit"
+            C.ENCODING_PCM_32BIT -> "32-bit"
+            C.ENCODING_PCM_FLOAT -> if (isDolby || isHiRes) "24-bit" else "24-bit"
+            C.ENCODING_PCM_16BIT -> "16-bit"
+            else -> if (isHiRes || isDolby) "24-bit" else if (isLossless) "16-bit" else null
+        }
+
+        val containerStr = format?.containerMimeType?.substringAfter('/')?.uppercase()
+            ?: when {
+                resolvedCodec == "alac" || format?.sampleMimeType?.contains("mp4") == true -> "M4A / MP4"
+                resolvedCodec == "flac" || format?.sampleMimeType?.contains("flac") == true -> "FLAC"
+                resolvedCodec == "opus" || format?.sampleMimeType?.contains("opus") == true -> "OGG / OPUS"
+                resolvedCodec == "aac" -> "AAC"
+                resolvedCodec == "mp3" -> "MP3"
+                else -> null
+            }
+
+        val contentLength = try {
+            val key = currentTrack?.streamUrl
+            if (!key.isNullOrBlank()) {
+                val meta = songCache.getContentMetadata(key)
+                val len = ContentMetadata.getContentLength(meta)
+                if (len > 0L) len else currentStreamContentLength
+            } else currentStreamContentLength
+        } catch (_: Exception) {
+            currentStreamContentLength
+        }
+
+        val durMs =
+            exo.duration.takeIf { it > 0L } ?: _state.value.durationMs.takeIf { it > 0L } ?: 0L
+        val durSec = durMs / 1000.0
+
+        val channels = sinkInputFormat?.channelCount ?: format?.channelCount ?: 2
+        val inputSr = sinkInputFormat?.sampleRate?.takeIf { it > 0 } ?: sampleRate ?: 44100
+        val outputSr = sinkAudioTrackConfig?.sampleRate ?: 48000
+        val isResampled = inputSr != outputSr
+
+        val bitrateKbps = when {
+            format != null && format.bitrate > 0 -> format.bitrate / 1000
+            contentLength > 0L && durSec > 0.0 -> {
+                ((contentLength * 8.0) / durSec / 1000.0).roundToInt()
+            }
+
+            isLossless -> {
+                val bd = if (bitDepthStr?.contains("24") == true) 24 else 16
+                ((inputSr * bd * channels * 0.62) / 1000).toInt()
+            }
+
+            else -> 320
+        }
+
+        val decodedFmt = when {
+            effectiveEncoding == C.ENCODING_PCM_FLOAT -> "Float32 PCM"
+            bitDepthStr != null -> "PCM $bitDepthStr Signed LE"
+            isLossless -> "PCM 16-bit Signed LE"
+            else -> "PCM 16-bit"
+        }
+
+        val outputModeStr = when (sinkAudioTrackConfig?.encoding) {
+            C.ENCODING_PCM_FLOAT -> "Float32 Output"
+            C.ENCODING_PCM_16BIT -> "16-bit PCM Output"
+            C.ENCODING_PCM_24BIT -> "24-bit PCM Output"
+            else -> "Float32 Output"
+        }
+
+        val bytesPerSample = when (sinkAudioTrackConfig?.encoding) {
+            C.ENCODING_PCM_FLOAT -> 4
+            C.ENCODING_PCM_16BIT -> 2
+            C.ENCODING_PCM_24BIT -> 3
+            else -> 4
+        }
+        val frameBytes = bytesPerSample * channels
+        val bufferBytes = sinkAudioTrackConfig?.bufferSize ?: (3072 * 4)
+        val bufferFrames = if (frameBytes > 0) bufferBytes / frameBytes else 3072
+        val latencyMs = (bufferFrames.toDouble() / outputSr * 1000.0).roundToInt()
+
+        return AudioPipelineDetails(
+            trackId = currentTrack?.id,
+            isLocked = isLocked,
+            trackCodec = resolvedCodec?.uppercase() ?: if (isLossless) "FLAC" else "AUDIO",
+            container = containerStr ?: if (isLossless) "FLAC" else "AUDIO",
+            bitDepth = bitDepthStr ?: if (isLossless) "16-bit" else null,
+            sampleRateHz = inputSr,
+            bitrateKbps = bitrateKbps,
+            channelCount = channels,
+            decoderName = currentDecoderName
+                ?: if (isLossless) "MediaCodec FLAC Decoder" else "Android MediaCodec",
+            decodedFormat = decodedFmt,
+            inputSampleRateHz = inputSr,
+            outputSampleRateHz = outputSr,
+            isResampled = isResampled,
+            processingMode = "DefaultAudioSink • $outputModeStr",
+            outputEngine = "AudioTrack (Android AudioFlinger)",
+            bufferSizeFrames = bufferFrames,
+            latencyMs = latencyMs,
+            deviceName = deviceName,
+            deviceType = deviceType,
+            deviceProtocol = deviceProtocol,
+        )
+    }
+
     private fun startPlayback(track: HomeTrack, streamUrl: String, startPositionMs: Long = 0L) {
         val exo = player ?: return
         fadeJob?.cancel()
         pendingFadeIn = true
         exo.volume = 0f
+
+        resetPipelineForTrack()
+        val initialQuality = resolveQualityFromMetadata(track)
+        _state.value = _state.value.copy(currentTrack = track, audioQuality = initialQuality)
 
         val mediaItem = buildMediaItem(track, streamUrl)
         exo.clearMediaItems()

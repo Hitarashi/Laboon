@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -45,7 +46,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProgressIndicatorDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
@@ -63,6 +63,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
@@ -75,10 +76,13 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asComposePath
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -101,9 +105,10 @@ import kotlinx.coroutines.launch
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.playback.ArtworkUrlHelper
+import org.shilpo.laboon.playback.AudioQualityInfo
 import org.shilpo.laboon.playback.RepeatMode
 import org.shilpo.laboon.playback.SpectrumFrame
-import org.shilpo.laboon.ui.design.CodecIcon
+import org.shilpo.laboon.ui.design.AudioQualityBadge
 import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
 import org.shilpo.laboon.ui.design.LiquidGlassSurface
 import org.shilpo.laboon.ui.design.MiniPlayerHeight
@@ -111,7 +116,8 @@ import org.shilpo.laboon.ui.design.MiniPlayerSpacing
 import org.shilpo.laboon.ui.design.NavigationBarBottomPadding
 import org.shilpo.laboon.ui.design.NavigationBarHeight
 import org.shilpo.laboon.ui.design.NavigationBarMaxWidth
-import org.shilpo.laboon.ui.design.ProviderIcon
+import org.shilpo.laboon.ui.design.liquidGlassBackdropProducer
+import org.shilpo.laboon.ui.design.rememberLiquidGlassBackdropState
 import kotlin.math.abs
 import androidx.compose.ui.graphics.lerp as lerpColor
 import androidx.compose.ui.util.lerp as lerpFloat
@@ -169,6 +175,7 @@ fun MorphingPlayerSheet(
     playbackProgress: Float = 0f,
     currentPositionMs: Long = 0L,
     durationMs: Long = 0L,
+    audioQuality: AudioQualityInfo? = null,
     isShuffle: Boolean = false,
     repeatMode: RepeatMode = RepeatMode.OFF,
     spectrum: SpectrumFrame = SpectrumFrame(),
@@ -221,6 +228,10 @@ fun MorphingPlayerSheet(
     val dismissOffsetYAnimatable = remember { Animatable(0f) }
     val dismissAlphaAnimatable = remember { Animatable(1f) }
     val miniSwipeOffsetX = remember { Animatable(0f) }
+    var showAudioInfo by remember { mutableStateOf(false) }
+    var audioBadgeBounds by remember { mutableStateOf<Rect?>(null) }
+    val playerBackdropState = rememberLiquidGlassBackdropState()
+    val playerBackdropLayer = rememberGraphicsLayer()
 
     val rotationAnimatable = remember { Animatable(0f) }
     LaunchedEffect(isPlaying) {
@@ -332,10 +343,10 @@ fun MorphingPlayerSheet(
         val fullCapsuleX = (screenWidth - fullCapsuleWidth) / 2
 
         val seekHeight = 64.dp
-        val seekY = fullCapsuleY - 16.dp - seekHeight
+        val seekY = fullCapsuleY - 24.dp - seekHeight
 
         val fullMetaHeight = 56.dp
-        val fullMetaY = seekY - 14.dp - fullMetaHeight
+        val fullMetaY = seekY - 12.dp - fullMetaHeight
 
         val availableCoverHeight = (fullMetaY - toolbarBottom - 12.dp).coerceAtLeast(160.dp)
         val fullArtSize =
@@ -375,7 +386,6 @@ fun MorphingPlayerSheet(
         val titleFontSize = lerp(14.sp, 22.sp, progress)
         val titleLineHeight = lerp(18.sp, 28.sp, progress)
         val artistFontSize = lerp(12.sp, 14.sp, progress)
-        val badgeIconHeight = lerp(9.dp, 11.dp, progress)
         val titleFontWeight = if (progress > 0.5f) FontWeight.Bold else FontWeight.SemiBold
 
         val playButtonSize = lerp(42.dp, 68.dp, progress)
@@ -641,7 +651,11 @@ fun MorphingPlayerSheet(
                 bottomRadius = sheetBottomRadius,
                 shadowElevation = lerp(6.dp, 0.dp, progress),
             ) {
-                Box(modifier = Modifier.fillMaxSize()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .liquidGlassBackdropProducer(playerBackdropState, playerBackdropLayer),
+                ) {
                     if (fullAlpha > 0.001f) {
                         Box(
                             modifier = Modifier
@@ -915,50 +929,27 @@ fun MorphingPlayerSheet(
                             overflow = TextOverflow.Clip,
                             modifier = Modifier.basicMarquee(iterations = if (isPlaying) Int.MAX_VALUE else 0),
                         )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            modifier = Modifier.padding(
-                                top = lerp(
-                                    0.dp,
-                                    4.dp,
-                                    progress
-                                ).coerceAtLeast(0.dp)
-                            ),
-                        ) {
-                            val artistColor = lerpColor(
-                                if (isDark) Color.White.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant,
-                                if (isDark) Color.White.copy(alpha = 0.75f) else Color(0xFF43474E),
-                                progress,
-                            )
-                            Text(
-                                text = track.artist,
-                                fontSize = artistFontSize,
-                                color = artistColor,
-                                maxLines = 1,
-                                overflow = TextOverflow.Clip,
-                                modifier = Modifier
-                                    .weight(1f, fill = false)
-                                    .basicMarquee(iterations = if (isPlaying) Int.MAX_VALUE else 0),
-                            )
-                            val badgeTint = lerpColor(
-                                if (isDark) Color.White.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                                    alpha = 0.8f
-                                ),
-                                if (isDark) Color.White.copy(alpha = 0.8f) else Color(0xFF43474E),
-                                progress,
-                            )
-                            ProviderIcon(
-                                provider = track.source,
-                                height = badgeIconHeight,
-                                tint = badgeTint,
-                            )
-                            CodecIcon(
-                                codec = track.codec,
-                                height = badgeIconHeight,
-                                tint = badgeTint,
-                            )
-                        }
+                        val artistColor = lerpColor(
+                            if (isDark) Color.White.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            if (isDark) Color.White.copy(alpha = 0.75f) else Color(0xFF43474E),
+                            progress,
+                        )
+                        Text(
+                            text = track.artist,
+                            fontSize = artistFontSize,
+                            color = artistColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Clip,
+                            modifier = Modifier
+                                .padding(
+                                    top = lerp(
+                                        0.dp,
+                                        4.dp,
+                                        progress
+                                    ).coerceAtLeast(0.dp)
+                                )
+                                .basicMarquee(iterations = if (isPlaying) Int.MAX_VALUE else 0),
+                        )
                     }
 
                     if (fullControlsAlpha > 0.001f) {
@@ -1007,6 +998,7 @@ fun MorphingPlayerSheet(
                                     .fillMaxWidth()
                                     .height(36.dp),
                             )
+                            Spacer(modifier = Modifier.height(6.dp))
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1026,43 +1018,16 @@ fun MorphingPlayerSheet(
                                         alpha = 0.6f
                                     ),
                                 )
-                                val qualityBadgeText = when {
-                                    track.codec?.lowercase()?.contains("lossless") == true ||
-                                            track.codec?.lowercase() == "alac" ||
-                                            track.codec?.lowercase() == "flac" -> "LOSSLESS"
-
-                                    track.codec?.lowercase()?.contains("dolby") == true ||
-                                            track.codec?.lowercase()?.contains("atmos") == true ||
-                                            track.codec?.lowercase() == "ec-3" -> "DOLBY ATMOS"
-
-                                    !track.codec.isNullOrBlank() -> track.codec.uppercase()
-                                    else -> "HI-RES"
-                                }
-                                Surface(
-                                    color = if (isDark) Color.White.copy(alpha = 0.12f) else Color.Black.copy(
-                                        alpha = 0.06f
-                                    ),
-                                    shape = RoundedCornerShape(4.dp),
-                                    border = BorderStroke(
-                                        0.5.dp,
-                                        if (isDark) Color.White.copy(alpha = 0.2f) else Color.Black.copy(
-                                            alpha = 0.12f
-                                        )
-                                    ),
-                                ) {
-                                    Text(
-                                        text = qualityBadgeText,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = if (isDark) Color.White.copy(alpha = 0.85f) else Color.Black.copy(
-                                            alpha = 0.85f
-                                        ),
-                                        modifier = Modifier.padding(
-                                            horizontal = 6.dp,
-                                            vertical = 2.dp
-                                        ),
-                                    )
-                                }
+                                AudioQualityBadge(
+                                    quality = audioQuality,
+                                    fallbackCodec = track.codec,
+                                    track = track,
+                                    isDark = isDark,
+                                    modifier = Modifier.onGloballyPositioned { coords ->
+                                        audioBadgeBounds = coords.boundsInRoot()
+                                    },
+                                    onClick = { showAudioInfo = true },
+                                )
                                 Text(
                                     text = formatMs(durationMs),
                                     style = MaterialTheme.typography.labelSmall,
@@ -1402,6 +1367,17 @@ fun MorphingPlayerSheet(
                 }
             }
         }
+
+        AudioInfoDialog(
+            isOpen = showAudioInfo,
+            onDismiss = { showAudioInfo = false },
+            pipeline = audioQuality?.pipelineDetails,
+            track = track,
+            durationMs = durationMs,
+            originBounds = audioBadgeBounds,
+            backdropState = playerBackdropState,
+            isDark = isDark,
+        )
     }
 }
 
