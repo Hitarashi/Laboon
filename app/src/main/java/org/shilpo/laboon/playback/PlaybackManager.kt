@@ -19,6 +19,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSourceException
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
@@ -37,6 +38,7 @@ import androidx.media3.exoplayer.audio.TeeAudioProcessor
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.LoadEventInfo
 import androidx.media3.exoplayer.source.MediaLoadData
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.session.MediaSession
 import kotlinx.coroutines.CoroutineScope
@@ -159,6 +161,7 @@ class PlaybackManagerImpl(
     private var pendingFadeIn: Boolean = false
     private var retryJob: Job? = null
     private var retryCount: Int = 0
+    private var cacheBypassTrackId: String? = null
 
     @Volatile
     private var currentDecoderName: String? = null
@@ -431,10 +434,17 @@ class PlaybackManagerImpl(
             override fun onPlayerError(error: PlaybackException) {
                 fadeJob?.cancel()
                 pendingFadeIn = false
-                val isTransient = shouldRetryPlaybackError(error)
+                val failedTrackId = _state.value.currentTrack?.id
+                val cacheRecoveryAvailable =
+                    isCacheIntegrityError(error) && failedTrackId != null &&
+                            cacheBypassTrackId != failedTrackId
+                val isTransient = shouldRetryPlaybackError(error) || cacheRecoveryAvailable
                 if (isTransient && retryCount < MAX_RETRIES) {
                     retryCount++
                     val backoffMs = 1000L * retryCount
+                    if (cacheRecoveryAvailable) {
+                        cacheBypassTrackId = failedTrackId
+                    }
                     _state.value = _state.value.copy(
                         isBuffering = true,
                         isPlaying = false,
@@ -444,15 +454,28 @@ class PlaybackManagerImpl(
                     retryJob = scope.launch {
                         delay(backoffMs)
                         val track = _state.value.currentTrack ?: return@launch
+                        if (track.id != failedTrackId) return@launch
                         val resolution = searchRepository.resolvePlayback(track)
                         if (resolution != null) {
                             val updatedTrack = track.copy(
                                 streamUrl = resolution.streamUrl,
                                 codec = resolution.codec ?: track.codec,
                             )
+                            if (cacheRecoveryAvailable) {
+                                withContext(Dispatchers.IO) {
+                                    runCatching { songCache.removeResource(track.id) }
+                                }
+                            }
                             _state.value = _state.value.copy(currentTrack = updatedTrack)
-                            val currentPos = _state.value.currentPositionMs
-                            startPlayback(updatedTrack, resolution.streamUrl, currentPos)
+                            val currentPos = player?.currentPosition
+                                ?.takeIf { it > 0L }
+                                ?: _state.value.currentPositionMs
+                            startPlayback(
+                                updatedTrack,
+                                resolution.streamUrl,
+                                currentPos,
+                                bypassCache = cacheBypassTrackId == track.id,
+                            )
                         } else {
                             _state.value = _state.value.copy(
                                 isPlaying = false,
@@ -607,6 +630,7 @@ class PlaybackManagerImpl(
         fadeJob?.cancel()
         retryJob?.cancel()
         retryCount = 0
+        cacheBypassTrackId = null
         pendingFadeIn = false
         player?.let { exo ->
             if (exo.isPlaying) {
@@ -677,7 +701,7 @@ class PlaybackManagerImpl(
         preloadJob?.cancel()
         preloadJob = scope.launch {
             delay(400)
-            val exo = player ?: return@launch
+            if (player == null) return@launch
             val nextTrack = queueManager.peekNext() ?: run {
                 cancelPrecache()
                 return@launch
@@ -693,10 +717,6 @@ class PlaybackManagerImpl(
             }
 
             if (!isActive) return@launch
-            if (exo.mediaItemCount <= 1) {
-                val mediaItem = buildMediaItem(nextTrack, streamUrl)
-                exo.addMediaItem(mediaItem)
-            }
             ArtworkUrlHelper.preload(context, nextTrack.artworkUrl)
             startPrecacheNext(nextTrack, streamUrl)
         }
@@ -736,6 +756,26 @@ class PlaybackManagerImpl(
                 error.errorCode == PlaybackException.ERROR_CODE_IO_UNSPECIFIED
     }
 
+    private fun isCacheIntegrityError(error: PlaybackException): Boolean {
+        var cause: Throwable? = error
+        while (cause != null) {
+            if (cause is DataSourceException &&
+                cause.reason == PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE
+            ) {
+                return true
+            }
+            if (cause is IllegalStateException && cause.stackTrace.any {
+                    it.className == "androidx.media3.datasource.cache.SimpleCache" &&
+                            it.methodName == "commitFile"
+                }
+            ) {
+                return true
+            }
+            cause = cause.cause
+        }
+        return false
+    }
+
     private fun startPrecacheNext(track: HomeTrack, streamUrl: String) {
         cancelPrecache()
         val factory = cacheDataSourceFactory ?: return
@@ -757,6 +797,15 @@ class PlaybackManagerImpl(
                 val writer = CacheWriter(cacheDataSource, dataSpec, null, null)
                 currentCacheWriter = writer
                 writer.cache()
+                withContext(Dispatchers.Main.immediate) {
+                    if (!isActive || _state.value.currentTrack?.id != currentTrackId) {
+                        return@withContext
+                    }
+                    val exo = player ?: return@withContext
+                    if (queueManager.peekNext()?.id == track.id && exo.mediaItemCount <= 1) {
+                        exo.addMediaItem(buildMediaItem(track, streamUrl))
+                    }
+                }
             } catch (_: Exception) {
             } finally {
                 currentCacheWriter = null
@@ -1257,7 +1306,12 @@ class PlaybackManagerImpl(
         )
     }
 
-    private fun startPlayback(track: HomeTrack, streamUrl: String, startPositionMs: Long = 0L) {
+    private fun startPlayback(
+        track: HomeTrack,
+        streamUrl: String,
+        startPositionMs: Long = 0L,
+        bypassCache: Boolean = false,
+    ) {
         val exo = player ?: return
         fadeJob?.cancel()
         pendingFadeIn = true
@@ -1269,7 +1323,15 @@ class PlaybackManagerImpl(
 
         val mediaItem = buildMediaItem(track, streamUrl)
         exo.clearMediaItems()
-        if (startPositionMs > 0L) {
+        if (bypassCache) {
+            val directFactory = DefaultHttpDataSource.Factory()
+                .setConnectTimeoutMs(15_000)
+                .setReadTimeoutMs(30_000)
+                .setAllowCrossProtocolRedirects(true)
+            val source = ProgressiveMediaSource.Factory(directFactory)
+                .createMediaSource(mediaItem)
+            exo.setMediaSource(source, startPositionMs)
+        } else if (startPositionMs > 0L) {
             exo.setMediaItem(mediaItem, startPositionMs)
         } else {
             exo.setMediaItem(mediaItem)
