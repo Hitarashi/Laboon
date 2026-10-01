@@ -27,7 +27,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -55,6 +54,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -81,8 +81,6 @@ import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -106,9 +104,9 @@ import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.playback.ArtworkUrlHelper
 import org.shilpo.laboon.playback.AudioQualityInfo
+import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.playback.RepeatMode
 import org.shilpo.laboon.playback.SpectrumFrame
-import org.shilpo.laboon.ui.design.AudioQualityBadge
 import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
 import org.shilpo.laboon.ui.design.LiquidGlassSurface
 import org.shilpo.laboon.ui.design.MiniPlayerHeight
@@ -118,6 +116,7 @@ import org.shilpo.laboon.ui.design.NavigationBarHeight
 import org.shilpo.laboon.ui.design.NavigationBarMaxWidth
 import org.shilpo.laboon.ui.design.liquidGlassBackdropProducer
 import org.shilpo.laboon.ui.design.rememberLiquidGlassBackdropState
+import org.shilpo.laboon.ui.screens.player.lyrics.LyricLine
 import kotlin.math.abs
 import androidx.compose.ui.graphics.lerp as lerpColor
 import androidx.compose.ui.util.lerp as lerpFloat
@@ -160,13 +159,6 @@ private data class MorphingPlayerCookieShape(
     }
 }
 
-private fun formatMs(ms: Long): String {
-    val totalSeconds = (ms / 1000).coerceAtLeast(0)
-    val minutes = totalSeconds / 60
-    val seconds = totalSeconds % 60
-    return "$minutes:${seconds.toString().padStart(2, '0')}"
-}
-
 @Composable
 fun MorphingPlayerSheet(
     track: HomeTrack,
@@ -185,12 +177,16 @@ fun MorphingPlayerSheet(
     onSeek: (Float) -> Unit,
     onToggleShuffle: () -> Unit,
     onCycleRepeatMode: () -> Unit,
-    onOpenQueue: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     backdropState: LiquidGlassBackdropState? = null,
     onMoreClick: () -> Unit = {},
     onExpansionProgressChange: ((Float) -> Unit)? = null,
+    queueState: QueueState? = null,
+    onRemoveUpNext: ((Int) -> Unit)? = null,
+    onMoveUpNext: ((Int, Int) -> Unit)? = null,
+    onTrackClick: ((HomeTrack) -> Unit)? = null,
+    lyricsLines: List<LyricLine> = emptyList(),
 ) {
     val density = LocalDensity.current
     val coroutineScope = rememberCoroutineScope()
@@ -199,10 +195,36 @@ fun MorphingPlayerSheet(
 
     val progressAnimatable = remember { Animatable(0f) }
     val progress = progressAnimatable.value.coerceIn(0f, 1f)
+    var activePanel by remember { mutableStateOf<PlayerPanelTab?>(null) }
+    val activePanelProvider = rememberUpdatedState(activePanel)
+    val panelFraction = remember { Animatable(0f) }
+    var isPanelClosing by remember { mutableStateOf(false) }
+    val panelSpringSpec = remember {
+        spring<Float>(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)
+    }
+    val openPanel: (PlayerPanelTab) -> Unit = { panel ->
+        isPanelClosing = false
+        activePanel = panel
+        coroutineScope.launch { panelFraction.animateTo(1f, panelSpringSpec) }
+    }
+    val closePanel: () -> Unit = {
+        isPanelClosing = true
+        coroutineScope.launch {
+            panelFraction.animateTo(0f, panelSpringSpec)
+            activePanel = null
+            isPanelClosing = false
+        }
+    }
 
     LaunchedEffect(Unit) {
         snapshotFlow { progressAnimatable.value.coerceIn(0f, 1f) }
-            .collect { onExpansionProgressChange?.invoke(it) }
+            .collect { p ->
+                onExpansionProgressChange?.invoke(p)
+                if (p == 0f) {
+                    if (panelFraction.value > 0f) panelFraction.snapTo(0f)
+                    activePanel = null
+                }
+            }
     }
 
     val settleSpec = remember(SettleDurationMs) {
@@ -219,7 +241,7 @@ fun MorphingPlayerSheet(
         )
     }
 
-    BackHandler(enabled = progress >= 0.5f) {
+    BackHandler(enabled = progress >= 0.5f && activePanel == null) {
         coroutineScope.launch {
             progressAnimatable.animateTo(0f, settleSpec)
         }
@@ -294,7 +316,9 @@ fun MorphingPlayerSheet(
         coverOffsetX.snapTo(0f)
     }
 
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+    BoxWithConstraints(
+        modifier = modifier.fillMaxSize(),
+    ) {
         val screenWidth = maxWidth
         val screenHeight = maxHeight
 
@@ -327,6 +351,18 @@ fun MorphingPlayerSheet(
         val fullControlsScale = lerpFloat(0.40f, 1.0f, fullControlsProgress)
         val fullControlsAlpha = fullControlsProgress
         val fullControlsCounterY = with(density) { -sheetY.toPx() }
+        val controllerIconTint = lerpColor(
+            if (isDark) Color.White else Color.Black.copy(alpha = 0.85f),
+            if (isDark) Color.White else Color(0xFF191C1E),
+            progress,
+        )
+        val inactiveControllerIconTint = controllerIconTint.copy(
+            alpha = controllerIconTint.alpha * 0.72f,
+        )
+        val playIconTint = if (isDark) Color.Black.copy(alpha = 0.85f) else Color.White
+
+        val effectiveFullControlsAlpha = fullControlsAlpha
+        val effectiveFullControlsCounterY = fullControlsCounterY
 
         val toolbarHeight = 56.dp
         val toolbarTop = statusBarTop
@@ -415,7 +451,7 @@ fun MorphingPlayerSheet(
                 .graphicsLayer {
                     alpha = dismissAlpha
                 }
-                .pointerInput(Unit) {
+                .pointerInput(track.id) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
                         val downTime = down.uptimeMillis
@@ -423,6 +459,11 @@ fun MorphingPlayerSheet(
                         var totalY = 0f
                         var dragDir = 0
                         val initialProg = progressAnimatable.value
+                        val initialActivePanel = activePanelProvider.value
+                        val initialPanelFraction = panelFraction.value
+                        val panelDragRangePx = size.height.toFloat().coerceAtLeast(1f)
+                        var panelDragActive = initialActivePanel != null
+                        var panelClosingGesture = false
                         val dragSamples = mutableListOf<Pair<Long, Float>>()
                         dragSamples.add(downTime to 0f)
                         var dragCompleted = false
@@ -515,21 +556,66 @@ fun MorphingPlayerSheet(
                                                     0f
                                                 }
                                             val currentProg = progressAnimatable.value
-                                            val target = if (velocityY < -velocityFlickThreshold) {
-                                                1f
-                                            } else if (velocityY > velocityFlickThreshold) {
-                                                0f
-                                            } else if (initialProg < 0.5f) {
-                                                if (currentProg >= 0.35f) 1f else 0f
+                                            val opensLyrics = initialProg >= 0.95f &&
+                                                    initialActivePanel == null &&
+                                                    (totalY <= -swipeThreshold || velocityY < -velocityFlickThreshold)
+                                            if (panelDragActive) {
+                                                val shouldClosePanel =
+                                                    if (initialActivePanel == null) {
+                                                        panelFraction.value < 0.35f &&
+                                                                totalY > -swipeThreshold &&
+                                                                velocityY >= -velocityFlickThreshold
+                                                    } else {
+                                                        totalY >= swipeThreshold ||
+                                                                velocityY > velocityFlickThreshold ||
+                                                                panelFraction.value <= 0.65f
+                                                    }
+                                                val targetFraction =
+                                                    if (shouldClosePanel) 0f else 1f
+                                                isPanelClosing = shouldClosePanel
+                                                coroutineScope.launch {
+                                                    panelFraction.animateTo(
+                                                        targetFraction,
+                                                        panelSpringSpec
+                                                    )
+                                                    if (targetFraction == 0f) {
+                                                        activePanel = null
+                                                        isPanelClosing = false
+                                                    }
+                                                }
+                                            } else if (opensLyrics) {
+                                                openPanel(PlayerPanelTab.Lyrics)
                                             } else {
-                                                if (currentProg <= 0.65f) 0f else 1f
+                                                val target =
+                                                    if (velocityY < -velocityFlickThreshold) {
+                                                        1f
+                                                    } else if (velocityY > velocityFlickThreshold) {
+                                                        0f
+                                                    } else if (initialProg < 0.5f) {
+                                                        if (currentProg >= 0.35f) 1f else 0f
+                                                    } else {
+                                                        if (currentProg <= 0.65f) 0f else 1f
+                                                    }
+                                                coroutineScope.launch {
+                                                    progressAnimatable.animateTo(
+                                                        target,
+                                                        settleSpec,
+                                                    )
+                                                }
                                             }
-                                            coroutineScope.launch {
-                                                progressAnimatable.animateTo(
-                                                    target,
-                                                    settleSpec,
-                                                )
+                                        }
+
+                                        4 -> {
+                                            val targetPanel = when {
+                                                initialActivePanel == PlayerPanelTab.Lyrics && totalX <= -swipeThreshold ->
+                                                    PlayerPanelTab.Queue
+
+                                                initialActivePanel == PlayerPanelTab.Queue && totalX >= swipeThreshold ->
+                                                    PlayerPanelTab.Lyrics
+
+                                                else -> null
                                             }
+                                            targetPanel?.let(openPanel)
                                         }
                                     }
                                 }
@@ -561,6 +647,8 @@ fun MorphingPlayerSheet(
                                         } else {
                                             dragDir = 3
                                         }
+                                    } else if (initialActivePanel != null && absX >= absY) {
+                                        dragDir = 4
                                     } else {
                                         dragDir = 3
                                     }
@@ -590,19 +678,53 @@ fun MorphingPlayerSheet(
                                     }
 
                                     3 -> {
-                                        val minTotalDragY = -(1f - initialProg) * dragRangePx
-                                        val maxTotalDragY = initialProg * dragRangePx
-                                        val clampedTotalDragY =
-                                            totalY.coerceIn(minTotalDragY, maxTotalDragY)
-                                        val nextProgress =
-                                            (initialProg - (clampedTotalDragY / dragRangePx)).coerceIn(
-                                                0f,
-                                                1f
-                                            )
-                                        coroutineScope.launch {
-                                            progressAnimatable.snapTo(nextProgress)
+                                        if (initialActivePanel != null) {
+                                            if (totalY > 0f) panelClosingGesture = true
+                                            isPanelClosing = panelClosingGesture
+                                            val nextFraction =
+                                                (initialPanelFraction - (totalY / panelDragRangePx))
+                                                    .coerceIn(0f, 1f)
+                                            coroutineScope.launch {
+                                                panelFraction.snapTo(
+                                                    nextFraction
+                                                )
+                                            }
+                                        } else if (initialProg >= 0.95f &&
+                                            (totalY < 0f || panelDragActive)
+                                        ) {
+                                            if (!panelDragActive) {
+                                                panelDragActive = true
+                                                isPanelClosing = false
+                                                activePanel = PlayerPanelTab.Lyrics
+                                            }
+                                            if (totalY > 0f) panelClosingGesture = true
+                                            isPanelClosing = panelClosingGesture
+                                            val nextFraction = (-totalY / panelDragRangePx)
+                                                .coerceIn(0f, 1f)
+                                            coroutineScope.launch {
+                                                panelFraction.snapTo(
+                                                    nextFraction
+                                                )
+                                            }
+                                        } else {
+                                            val minTotalDragY = -(1f - initialProg) * dragRangePx
+                                            val maxTotalDragY = initialProg * dragRangePx
+                                            val clampedTotalDragY =
+                                                totalY.coerceIn(minTotalDragY, maxTotalDragY)
+                                            val nextProgress =
+                                                (initialProg - (clampedTotalDragY / dragRangePx)).coerceIn(
+                                                    0f,
+                                                    1f
+                                                )
+                                            coroutineScope.launch {
+                                                progressAnimatable.snapTo(
+                                                    nextProgress
+                                                )
+                                            }
                                         }
                                     }
+
+                                    4 -> Unit
                                 }
                             }
                         }
@@ -633,9 +755,23 @@ fun MorphingPlayerSheet(
                                 }
 
                                 3 -> {
-                                    val target = if (progressAnimatable.value >= 0.5f) 1f else 0f
-                                    coroutineScope.launch {
-                                        progressAnimatable.animateTo(target, settleSpec)
+                                    if (panelDragActive) {
+                                        val shouldOpenPanel = panelFraction.value >= 0.35f
+                                        val targetFraction = if (shouldOpenPanel) 1f else 0f
+                                        isPanelClosing = !shouldOpenPanel
+                                        coroutineScope.launch {
+                                            panelFraction.animateTo(targetFraction, panelSpringSpec)
+                                            if (targetFraction == 0f) {
+                                                activePanel = null
+                                                isPanelClosing = false
+                                            }
+                                        }
+                                    } else {
+                                        val target =
+                                            if (progressAnimatable.value >= 0.5f) 1f else 0f
+                                        coroutineScope.launch {
+                                            progressAnimatable.animateTo(target, settleSpec)
+                                        }
                                     }
                                 }
                             }
@@ -733,7 +869,7 @@ fun MorphingPlayerSheet(
                                 spotColor = Color.Black.copy(alpha = 0.65f),
                             )
                             .then(
-                                if (progress > 0.8f) {
+                                if (progress > 0.8f && activePanel == null) {
                                     Modifier.pointerInput(track.id) {
                                         detectHorizontalDragGestures(
                                             onDragStart = {
@@ -862,7 +998,7 @@ fun MorphingPlayerSheet(
                                     alpha = miniIndicatorAlpha
                                     translationX = coverOffsetX.value
                                 },
-                            color = MaterialTheme.colorScheme.primary,
+                            color = controllerIconTint,
                             trackColor = if (isDark) Color.White.copy(alpha = 0.15f) else MaterialTheme.colorScheme.onSurface.copy(
                                 alpha = 0.12f
                             ),
@@ -954,103 +1090,34 @@ fun MorphingPlayerSheet(
                     }
 
                     if (fullControlsAlpha > 0.001f) {
-                        var isSeeking by remember { mutableStateOf(false) }
-                        var seekPosition by remember { mutableFloatStateOf(0f) }
+                        val audioBadgeAlpha =
+                            if (showAudioInfo) 0f else (1f - (audioDialogProgress / 0.08f)).coerceIn(
+                                0f,
+                                1f
+                            )
 
-                        val (smoothProgressFraction, displayedPosition) = rememberSmoothProgress(
-                            isPlayingProvider = { isPlaying },
-                            currentPositionProvider = {
-                                if (isSeeking) (seekPosition * durationMs.coerceAtLeast(0L)).toLong() else currentPositionMs
-                            },
-                            totalDuration = durationMs.coerceAtLeast(0L),
-                            isVisible = fullControlsAlpha > 0.001f,
-                        )
-
-                        Column(
+                        PlayerSeekBar(
+                            track = track,
+                            isPlaying = isPlaying,
+                            currentPositionMs = currentPositionMs,
+                            durationMs = durationMs,
+                            audioQuality = audioQuality,
+                            onSeek = onSeek,
+                            onAudioQualityClick = { showAudioInfo = true },
+                            onAudioQualityPositioned = { coords -> audioBadgeBounds = coords },
+                            audioBadgeAlpha = audioBadgeAlpha,
+                            isDark = isDark,
                             modifier = Modifier
                                 .offset(x = fullControlsX, y = seekY)
                                 .width(fullControlsWidth)
+                                .height(62.dp)
                                 .graphicsLayer {
                                     alpha = fullControlsAlpha
                                     scaleX = fullControlsScale
                                     scaleY = fullControlsScale
                                     translationY = fullControlsCounterY
                                 },
-                        ) {
-                            WavySliderExpressive(
-                                value = { if (isSeeking) seekPosition else smoothProgressFraction.value },
-                                onValueChange = { fraction ->
-                                    isSeeking = true
-                                    seekPosition = fraction
-                                },
-                                onValueCommit = { fraction ->
-                                    isSeeking = false
-                                    onSeek(fraction)
-                                },
-                                enabled = durationMs > 0L,
-                                activeTrackColor = if (isDark) Color.White else Color(0xFF191C1E),
-                                inactiveTrackColor = if (isDark) Color.White.copy(alpha = 0.24f) else Color.Black.copy(
-                                    alpha = 0.16f
-                                ),
-                                thumbColor = if (isDark) Color.White else Color(0xFF191C1E),
-                                isPlaying = isPlaying,
-                                isVisible = fullControlsAlpha > 0.001f,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(36.dp),
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 4.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                val displayMs = if (isSeeking) {
-                                    (seekPosition * durationMs).toLong()
-                                } else {
-                                    displayedPosition.value
-                                }
-                                Text(
-                                    text = formatMs(displayMs),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (isDark) Color.White.copy(alpha = 0.6f) else Color.Black.copy(
-                                        alpha = 0.6f
-                                    ),
-                                )
-                                val audioBadgeAlpha =
-                                    if (showAudioInfo) 0f else (1f - (audioDialogProgress / 0.08f)).coerceIn(
-                                        0f,
-                                        1f
-                                    )
-                                AudioQualityBadge(
-                                    quality = audioQuality,
-                                    fallbackCodec = track.codec,
-                                    track = track,
-                                    isDark = isDark,
-                                    modifier = Modifier
-                                        .graphicsLayer {
-                                            alpha = audioBadgeAlpha
-                                        }
-                                        .onGloballyPositioned { coords ->
-                                            audioBadgeBounds = coords.boundsInRoot()
-                                        },
-                                    onClick = { showAudioInfo = true },
-                                )
-                                Text(
-                                    text = formatMs(durationMs),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = if (isDark) Color.White.copy(alpha = 0.6f) else Color.Black.copy(
-                                        alpha = 0.6f
-                                    ),
-                                )
-                            }
-                        }
-
-                        val activeAccent = MaterialTheme.colorScheme.primary
-                        val inactiveTint =
-                            if (isDark) Color.White.copy(alpha = 0.50f) else Color.Black.copy(alpha = 0.45f)
+                        )
 
                         Box(
                             modifier = Modifier
@@ -1060,10 +1127,10 @@ fun MorphingPlayerSheet(
                                 )
                                 .size(44.dp)
                                 .graphicsLayer {
-                                    alpha = fullControlsAlpha
+                                    alpha = effectiveFullControlsAlpha
                                     scaleX = fullControlsScale
                                     scaleY = fullControlsScale
-                                    translationY = fullControlsCounterY
+                                    translationY = effectiveFullControlsCounterY
                                 }
                                 .clip(CircleShape)
                                 .clickable(
@@ -1076,7 +1143,7 @@ fun MorphingPlayerSheet(
                             Icon(
                                 painter = painterResource(R.drawable.ic_shuffle),
                                 contentDescription = "Shuffle",
-                                tint = if (isShuffle) activeAccent else inactiveTint,
+                                tint = if (isShuffle) controllerIconTint else inactiveControllerIconTint,
                                 modifier = Modifier.size(24.dp),
                             )
                         }
@@ -1094,10 +1161,10 @@ fun MorphingPlayerSheet(
                                 )
                                 .size(44.dp)
                                 .graphicsLayer {
-                                    alpha = fullControlsAlpha
+                                    alpha = effectiveFullControlsAlpha
                                     scaleX = fullControlsScale
                                     scaleY = fullControlsScale
-                                    translationY = fullControlsCounterY
+                                    translationY = effectiveFullControlsCounterY
                                 }
                                 .clip(CircleShape)
                                 .clickable(
@@ -1110,38 +1177,33 @@ fun MorphingPlayerSheet(
                             Icon(
                                 painter = painterResource(repeatIconRes),
                                 contentDescription = "Repeat",
-                                tint = if (repeatMode != RepeatMode.OFF) activeAccent else inactiveTint,
+                                tint = if (repeatMode != RepeatMode.OFF) {
+                                    controllerIconTint
+                                } else {
+                                    inactiveControllerIconTint
+                                },
                                 modifier = Modifier.size(24.dp),
                             )
                         }
 
-                        Box(
+                        PlayerBottomBar(
+                            onOpenLyrics = {
+                                openPanel(PlayerPanelTab.Lyrics)
+                            },
+                            onOpenQueue = {
+                                openPanel(PlayerPanelTab.Queue)
+                            },
+                            isDark = isDark,
                             modifier = Modifier
-                                .offset(x = (screenWidth - queueButtonSize) / 2, y = queueY)
-                                .size(queueButtonSize)
+                                .offset(x = 0.dp, y = queueY)
+                                .fillMaxWidth()
                                 .graphicsLayer {
-                                    alpha = fullControlsAlpha
+                                    alpha = effectiveFullControlsAlpha
                                     scaleX = fullControlsScale
                                     scaleY = fullControlsScale
-                                    translationY = fullControlsCounterY
-                                }
-                                .clip(CircleShape)
-                                .clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    onClick = onOpenQueue,
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_queue_music),
-                                contentDescription = "Queue",
-                                tint = if (isDark) Color.White.copy(alpha = 0.8f) else Color.Black.copy(
-                                    alpha = 0.75f
-                                ),
-                                modifier = Modifier.size(28.dp),
-                            )
-                        }
+                                    translationY = effectiveFullControlsCounterY
+                                },
+                        )
 
                         FullPlayerToolbar(
                             albumName = track.album,
@@ -1157,10 +1219,10 @@ fun MorphingPlayerSheet(
                                 .fillMaxWidth()
                                 .height(toolbarHeight)
                                 .graphicsLayer {
-                                    alpha = fullControlsAlpha
+                                    alpha = effectiveFullControlsAlpha
                                     scaleX = fullControlsScale
                                     scaleY = fullControlsScale
-                                    translationY = fullControlsCounterY
+                                    translationY = effectiveFullControlsCounterY
                                 },
                         )
                     }
@@ -1234,12 +1296,6 @@ fun MorphingPlayerSheet(
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        val skipIconTint = lerpColor(
-                            if (isDark) Color.White else Color.Black.copy(alpha = 0.85f),
-                            if (isDark) Color.White else Color(0xFF191C1E),
-                            progress,
-                        )
-
                         Box(
                             modifier = Modifier
                                 .size(skipButtonSize)
@@ -1257,7 +1313,7 @@ fun MorphingPlayerSheet(
                                 modifier = Modifier
                                     .size(skipIconSize)
                                     .rotate(180f),
-                                tint = skipIconTint,
+                                tint = controllerIconTint,
                             )
                         }
 
@@ -1276,9 +1332,6 @@ fun MorphingPlayerSheet(
                                 Color.Transparent,
                             ),
                         )
-                        val playIconTint =
-                            if (isDark) Color.Black.copy(alpha = 0.85f) else Color.White
-
                         val animatedCookieShape =
                             remember(cookieMorphProgress, rotationAnimatable.value) {
                                 MorphingPlayerCookieShape(
@@ -1309,7 +1362,7 @@ fun MorphingPlayerSheet(
                                     ) {
                                         CircularWavyProgressIndicator(
                                             modifier = Modifier.size(bufferingSize),
-                                            color = MaterialTheme.colorScheme.primary,
+                                            color = controllerIconTint,
                                             trackColor = Color.Transparent,
                                         )
                                     }
@@ -1370,7 +1423,7 @@ fun MorphingPlayerSheet(
                                 painter = painterResource(R.drawable.ic_skip),
                                 contentDescription = "Next",
                                 modifier = Modifier.size(skipIconSize),
-                                tint = skipIconTint,
+                                tint = controllerIconTint,
                             )
                         }
                     }
@@ -1378,11 +1431,45 @@ fun MorphingPlayerSheet(
             }
         }
 
+        PlayerOverlayPanels(
+            state = PlayerOverlayState(
+                track = track,
+                audioQuality = audioQuality,
+                isPlaying = isPlaying,
+                isBuffering = isBuffering,
+                isShuffle = isShuffle,
+                repeatMode = repeatMode,
+                currentPositionMs = currentPositionMs,
+                durationMs = durationMs,
+                queueState = queueState,
+                lyricsLines = lyricsLines,
+            ),
+            actions = PlayerOverlayActions(
+                onPlayPause = onPlayPauseClick,
+                onPrevious = onPreviousClick,
+                onNext = onNextClick,
+                onSeek = onSeek,
+                onToggleShuffle = onToggleShuffle,
+                onCycleRepeatMode = onCycleRepeatMode,
+                onAudioQualityClick = { showAudioInfo = true },
+                onTrackClick = { selected -> onTrackClick?.invoke(selected) },
+                onRemoveUpNext = { index -> onRemoveUpNext?.invoke(index) },
+                onMoveUpNext = { from, to -> onMoveUpNext?.invoke(from, to) },
+            ),
+            selectedPanel = activePanel,
+            panelFractionProvider = { panelFraction.value },
+            onSelectPanel = openPanel,
+            onClosePanel = closePanel,
+            onAudioQualityPositioned = { audioBadgeBounds = it },
+            isDark = isDark,
+            backdropState = playerBackdropState,
+            handleSwipeDismiss = false,
+        )
+
         AudioInfoDialog(
             isOpen = showAudioInfo,
             onDismiss = { showAudioInfo = false },
             pipeline = audioQuality?.pipelineDetails,
-            quality = audioQuality,
             track = track,
             durationMs = durationMs,
             originBounds = audioBadgeBounds,
@@ -1410,13 +1497,6 @@ private fun FullPlayerToolbar(
                 .align(Alignment.CenterStart)
                 .size(40.dp)
                 .clip(CircleShape)
-                .background(if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.06f))
-                .border(
-                    BorderStroke(
-                        0.5.dp,
-                        if (isDark) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.10f)
-                    ), CircleShape
-                )
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -1466,13 +1546,6 @@ private fun FullPlayerToolbar(
                 .align(Alignment.CenterEnd)
                 .size(40.dp)
                 .clip(CircleShape)
-                .background(if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.06f))
-                .border(
-                    BorderStroke(
-                        0.5.dp,
-                        if (isDark) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.10f)
-                    ), CircleShape
-                )
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,

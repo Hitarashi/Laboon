@@ -118,8 +118,8 @@ fun AudioQualityBadge(
 
     val glassBorder = Brush.verticalGradient(
         colors = listOf(
-            if (isDark) Color.White.copy(alpha = 0.45f) else Color.White.copy(alpha = 0.80f),
-            if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.12f),
+            if (isDark) Color.White.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.12f),
+            if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.04f),
         )
     )
 
@@ -138,7 +138,7 @@ fun AudioQualityBadge(
         modifier = modifier
             .clip(pillShape)
             .background(glassBackground)
-            .border(width = 0.8.dp, brush = glassBorder, shape = pillShape)
+            .border(width = 0.5.dp, brush = glassBorder, shape = pillShape)
             .then(
                 if (onClick != null) {
                     Modifier.clickable(

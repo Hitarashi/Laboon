@@ -42,6 +42,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -50,6 +51,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
 import org.shilpo.laboon.navigation.MainTab
 import kotlin.math.roundToInt
 
@@ -70,6 +72,13 @@ internal val FloatingCombinedClearance =
 
 internal val FloatingNavBarClearance = FloatingCombinedClearance
 
+internal data class FloatingNavigationItem<T>(
+    val value: T,
+    val title: String,
+    val iconOutlined: Int,
+    val iconFilled: Int,
+)
+
 @Composable
 fun FloatingNavBar(
     selectedTab: MainTab,
@@ -77,6 +86,36 @@ fun FloatingNavBar(
     modifier: Modifier = Modifier,
     hasMiniPlayerAbove: Boolean = false,
     tabs: List<MainTab> = MainTab.entries,
+    backdropState: LiquidGlassBackdropState? = null,
+) {
+    FloatingNavigationBar(
+        items = tabs.map { tab ->
+            FloatingNavigationItem(
+                value = tab,
+                title = stringResource(id = tab.titleRes),
+                iconOutlined = tab.iconOutlined,
+                iconFilled = tab.iconFilled,
+            )
+        },
+        selectedItem = selectedTab,
+        onItemSelected = onTabSelected,
+        modifier = modifier,
+        hasMiniPlayerAbove = hasMiniPlayerAbove,
+        backdropState = backdropState,
+    )
+}
+
+@Composable
+internal fun <T> FloatingNavigationBar(
+    items: List<FloatingNavigationItem<T>>,
+    selectedItem: T,
+    onItemSelected: (T) -> Unit,
+    modifier: Modifier = Modifier,
+    hasMiniPlayerAbove: Boolean = false,
+    connectedBelow: Boolean = false,
+    connectedBelowFraction: Float = if (connectedBelow) 1f else 0f,
+    iconAlpha: Float = 1f,
+    labelAlpha: Float = 1f,
     backdropState: LiquidGlassBackdropState? = null,
 ) {
     val motionScheme = MaterialTheme.motionScheme
@@ -87,11 +126,16 @@ fun FloatingNavBar(
         animationSpec = motionScheme.defaultSpatialSpec(),
         label = "navTopCornerRadius",
     )
+    val bottomRadius = lerp(
+        start = 35.dp,
+        stop = 12.dp,
+        fraction = connectedBelowFraction.coerceIn(0f, 1f),
+    )
     val navShape = RoundedCornerShape(
         topStart = topRadius,
         topEnd = topRadius,
-        bottomStart = 35.dp,
-        bottomEnd = 35.dp,
+        bottomStart = bottomRadius,
+        bottomEnd = bottomRadius,
     )
 
     val pillGradient = Brush.verticalGradient(
@@ -139,7 +183,7 @@ fun FloatingNavBar(
             shape = navShape,
             cornerRadius = 35.dp,
             topRadius = topRadius,
-            bottomRadius = 35.dp,
+            bottomRadius = bottomRadius,
             shadowElevation = 8.dp,
         ) {
             BoxWithConstraints(
@@ -147,9 +191,9 @@ fun FloatingNavBar(
                     .fillMaxSize()
                     .padding(NavigationBarInnerPadding),
             ) {
-                val tabCount = tabs.size
+                val tabCount = items.size
                 val tabWidth = if (tabCount > 0) maxWidth / tabCount else 0.dp
-                val targetIndex = tabs.indexOf(selectedTab).coerceAtLeast(0)
+                val targetIndex = items.indexOfFirst { it.value == selectedItem }.coerceAtLeast(0)
                 val indicatorIndex by animateFloatAsState(
                     targetValue = targetIndex.toFloat(),
                     animationSpec = motionScheme.defaultSpatialSpec(),
@@ -188,8 +232,8 @@ fun FloatingNavBar(
                     modifier = Modifier.fillMaxSize(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    tabs.forEach { tab ->
-                        val selected = tab == selectedTab
+                    items.forEach { item ->
+                        val selected = item.value == selectedItem
                         val contentColor by animateColorAsState(
                             targetValue = if (selected) {
                                 MaterialTheme.colorScheme.onSurface
@@ -207,7 +251,7 @@ fun FloatingNavBar(
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null,
-                                    onClick = { onTabSelected(tab) },
+                                    onClick = { onItemSelected(item.value) },
                                 ),
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center,
@@ -219,20 +263,23 @@ fun FloatingNavBar(
                             ) { isSelected ->
                                 Icon(
                                     painter = painterResource(
-                                        id = if (isSelected) tab.iconFilled else tab.iconOutlined,
+                                        id = if (isSelected) item.iconFilled else item.iconOutlined,
                                     ),
                                     contentDescription = null,
-                                    modifier = Modifier.size(24.dp),
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .alpha(iconAlpha.coerceIn(0f, 1f)),
                                     tint = contentColor,
                                 )
                             }
                             Spacer(modifier = Modifier.height(3.dp))
                             Text(
-                                text = stringResource(id = tab.titleRes),
+                                text = item.title,
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                                 color = contentColor,
                                 maxLines = 1,
+                                modifier = Modifier.alpha(labelAlpha.coerceIn(0f, 1f)),
                             )
                         }
                     }

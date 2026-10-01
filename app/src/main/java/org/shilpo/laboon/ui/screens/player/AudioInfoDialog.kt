@@ -59,23 +59,21 @@ import coil3.compose.AsyncImage
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.playback.AudioPipelineDetails
-import org.shilpo.laboon.playback.AudioQualityInfo
 import org.shilpo.laboon.playback.OutputDeviceType
-import org.shilpo.laboon.ui.design.AudioQualityBadge
 import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
 import org.shilpo.laboon.ui.design.LiquidGlassSurface
+import org.shilpo.laboon.ui.design.MiniPlayerSpacing
 import androidx.compose.ui.unit.lerp as lerpDp
 import androidx.compose.ui.util.lerp as lerpFloat
 
 @Composable
-fun AudioInfoDialog(
+internal fun AudioInfoDialog(
     isOpen: Boolean,
     onDismiss: () -> Unit,
     pipeline: AudioPipelineDetails?,
     track: HomeTrack? = null,
     durationMs: Long = 0L,
     originBounds: Rect? = null,
-    quality: AudioQualityInfo? = null,
     backdropState: LiquidGlassBackdropState? = null,
     isDark: Boolean = isSystemInDarkTheme(),
     modifier: Modifier = Modifier,
@@ -124,12 +122,9 @@ fun AudioInfoDialog(
         originBounds?.let { (it.height / 2f).toDp() } ?: 14.dp
     }
 
-    val scrimAlpha = progress * (if (isDark) 0.40f else 0.15f)
-
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = scrimAlpha))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -170,38 +165,27 @@ fun AudioInfoDialog(
 
         val contentAlpha = ((progress - 0.20f) / 0.80f).coerceIn(0f, 1f)
         val dialogAlpha = if (originBounds != null) {
-            ((progress - 0.06f) / 0.18f).coerceIn(0f, 1f)
+            1f
         } else {
-            if (progress < 0.05f) 0f else 1f
+            ((progress - 0.06f) / 0.18f).coerceIn(0f, 1f)
         }
 
-        if (progress < 0.28f && originBounds != null && boxBounds != null) {
-            val badgeMorphAlpha = (1f - progress / 0.24f).coerceIn(0f, 1f)
-            val badgeCenter = originBounds.center
-            val currentCenterX = lerpFloat(badgeCenter.x, targetCenter.x, progress)
-            val currentCenterY = lerpFloat(badgeCenter.y, targetCenter.y, progress)
-            val badgeScale = lerpFloat(1f, 1.12f, progress / 0.24f)
-
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .graphicsLayer {
-                        translationX = currentCenterX - boxBounds!!.left - (originBounds.width / 2f)
-                        translationY = currentCenterY - boxBounds!!.top - (originBounds.height / 2f)
-                        this.scaleX = badgeScale
-                        this.scaleY = badgeScale
-                        alpha = badgeMorphAlpha
-                    },
-            ) {
-                AudioQualityBadge(
-                    quality = quality,
-                    fallbackCodec = track?.codec,
-                    track = track,
-                    isDark = isDark,
-                    onClick = null,
-                )
-            }
-        }
+        val hasTrack = track != null
+        val headerRadius = lerpDp(startRadius, 28.dp, progress)
+        val segmentRadius = lerpDp(startRadius, 12.dp, progress)
+        val detailsRadius = lerpDp(startRadius, 35.dp, progress)
+        val headerShape = RoundedCornerShape(
+            topStart = headerRadius,
+            topEnd = headerRadius,
+            bottomStart = segmentRadius,
+            bottomEnd = segmentRadius,
+        )
+        val detailsShape = RoundedCornerShape(
+            topStart = if (hasTrack) segmentRadius else detailsRadius,
+            topEnd = if (hasTrack) segmentRadius else detailsRadius,
+            bottomStart = detailsRadius,
+            bottomEnd = detailsRadius,
+        )
 
         Column(
             modifier = Modifier
@@ -212,6 +196,11 @@ fun AudioInfoDialog(
                 .onSizeChanged { size ->
                     dialogSize = size
                 }
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                )
                 .graphicsLayer {
                     this.scaleX = scaleX
                     this.scaleY = scaleY
@@ -219,49 +208,25 @@ fun AudioInfoDialog(
                     this.translationY = transY
                     this.alpha = dialogAlpha
                 },
-            verticalArrangement = Arrangement.spacedBy(3.dp),
+            verticalArrangement = Arrangement.spacedBy(MiniPlayerSpacing),
         ) {
-            val hasTrack = track != null
-            val topOuterRadius = lerpDp(startRadius, 26.dp, progress)
-            val topInnerRadius =
-                if (hasTrack) lerpDp(startRadius, 6.dp, progress) else topOuterRadius
-            val bottomInnerRadius = if (hasTrack) lerpDp(startRadius, 6.dp, progress) else lerpDp(
-                startRadius,
-                26.dp,
-                progress
-            )
-            val bottomOuterRadius = lerpDp(startRadius, 26.dp, progress)
-
             if (hasTrack) {
-                val topShape = RoundedCornerShape(
-                    topStart = topOuterRadius,
-                    topEnd = topOuterRadius,
-                    bottomStart = topInnerRadius,
-                    bottomEnd = topInnerRadius,
-                )
-
                 LiquidGlassSurface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = {},
-                        ),
+                    modifier = Modifier.fillMaxWidth(),
                     backdropState = backdropState,
-                    shape = topShape,
-                    cornerRadius = topOuterRadius,
-                    topRadius = topOuterRadius,
-                    bottomRadius = topInnerRadius,
+                    shape = headerShape,
+                    cornerRadius = headerRadius,
+                    topRadius = headerRadius,
+                    bottomRadius = segmentRadius,
+                    tintColor = MaterialTheme.colorScheme.surfaceContainer,
+                    tintAlpha = 0.85f,
                     shadowElevation = lerpDp(2.dp, 6.dp, progress),
                 ) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 18.dp, vertical = 14.dp)
-                            .graphicsLayer {
-                                alpha = contentAlpha
-                            },
+                            .graphicsLayer { alpha = contentAlpha },
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -342,35 +307,22 @@ fun AudioInfoDialog(
                 }
             }
 
-            val bottomShape = RoundedCornerShape(
-                topStart = bottomInnerRadius,
-                topEnd = bottomInnerRadius,
-                bottomStart = bottomOuterRadius,
-                bottomEnd = bottomOuterRadius,
-            )
-
             LiquidGlassSurface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = {},
-                    ),
+                modifier = Modifier.fillMaxWidth(),
                 backdropState = backdropState,
-                shape = bottomShape,
-                cornerRadius = bottomOuterRadius,
-                topRadius = bottomInnerRadius,
-                bottomRadius = bottomOuterRadius,
+                shape = detailsShape,
+                cornerRadius = detailsRadius,
+                topRadius = if (hasTrack) segmentRadius else detailsRadius,
+                bottomRadius = detailsRadius,
+                tintColor = MaterialTheme.colorScheme.surfaceContainer,
+                tintAlpha = 0.85f,
                 shadowElevation = lerpDp(2.dp, 6.dp, progress),
             ) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp, vertical = 20.dp)
-                        .graphicsLayer {
-                            alpha = contentAlpha
-                        },
+                        .graphicsLayer { alpha = contentAlpha },
                 ) {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
@@ -458,7 +410,6 @@ fun AudioInfoDialog(
                                 details.container?.takeIf { it != "AUDIO" && it != "HIRES" && it != "HI-RES" }
                                     ?: rawCodec
                             append(" • $cont")
-                            if (!track?.source.isNullOrBlank()) append(" • ${track.source.uppercase()}")
                         }
                         PipelineStageItem(
                             iconRes = R.drawable.ic_song_wave,

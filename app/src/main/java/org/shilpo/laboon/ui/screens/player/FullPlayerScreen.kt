@@ -67,8 +67,6 @@ import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
-import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -91,11 +89,12 @@ import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.playback.ArtworkUrlHelper
 import org.shilpo.laboon.playback.AudioQualityInfo
+import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.playback.RepeatMode
 import org.shilpo.laboon.playback.SpectrumFrame
-import org.shilpo.laboon.ui.design.AudioQualityBadge
 import org.shilpo.laboon.ui.design.liquidGlassBackdropProducer
 import org.shilpo.laboon.ui.design.rememberLiquidGlassBackdropState
+import org.shilpo.laboon.ui.screens.player.lyrics.LyricLine
 import kotlin.math.abs
 
 private val FullPlayerCookieMorph = Morph(MaterialShapes.Circle, MaterialShapes.Cookie12Sided)
@@ -133,13 +132,6 @@ private data class FullPlayerCookieMorphShape(
     }
 }
 
-private fun formatMs(ms: Long): String {
-    val totalSeconds = (ms / 1000).coerceAtLeast(0)
-    val minutes = totalSeconds / 60
-    val seconds = totalSeconds % 60
-    return "$minutes:${seconds.toString().padStart(2, '0')}"
-}
-
 @Composable
 fun FullPlayerScreen(
     track: HomeTrack,
@@ -163,13 +155,39 @@ fun FullPlayerScreen(
     modifier: Modifier = Modifier,
     onMoreClick: () -> Unit = {},
     isDark: Boolean = isSystemInDarkTheme(),
+    queueState: QueueState? = null,
+    onRemoveUpNext: ((Int) -> Unit)? = null,
+    onMoveUpNext: ((Int, Int) -> Unit)? = null,
+    onTrackClick: ((HomeTrack) -> Unit)? = null,
+    lyricsLines: List<LyricLine> = emptyList(),
 ) {
-    BackHandler(enabled = true) {
+    val coroutineScope = rememberCoroutineScope()
+    var activePanel by remember { mutableStateOf<PlayerPanelTab?>(null) }
+    val panelFraction = remember { Animatable(0f) }
+    val openPanel: (PlayerPanelTab) -> Unit = { panel ->
+        activePanel = panel
+        coroutineScope.launch {
+            panelFraction.animateTo(
+                1f,
+                spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)
+            )
+        }
+    }
+    val closePanel: () -> Unit = {
+        coroutineScope.launch {
+            panelFraction.animateTo(
+                0f,
+                spring(dampingRatio = 0.85f, stiffness = Spring.StiffnessMediumLow)
+            )
+            activePanel = null
+        }
+    }
+
+    BackHandler(enabled = activePanel == null) {
         onCollapse()
     }
 
     val density = LocalDensity.current
-    val coroutineScope = rememberCoroutineScope()
     val collapseOffsetY = remember { Animatable(0f) }
     val collapseThreshold = with(density) { 100.dp.toPx() }
 
@@ -183,118 +201,178 @@ fun FullPlayerScreen(
         collapseOffsetY.snapTo(0f)
     }
 
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .graphicsLayer {
-                translationY = collapseOffsetY.value
-            }
-            .pointerInput(Unit) {
-                detectVerticalDragGestures(
-                    onDragStart = {},
-                    onDragCancel = {
+    val panelOpenThreshold = with(density) { 56.dp.toPx() }
+
+    val fullPlayerDragModifier = if (activePanel == null) {
+        Modifier.pointerInput(Unit) {
+            var upwardDrag = 0f
+            detectVerticalDragGestures(
+                onDragStart = { upwardDrag = 0f },
+                onDragCancel = {
+                    coroutineScope.launch {
+                        collapseOffsetY.animateTo(
+                            0f,
+                            spring(Spring.DampingRatioNoBouncy, Spring.StiffnessLow),
+                        )
+                    }
+                },
+                onDragEnd = {
+                    if (collapseOffsetY.value > collapseThreshold) {
+                        coroutineScope.launch {
+                            collapseOffsetY.snapTo(0f)
+                            onCollapse()
+                        }
+                    } else if (upwardDrag > panelOpenThreshold) {
                         coroutineScope.launch {
                             collapseOffsetY.animateTo(
                                 0f,
                                 spring(Spring.DampingRatioNoBouncy, Spring.StiffnessLow),
                             )
                         }
-                    },
-                    onDragEnd = {
-                        if (collapseOffsetY.value > collapseThreshold) {
-                            coroutineScope.launch {
-                                collapseOffsetY.snapTo(0f)
-                                onCollapse()
-                            }
-                        } else {
-                            coroutineScope.launch {
-                                collapseOffsetY.animateTo(
-                                    0f,
-                                    spring(Spring.DampingRatioNoBouncy, Spring.StiffnessLow),
-                                )
-                            }
+                        openPanel(PlayerPanelTab.Lyrics)
+                    } else {
+                        coroutineScope.launch {
+                            collapseOffsetY.animateTo(
+                                0f,
+                                spring(Spring.DampingRatioNoBouncy, Spring.StiffnessLow),
+                            )
                         }
-                    },
-                    onVerticalDrag = { change, dragAmount ->
-                        if (dragAmount > 0 || collapseOffsetY.value > 0) {
-                            change.consume()
-                            coroutineScope.launch {
-                                val nextY = (collapseOffsetY.value + dragAmount).coerceAtLeast(0f)
-                                collapseOffsetY.snapTo(nextY)
-                            }
+                    }
+                },
+                onVerticalDrag = { change, dragAmount ->
+                    if (dragAmount > 0 || collapseOffsetY.value > 0) {
+                        change.consume()
+                        coroutineScope.launch {
+                            val nextY = (collapseOffsetY.value + dragAmount).coerceAtLeast(0f)
+                            collapseOffsetY.snapTo(nextY)
                         }
-                    },
-                )
-            },
+                    } else if (dragAmount < 0) {
+                        upwardDrag -= dragAmount
+                        change.consume()
+                    }
+                },
+            )
+        }
+    } else {
+        Modifier
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .then(fullPlayerDragModifier),
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .liquidGlassBackdropProducer(playerBackdropState, playerBackdropLayer),
+                .graphicsLayer {
+                    translationY = collapseOffsetY.value
+                },
         ) {
-            DancingGlowBackground(
-                artworkUrl = track.artworkUrl,
-                spectrum = spectrum,
-                isPlaying = isPlaying,
-                isDark = isDark,
-                modifier = Modifier.fillMaxSize(),
-            )
-
-            FullPlayerLayout(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .statusBarsPadding()
-                    .navigationBarsPadding(),
-                toolbar = {
-                    FullPlayerToolbar(
-                        albumName = track.album,
-                        onCollapse = onCollapse,
-                        onMoreClick = onMoreClick,
-                        isDark = isDark,
-                    )
-                },
-                cover = {
-                    FullPlayerCoverCard(
-                        track = track,
-                        onPreviousClick = onPreviousClick,
-                        onNextClick = onNextClick,
-                    )
-                },
-                controls = {
-                    FullPlayerControls(
-                        track = track,
-                        isPlaying = isPlaying,
-                        isBuffering = isBuffering,
-                        progress = progress,
-                        currentPositionMs = currentPositionMs,
-                        durationMs = durationMs,
-                        audioQuality = audioQuality,
-                        isShuffle = isShuffle,
-                        repeatMode = repeatMode,
-                        onPlayPauseClick = onPlayPauseClick,
-                        onPreviousClick = onPreviousClick,
-                        onNextClick = onNextClick,
-                        onSeek = onSeek,
-                        onToggleShuffle = onToggleShuffle,
-                        onCycleRepeatMode = onCycleRepeatMode,
-                        onOpenQueue = onOpenQueue,
-                        onAudioQualityClick = { showAudioInfo = true },
-                        onAudioQualityPositioned = { coords -> audioBadgeBounds = coords },
-                        audioBadgeAlpha = if (showAudioInfo) 0f else (1f - (audioDialogProgress / 0.08f)).coerceIn(
-                            0f,
-                            1f
-                        ),
-                        isDark = isDark,
-                    )
-                },
-            )
+                    .liquidGlassBackdropProducer(playerBackdropState, playerBackdropLayer),
+            ) {
+                DancingGlowBackground(
+                    artworkUrl = track.artworkUrl,
+                    spectrum = spectrum,
+                    isPlaying = isPlaying,
+                    isDark = isDark,
+                    modifier = Modifier.fillMaxSize(),
+                )
+
+                FullPlayerLayout(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .statusBarsPadding()
+                        .navigationBarsPadding(),
+                    toolbar = {
+                        FullPlayerToolbar(
+                            albumName = track.album,
+                            onCollapse = onCollapse,
+                            onMoreClick = onMoreClick,
+                            isDark = isDark,
+                        )
+                    },
+                    cover = {
+                        FullPlayerCoverCard(
+                            track = track,
+                            onPreviousClick = onPreviousClick,
+                            onNextClick = onNextClick,
+                        )
+                    },
+                    controls = {
+                        FullPlayerControls(
+                            track = track,
+                            isPlaying = isPlaying,
+                            isBuffering = isBuffering,
+                            progress = progress,
+                            currentPositionMs = currentPositionMs,
+                            durationMs = durationMs,
+                            audioQuality = audioQuality,
+                            isShuffle = isShuffle,
+                            repeatMode = repeatMode,
+                            onPlayPauseClick = onPlayPauseClick,
+                            onPreviousClick = onPreviousClick,
+                            onNextClick = onNextClick,
+                            onSeek = onSeek,
+                            onToggleShuffle = onToggleShuffle,
+                            onCycleRepeatMode = onCycleRepeatMode,
+                            onOpenLyrics = { openPanel(PlayerPanelTab.Lyrics) },
+                            onOpenQueue = {
+                                openPanel(PlayerPanelTab.Queue)
+                                onOpenQueue()
+                            },
+                            onAudioQualityClick = { showAudioInfo = true },
+                            onAudioQualityPositioned = { coords -> audioBadgeBounds = coords },
+                            audioBadgeAlpha = if (showAudioInfo) 0f else
+                                (1f - (audioDialogProgress / 0.08f)).coerceIn(0f, 1f),
+                            isDark = isDark,
+                        )
+                    },
+                )
+            }
         }
+
+        PlayerOverlayPanels(
+            state = PlayerOverlayState(
+                track = track,
+                audioQuality = audioQuality,
+                isPlaying = isPlaying,
+                isBuffering = isBuffering,
+                isShuffle = isShuffle,
+                repeatMode = repeatMode,
+                currentPositionMs = currentPositionMs,
+                durationMs = durationMs,
+                queueState = queueState,
+                lyricsLines = lyricsLines,
+            ),
+            actions = PlayerOverlayActions(
+                onPlayPause = onPlayPauseClick,
+                onPrevious = onPreviousClick,
+                onNext = onNextClick,
+                onSeek = onSeek,
+                onToggleShuffle = onToggleShuffle,
+                onCycleRepeatMode = onCycleRepeatMode,
+                onAudioQualityClick = { showAudioInfo = true },
+                onTrackClick = { selected -> onTrackClick?.invoke(selected) },
+                onRemoveUpNext = { index -> onRemoveUpNext?.invoke(index) },
+                onMoveUpNext = { from, to -> onMoveUpNext?.invoke(from, to) },
+            ),
+            selectedPanel = activePanel,
+            panelFractionProvider = { panelFraction.value },
+            onSelectPanel = openPanel,
+            onClosePanel = closePanel,
+            onAudioQualityPositioned = { audioBadgeBounds = it },
+            isDark = isDark,
+            backdropState = playerBackdropState,
+        )
 
         AudioInfoDialog(
             isOpen = showAudioInfo,
             onDismiss = { showAudioInfo = false },
             pipeline = audioQuality?.pipelineDetails,
-            quality = audioQuality,
             track = track,
             durationMs = durationMs,
             originBounds = audioBadgeBounds,
@@ -382,13 +460,6 @@ private fun FullPlayerToolbar(
                 .align(Alignment.CenterStart)
                 .size(40.dp)
                 .clip(CircleShape)
-                .background(if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.06f))
-                .border(
-                    BorderStroke(
-                        0.5.dp,
-                        if (isDark) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.10f)
-                    ), CircleShape
-                )
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -438,13 +509,6 @@ private fun FullPlayerToolbar(
                 .align(Alignment.CenterEnd)
                 .size(40.dp)
                 .clip(CircleShape)
-                .background(if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.06f))
-                .border(
-                    BorderStroke(
-                        0.5.dp,
-                        if (isDark) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.10f)
-                    ), CircleShape
-                )
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -605,6 +669,7 @@ private fun FullPlayerControls(
     onSeek: (Float) -> Unit,
     onToggleShuffle: () -> Unit,
     onCycleRepeatMode: () -> Unit,
+    onOpenLyrics: () -> Unit,
     onOpenQueue: () -> Unit,
     onAudioQualityClick: () -> Unit = {},
     onAudioQualityPositioned: ((Rect) -> Unit)? = null,
@@ -645,86 +710,21 @@ private fun FullPlayerControls(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        var isSeeking by remember { mutableStateOf(false) }
-        var seekPosition by remember { mutableFloatStateOf(0f) }
-
-        val (smoothProgressFraction, displayedPosition) = rememberSmoothProgress(
-            isPlayingProvider = { isPlaying },
-            currentPositionProvider = {
-                if (isSeeking) (seekPosition * durationMs.coerceAtLeast(0L)).toLong() else currentPositionMs
-            },
-            totalDuration = durationMs.coerceAtLeast(0L),
-            isVisible = true,
-        )
-
-        WavySliderExpressive(
-            value = { if (isSeeking) seekPosition else smoothProgressFraction.value },
-            onValueChange = { fraction ->
-                isSeeking = true
-                seekPosition = fraction
-            },
-            onValueCommit = { fraction ->
-                isSeeking = false
-                onSeek(fraction)
-            },
-            enabled = durationMs > 0L,
-            activeTrackColor = if (isDark) Color.White else Color(0xFF191C1E),
-            inactiveTrackColor = if (isDark) Color.White.copy(alpha = 0.24f) else Color.Black.copy(
-                alpha = 0.16f
-            ),
-            thumbColor = if (isDark) Color.White else Color(0xFF191C1E),
+        PlayerSeekBar(
+            track = track,
             isPlaying = isPlaying,
-            isVisible = true,
+            currentPositionMs = currentPositionMs,
+            durationMs = durationMs,
+            audioQuality = audioQuality,
+            onSeek = onSeek,
+            onAudioQualityClick = onAudioQualityClick,
+            onAudioQualityPositioned = onAudioQualityPositioned,
+            audioBadgeAlpha = audioBadgeAlpha,
+            isDark = isDark,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(36.dp),
+                .height(62.dp),
         )
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            val displayMs = if (isSeeking) {
-                (seekPosition * durationMs).toLong()
-            } else {
-                displayedPosition.value
-            }
-            Text(
-                text = formatMs(displayMs),
-                style = MaterialTheme.typography.labelSmall,
-                color = if (isDark) Color.White.copy(alpha = 0.6f) else Color.Black.copy(alpha = 0.6f),
-            )
-
-            AudioQualityBadge(
-                quality = audioQuality,
-                fallbackCodec = track.codec,
-                track = track,
-                isDark = isDark,
-                modifier = Modifier
-                    .graphicsLayer {
-                        alpha = audioBadgeAlpha
-                    }
-                    .then(
-                        if (onAudioQualityPositioned != null) {
-                            Modifier.onGloballyPositioned { coords ->
-                                onAudioQualityPositioned(coords.boundsInRoot())
-                            }
-                        } else Modifier
-                    ),
-                onClick = onAudioQualityClick,
-            )
-
-            Text(
-                text = formatMs(durationMs),
-                style = MaterialTheme.typography.labelSmall,
-                color = if (isDark) Color.White.copy(alpha = 0.6f) else Color.Black.copy(alpha = 0.6f),
-            )
-        }
 
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -743,38 +743,21 @@ private fun FullPlayerControls(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        Box(
+        PlayerBottomBar(
+            onOpenLyrics = onOpenLyrics,
+            onOpenQueue = onOpenQueue,
+            isDark = isDark,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(52.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onOpenQueue,
-                    ),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_queue_music),
-                    contentDescription = "Queue",
-                    tint = if (isDark) Color.White.copy(alpha = 0.8f) else Color.Black.copy(alpha = 0.75f),
-                    modifier = Modifier.size(28.dp),
-                )
-            }
-        }
+                .height(48.dp),
+        )
 
         Spacer(modifier = Modifier.height(12.dp))
     }
 }
 
 @Composable
-private fun FullPlayerTransportControls(
+internal fun FullPlayerTransportControls(
     isPlaying: Boolean,
     isBuffering: Boolean,
     isShuffle: Boolean,
@@ -818,9 +801,9 @@ private fun FullPlayerTransportControls(
         )
     }
 
-    val activeAccent = MaterialTheme.colorScheme.primary
-    val inactiveTint =
-        if (isDark) Color.White.copy(alpha = 0.50f) else Color.Black.copy(alpha = 0.45f)
+    val controllerIconTint = if (isDark) Color.White else Color(0xFF191C1E)
+    val inactiveControllerIconTint = controllerIconTint.copy(alpha = 0.72f)
+    val playIconTint = if (isDark) Color.Black.copy(alpha = 0.85f) else Color.White
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -841,7 +824,7 @@ private fun FullPlayerTransportControls(
             Icon(
                 painter = painterResource(R.drawable.ic_shuffle),
                 contentDescription = "Shuffle",
-                tint = if (isShuffle) activeAccent else inactiveTint,
+                tint = if (isShuffle) controllerIconTint else inactiveControllerIconTint,
                 modifier = Modifier.size(24.dp),
             )
         }
@@ -930,7 +913,7 @@ private fun FullPlayerTransportControls(
                         ) {
                             CircularWavyProgressIndicator(
                                 modifier = Modifier.size(54.dp),
-                                color = MaterialTheme.colorScheme.primary,
+                                color = controllerIconTint,
                                 trackColor = Color.Transparent,
                             )
                         }
@@ -981,7 +964,7 @@ private fun FullPlayerTransportControls(
                                     ),
                                     contentDescription = if (playing) "Pause" else "Play",
                                     modifier = Modifier.size(34.dp),
-                                    tint = if (isDark) Color.Black.copy(alpha = 0.85f) else Color.White,
+                                    tint = playIconTint,
                                 )
                             }
                         }
@@ -1029,7 +1012,11 @@ private fun FullPlayerTransportControls(
             Icon(
                 painter = painterResource(repeatIconRes),
                 contentDescription = "Repeat",
-                tint = if (repeatMode != RepeatMode.OFF) activeAccent else inactiveTint,
+                tint = if (repeatMode != RepeatMode.OFF) {
+                    controllerIconTint
+                } else {
+                    inactiveControllerIconTint
+                },
                 modifier = Modifier.size(24.dp),
             )
         }

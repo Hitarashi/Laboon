@@ -118,7 +118,6 @@ import org.shilpo.laboon.ui.design.rememberPredictiveBackState
 import org.shilpo.laboon.ui.design.userDisplayName
 import org.shilpo.laboon.ui.screens.library.LibraryScreen
 import org.shilpo.laboon.ui.screens.player.MorphingPlayerSheet
-import org.shilpo.laboon.ui.screens.queue.QueueBottomSheet
 import org.shilpo.laboon.ui.screens.rip.RipVisualizerScreen
 import org.shilpo.laboon.ui.screens.search.SearchScreen
 import org.shilpo.laboon.ui.screens.settings.SettingsScreen
@@ -143,7 +142,6 @@ fun HomeScreen(
 
     val initialCachedFeed = remember { homeFeedCache.load() }
     var feedState by remember { mutableStateOf(initialCachedFeed ?: HomeFeedDefaults.defaultFeed) }
-    var showQueueSheet by remember { mutableStateOf(false) }
     var playerExpansionProgress by remember { mutableFloatStateOf(0f) }
     var isRefreshing by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
@@ -529,9 +527,6 @@ fun HomeScreen(
                     onCycleRepeatMode = {
                         playbackManager.queueManager.cycleRepeatMode()
                     },
-                    onOpenQueue = {
-                        showQueueSheet = true
-                    },
                     onDismiss = {
                         isPlayerDismissed = true
                         fallbackTrack = null
@@ -542,6 +537,16 @@ fun HomeScreen(
                     backdropState = liquidGlassBackdropState,
                     onExpansionProgressChange = { progress ->
                         playerExpansionProgress = progress
+                    },
+                    queueState = queueState,
+                    onRemoveUpNext = { index ->
+                        playbackManager.queueManager.removeUpNext(index)
+                    },
+                    onMoveUpNext = { from, to ->
+                        playbackManager.queueManager.moveUpNext(from, to)
+                    },
+                    onTrackClick = { t ->
+                        playbackManager.play(t, contextTracks = queueState.items)
                     },
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -609,34 +614,6 @@ fun HomeScreen(
             }
         }
 
-        if (showQueueSheet) {
-            QueueBottomSheet(
-                queueState = queueState,
-                isDiscovering = playbackState.isDiscovering,
-                onDismiss = { showQueueSheet = false },
-                onTrackClick = { track ->
-                    playbackManager.play(track)
-                },
-                onRemoveUpNext = { index ->
-                    playbackManager.queueManager.removeUpNext(index)
-                },
-                onMoveUpNext = { from, to ->
-                    playbackManager.queueManager.moveUpNext(from, to)
-                },
-                onClearUpNext = {
-                    playbackManager.queueManager.clearUpNext()
-                },
-                onToggleAutoplay = {
-                    playbackManager.queueManager.toggleAutoplay()
-                },
-                onToggleShuffle = {
-                    playbackManager.queueManager.toggleShuffle()
-                },
-                onCycleRepeatMode = {
-                    playbackManager.queueManager.cycleRepeatMode()
-                },
-            )
-        }
     }
 }
 

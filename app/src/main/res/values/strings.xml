@@ -26,6 +26,8 @@
     <string name="nav_home">Home</string>
     <string name="nav_search">Search</string>
     <string name="nav_library">Library</string>
+    <string name="player_tab_lyrics">Lyrics</string>
+    <string name="player_tab_queue">Queue</string>
     <string name="search_title">Search</string>
     <string name="search_placeholder_title">Search Music</string>
     <string name="search_placeholder_subtitle">Search songs, albums, artists, or playlists.</string>
