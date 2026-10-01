@@ -230,6 +230,7 @@ fun MorphingPlayerSheet(
     val miniSwipeOffsetX = remember { Animatable(0f) }
     var showAudioInfo by remember { mutableStateOf(false) }
     var audioBadgeBounds by remember { mutableStateOf<Rect?>(null) }
+    var audioDialogProgress by remember { mutableFloatStateOf(0f) }
     val playerBackdropState = rememberLiquidGlassBackdropState()
     val playerBackdropLayer = rememberGraphicsLayer()
 
@@ -1018,14 +1019,23 @@ fun MorphingPlayerSheet(
                                         alpha = 0.6f
                                     ),
                                 )
+                                val audioBadgeAlpha =
+                                    if (showAudioInfo) 0f else (1f - (audioDialogProgress / 0.08f)).coerceIn(
+                                        0f,
+                                        1f
+                                    )
                                 AudioQualityBadge(
                                     quality = audioQuality,
                                     fallbackCodec = track.codec,
                                     track = track,
                                     isDark = isDark,
-                                    modifier = Modifier.onGloballyPositioned { coords ->
-                                        audioBadgeBounds = coords.boundsInRoot()
-                                    },
+                                    modifier = Modifier
+                                        .graphicsLayer {
+                                            alpha = audioBadgeAlpha
+                                        }
+                                        .onGloballyPositioned { coords ->
+                                            audioBadgeBounds = coords.boundsInRoot()
+                                        },
                                     onClick = { showAudioInfo = true },
                                 )
                                 Text(
@@ -1372,11 +1382,13 @@ fun MorphingPlayerSheet(
             isOpen = showAudioInfo,
             onDismiss = { showAudioInfo = false },
             pipeline = audioQuality?.pipelineDetails,
+            quality = audioQuality,
             track = track,
             durationMs = durationMs,
             originBounds = audioBadgeBounds,
             backdropState = playerBackdropState,
             isDark = isDark,
+            onProgress = { audioDialogProgress = it },
         )
     }
 }

@@ -40,23 +40,28 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.playback.AudioPipelineDetails
+import org.shilpo.laboon.playback.AudioQualityInfo
 import org.shilpo.laboon.playback.OutputDeviceType
+import org.shilpo.laboon.ui.design.AudioQualityBadge
 import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
 import org.shilpo.laboon.ui.design.LiquidGlassSurface
 import androidx.compose.ui.unit.lerp as lerpDp
@@ -70,21 +75,27 @@ fun AudioInfoDialog(
     track: HomeTrack? = null,
     durationMs: Long = 0L,
     originBounds: Rect? = null,
+    quality: AudioQualityInfo? = null,
     backdropState: LiquidGlassBackdropState? = null,
     isDark: Boolean = isSystemInDarkTheme(),
     modifier: Modifier = Modifier,
+    onProgress: ((Float) -> Unit)? = null,
 ) {
     val animatable = remember { Animatable(0f) }
+    var dialogSize by remember { mutableStateOf<IntSize?>(null) }
+    var boxBounds by remember { mutableStateOf<Rect?>(null) }
 
-    LaunchedEffect(isOpen) {
+    LaunchedEffect(isOpen, dialogSize != null, boxBounds != null) {
         if (isOpen) {
-            animatable.animateTo(
-                targetValue = 1f,
-                animationSpec = spring(
-                    dampingRatio = 0.82f,
-                    stiffness = 380f,
-                ),
-            )
+            if (dialogSize != null && boxBounds != null) {
+                animatable.animateTo(
+                    targetValue = 1f,
+                    animationSpec = spring(
+                        dampingRatio = 0.82f,
+                        stiffness = 380f,
+                    ),
+                )
+            }
         } else {
             animatable.animateTo(
                 targetValue = 0f,
@@ -97,6 +108,11 @@ fun AudioInfoDialog(
     }
 
     val progress = animatable.value
+
+    LaunchedEffect(progress) {
+        onProgress?.invoke(progress)
+    }
+
     if (!isOpen && progress <= 0.001f) return
 
     BackHandler(enabled = isOpen) {
@@ -104,8 +120,6 @@ fun AudioInfoDialog(
     }
 
     val density = LocalDensity.current
-    var dialogBounds by remember { mutableStateOf<Rect?>(null) }
-
     val startRadius = with(density) {
         originBounds?.let { (it.height / 2f).toDp() } ?: 14.dp
     }
@@ -122,23 +136,26 @@ fun AudioInfoDialog(
                 onClick = onDismiss,
             )
             .statusBarsPadding()
-            .navigationBarsPadding(),
+            .navigationBarsPadding()
+            .onGloballyPositioned { coordinates ->
+                boxBounds = coordinates.boundsInRoot()
+            },
         contentAlignment = Alignment.Center,
     ) {
         val details = pipeline ?: AudioPipelineDetails()
+        val targetCenter = boxBounds?.center ?: originBounds?.center ?: Offset.Zero
+        val targetW = dialogSize?.width?.toFloat() ?: with(density) { 380.dp.toPx() }
+        val targetH = dialogSize?.height?.toFloat() ?: with(density) { 500.dp.toPx() }
 
         val scaleX: Float
         val scaleY: Float
         val transX: Float
         val transY: Float
 
-        if (originBounds != null && dialogBounds != null) {
+        if (originBounds != null && boxBounds != null && dialogSize != null) {
             val originCenter = originBounds.center
-            val targetCenter = dialogBounds!!.center
             val originW = originBounds.width
             val originH = originBounds.height
-            val targetW = dialogBounds!!.width.coerceAtLeast(1f)
-            val targetH = dialogBounds!!.height.coerceAtLeast(1f)
 
             scaleX = lerpFloat(originW / targetW, 1f, progress)
             scaleY = lerpFloat(originH / targetH, 1f, progress)
@@ -152,6 +169,39 @@ fun AudioInfoDialog(
         }
 
         val contentAlpha = ((progress - 0.20f) / 0.80f).coerceIn(0f, 1f)
+        val dialogAlpha = if (originBounds != null) {
+            ((progress - 0.06f) / 0.18f).coerceIn(0f, 1f)
+        } else {
+            if (progress < 0.05f) 0f else 1f
+        }
+
+        if (progress < 0.28f && originBounds != null && boxBounds != null) {
+            val badgeMorphAlpha = (1f - progress / 0.24f).coerceIn(0f, 1f)
+            val badgeCenter = originBounds.center
+            val currentCenterX = lerpFloat(badgeCenter.x, targetCenter.x, progress)
+            val currentCenterY = lerpFloat(badgeCenter.y, targetCenter.y, progress)
+            val badgeScale = lerpFloat(1f, 1.12f, progress / 0.24f)
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .graphicsLayer {
+                        translationX = currentCenterX - boxBounds!!.left - (originBounds.width / 2f)
+                        translationY = currentCenterY - boxBounds!!.top - (originBounds.height / 2f)
+                        this.scaleX = badgeScale
+                        this.scaleY = badgeScale
+                        alpha = badgeMorphAlpha
+                    },
+            ) {
+                AudioQualityBadge(
+                    quality = quality,
+                    fallbackCodec = track?.codec,
+                    track = track,
+                    isDark = isDark,
+                    onClick = null,
+                )
+            }
+        }
 
         Column(
             modifier = Modifier
@@ -159,15 +209,15 @@ fun AudioInfoDialog(
                 .widthIn(max = 420.dp)
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
-                .onGloballyPositioned { coordinates ->
-                    dialogBounds = coordinates.boundsInRoot()
+                .onSizeChanged { size ->
+                    dialogSize = size
                 }
                 .graphicsLayer {
                     this.scaleX = scaleX
                     this.scaleY = scaleY
                     this.translationX = transX
                     this.translationY = transY
-                    this.alpha = if (progress < 0.05f) 0f else 1f
+                    this.alpha = dialogAlpha
                 },
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {

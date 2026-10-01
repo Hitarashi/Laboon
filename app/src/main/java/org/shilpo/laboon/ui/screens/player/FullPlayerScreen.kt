@@ -175,6 +175,7 @@ fun FullPlayerScreen(
 
     var showAudioInfo by remember { mutableStateOf(false) }
     var audioBadgeBounds by remember { mutableStateOf<Rect?>(null) }
+    var audioDialogProgress by remember { mutableFloatStateOf(0f) }
     val playerBackdropState = rememberLiquidGlassBackdropState()
     val playerBackdropLayer = rememberGraphicsLayer()
 
@@ -279,6 +280,10 @@ fun FullPlayerScreen(
                         onOpenQueue = onOpenQueue,
                         onAudioQualityClick = { showAudioInfo = true },
                         onAudioQualityPositioned = { coords -> audioBadgeBounds = coords },
+                        audioBadgeAlpha = if (showAudioInfo) 0f else (1f - (audioDialogProgress / 0.08f)).coerceIn(
+                            0f,
+                            1f
+                        ),
                         isDark = isDark,
                     )
                 },
@@ -289,11 +294,13 @@ fun FullPlayerScreen(
             isOpen = showAudioInfo,
             onDismiss = { showAudioInfo = false },
             pipeline = audioQuality?.pipelineDetails,
+            quality = audioQuality,
             track = track,
             durationMs = durationMs,
             originBounds = audioBadgeBounds,
             backdropState = playerBackdropState,
             isDark = isDark,
+            onProgress = { audioDialogProgress = it },
         )
     }
 }
@@ -601,6 +608,7 @@ private fun FullPlayerControls(
     onOpenQueue: () -> Unit,
     onAudioQualityClick: () -> Unit = {},
     onAudioQualityPositioned: ((Rect) -> Unit)? = null,
+    audioBadgeAlpha: Float = 1f,
     isDark: Boolean = isSystemInDarkTheme(),
 ) {
     Column(
@@ -697,11 +705,17 @@ private fun FullPlayerControls(
                 fallbackCodec = track.codec,
                 track = track,
                 isDark = isDark,
-                modifier = if (onAudioQualityPositioned != null) {
-                    Modifier.onGloballyPositioned { coords ->
-                        onAudioQualityPositioned(coords.boundsInRoot())
+                modifier = Modifier
+                    .graphicsLayer {
+                        alpha = audioBadgeAlpha
                     }
-                } else Modifier,
+                    .then(
+                        if (onAudioQualityPositioned != null) {
+                            Modifier.onGloballyPositioned { coords ->
+                                onAudioQualityPositioned(coords.boundsInRoot())
+                            }
+                        } else Modifier
+                    ),
                 onClick = onAudioQualityClick,
             )
 
