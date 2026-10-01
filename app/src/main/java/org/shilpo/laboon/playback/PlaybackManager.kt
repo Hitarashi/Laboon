@@ -21,10 +21,12 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.CacheWriter
 import androidx.media3.datasource.cache.ContentMetadata
 import androidx.media3.exoplayer.DecoderReuseEvaluation
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
@@ -55,6 +57,26 @@ import org.shilpo.laboon.home.TrackIdentity
 import org.shilpo.laboon.search.SearchRepository
 import org.shilpo.laboon.search.SearchRepositoryImpl
 import kotlin.math.roundToInt
+
+private fun resourceContentLength(responseHeaders: Map<String, List<String>>): Long? {
+    val contentRange = responseHeaders.entries
+        .firstOrNull { it.key.equals("Content-Range", ignoreCase = true) }
+        ?.value
+        ?.firstOrNull()
+
+    if (contentRange != null) {
+        return contentRange.substringAfterLast('/', "")
+            .toLongOrNull()
+            ?.takeIf { it > 0L }
+    }
+
+    return responseHeaders.entries
+        .firstOrNull { it.key.equals("Content-Length", ignoreCase = true) }
+        ?.value
+        ?.firstOrNull()
+        ?.toLongOrNull()
+        ?.takeIf { it > 0L }
+}
 
 interface PlaybackManager {
     val state: StateFlow<PlaybackState>
@@ -151,7 +173,7 @@ class PlaybackManagerImpl(
     private var sinkAudioTrackConfig: AudioSink.AudioTrackConfig? = null
 
     @Volatile
-    private var currentStreamContentLength: Long = 0L
+    private var currentResourceLengthBytes: Long = 0L
     private val songCache by lazy { SongCache.getInstance(context) }
 
     init {
@@ -242,7 +264,7 @@ class PlaybackManagerImpl(
 
         val upstreamHttpFactory = DefaultHttpDataSource.Factory()
             .setConnectTimeoutMs(15_000)
-            .setReadTimeoutMs(20_000)
+            .setReadTimeoutMs(30_000)
             .setAllowCrossProtocolRedirects(true)
 
         val songCache = this.songCache
@@ -255,12 +277,23 @@ class PlaybackManagerImpl(
         val mediaSourceFactory = DefaultMediaSourceFactory(context)
             .setDataSourceFactory(factory)
 
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                60_000,
+                300_000,
+                2_000,
+                5_000,
+            )
+            .setBackBuffer(30_000, true)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+
         val exo = ExoPlayer.Builder(context, renderersFactory)
             .setTrackSelector(trackSelector)
             .setAudioAttributes(audioAttributes, true)
             .setHandleAudioBecomingNoisy(true)
             .setMediaSourceFactory(mediaSourceFactory)
-            .setLoadControl(ExponentialLoadControl())
+            .setLoadControl(loadControl)
             .build()
 
         exo.addAnalyticsListener(object : AnalyticsListener {
@@ -282,12 +315,9 @@ class PlaybackManagerImpl(
                 mediaLoadData: MediaLoadData
             ) {
                 if (exo.currentMediaItem?.mediaId == _state.value.currentTrack?.id) {
-                    val lengthHeader =
-                        loadEventInfo.responseHeaders["Content-Length"]?.firstOrNull()
-                            ?.toLongOrNull()
-                            ?: loadEventInfo.bytesLoaded.takeIf { it > 0 }
-                    if (lengthHeader != null && lengthHeader > 0 && lengthHeader > currentStreamContentLength) {
-                        currentStreamContentLength = lengthHeader
+                    val resourceLength = resourceContentLength(loadEventInfo.responseHeaders)
+                    if (resourceLength != null && resourceLength > currentResourceLengthBytes) {
+                        currentResourceLengthBytes = resourceLength
                         updateAudioQuality(exo)
                     }
                 }
@@ -401,12 +431,7 @@ class PlaybackManagerImpl(
             override fun onPlayerError(error: PlaybackException) {
                 fadeJob?.cancel()
                 pendingFadeIn = false
-                val isTransient =
-                    error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
-                            error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
-                            error.errorCode == PlaybackException.ERROR_CODE_IO_UNSPECIFIED ||
-                            error.cause?.cause is java.net.SocketTimeoutException ||
-                            error.cause?.cause is java.net.SocketException
+                val isTransient = shouldRetryPlaybackError(error)
                 if (isTransient && retryCount < MAX_RETRIES) {
                     retryCount++
                     val backoffMs = 1000L * retryCount
@@ -529,7 +554,7 @@ class PlaybackManagerImpl(
         sinkInputFormat = null
         sinkAudioTrackConfig = null
         currentDecoderName = null
-        currentStreamContentLength = 0L
+        currentResourceLengthBytes = 0L
     }
 
     private fun followPlayerTransition(exo: ExoPlayer) {
@@ -677,12 +702,52 @@ class PlaybackManagerImpl(
         }
     }
 
+    private fun isTrackFullyCached(trackId: String): Boolean {
+        return try {
+            val currentTrackLength = currentResourceLengthBytes
+                .takeIf { _state.value.currentTrack?.id == trackId && it > 0L }
+            val cachedLength =
+                ContentMetadata.getContentLength(songCache.getContentMetadata(trackId))
+            val length = currentTrackLength ?: cachedLength
+            length > 0L && songCache.isCached(trackId, 0L, length)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun shouldRetryPlaybackError(error: PlaybackException): Boolean {
+        var cause: Throwable? = error
+        var hasSocketFailure = false
+        while (cause != null) {
+            if (cause is HttpDataSource.InvalidResponseCodeException) {
+                val statusCode = cause.responseCode
+                return statusCode == 401 || statusCode == 408 || statusCode == 429 ||
+                        statusCode in 500..599
+            }
+            if (cause is java.net.SocketTimeoutException || cause is java.net.SocketException) {
+                hasSocketFailure = true
+            }
+            cause = cause.cause
+        }
+
+        return hasSocketFailure ||
+                error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
+                error.errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
+                error.errorCode == PlaybackException.ERROR_CODE_IO_UNSPECIFIED
+    }
+
     private fun startPrecacheNext(track: HomeTrack, streamUrl: String) {
         cancelPrecache()
         val factory = cacheDataSourceFactory ?: return
+        val currentTrackId = _state.value.currentTrack?.id ?: return
         precacheJob = scope.launch(Dispatchers.IO) {
-            delay(2500)
-            if (!isActive) return@launch
+            while (isActive && _state.value.currentTrack?.id == currentTrackId) {
+                if (isTrackFullyCached(currentTrackId)) {
+                    break
+                }
+                delay(1000)
+            }
+            if (!isActive || _state.value.currentTrack?.id != currentTrackId) return@launch
             try {
                 val cacheDataSource = factory.createDataSource()
                 val dataSpec = DataSpec.Builder()
@@ -1101,14 +1166,22 @@ class PlaybackManagerImpl(
             }
 
         val contentLength = try {
-            val key = currentTrack?.streamUrl
-            if (!key.isNullOrBlank()) {
-                val meta = songCache.getContentMetadata(key)
-                val len = ContentMetadata.getContentLength(meta)
-                if (len > 0L) len else currentStreamContentLength
-            } else currentStreamContentLength
+            val trackId = currentTrack?.id
+            var len = -1L
+            if (!trackId.isNullOrBlank()) {
+                val meta = songCache.getContentMetadata(trackId)
+                len = ContentMetadata.getContentLength(meta)
+            }
+            if (len <= 0L) {
+                val streamUrl = currentTrack?.streamUrl
+                if (!streamUrl.isNullOrBlank()) {
+                    val meta = songCache.getContentMetadata(streamUrl)
+                    len = ContentMetadata.getContentLength(meta)
+                }
+            }
+            if (len > 0L) len else currentResourceLengthBytes
         } catch (_: Exception) {
-            currentStreamContentLength
+            currentResourceLengthBytes
         }
 
         val durMs =
