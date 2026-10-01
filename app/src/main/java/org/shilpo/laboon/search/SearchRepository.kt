@@ -432,6 +432,7 @@ class SearchRepositoryImpl(
                                             recordingMbidKey(v.provider, v.trackId ?: trackId)
                                         ],
                                         isrc = v.isrc,
+                                        providerTrackId = v.trackId ?: trackId,
                                     )
                                 )
                             }
@@ -457,6 +458,7 @@ class SearchRepositoryImpl(
                                             trackId
                                         )
                                     ],
+                                    providerTrackId = trackId,
                                 )
                             )
                         }
@@ -502,6 +504,7 @@ class SearchRepositoryImpl(
                                         ]
                                     },
                                 isrc = cObj.stringOrNull("isrc"),
+                                providerTrackId = cObj.stringOrNull("track_id"),
                             )
                         )
                     }

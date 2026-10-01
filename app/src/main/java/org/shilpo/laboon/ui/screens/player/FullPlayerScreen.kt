@@ -87,6 +87,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.lyrics.LyricsLine
 import org.shilpo.laboon.playback.ArtworkUrlHelper
 import org.shilpo.laboon.playback.AudioQualityInfo
 import org.shilpo.laboon.playback.QueueState
@@ -94,7 +95,6 @@ import org.shilpo.laboon.playback.RepeatMode
 import org.shilpo.laboon.playback.SpectrumFrame
 import org.shilpo.laboon.ui.design.liquidGlassBackdropProducer
 import org.shilpo.laboon.ui.design.rememberLiquidGlassBackdropState
-import org.shilpo.laboon.ui.screens.player.lyrics.LyricLine
 import kotlin.math.abs
 
 private val FullPlayerCookieMorph = Morph(MaterialShapes.Circle, MaterialShapes.Cookie12Sided)
@@ -159,7 +159,8 @@ fun FullPlayerScreen(
     onRemoveUpNext: ((Int) -> Unit)? = null,
     onMoveUpNext: ((Int, Int) -> Unit)? = null,
     onTrackClick: ((HomeTrack) -> Unit)? = null,
-    lyricsLines: List<LyricLine> = emptyList(),
+    lyricsLines: List<LyricsLine> = emptyList(),
+    lyricsLoading: Boolean = false,
 ) {
     val coroutineScope = rememberCoroutineScope()
     var activePanel by remember { mutableStateOf<PlayerPanelTab?>(null) }
@@ -347,6 +348,7 @@ fun FullPlayerScreen(
                 durationMs = durationMs,
                 queueState = queueState,
                 lyricsLines = lyricsLines,
+                lyricsLoading = lyricsLoading,
             ),
             actions = PlayerOverlayActions(
                 onPlayPause = onPlayPauseClick,

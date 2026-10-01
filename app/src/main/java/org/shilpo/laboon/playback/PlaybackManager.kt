@@ -41,6 +41,7 @@ import androidx.media3.exoplayer.source.MediaLoadData
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.session.MediaSession
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -56,6 +57,9 @@ import org.shilpo.laboon.auth.SessionStore
 import org.shilpo.laboon.auth.SharedPreferencesKeyValueStore
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.home.TrackIdentity
+import org.shilpo.laboon.lyrics.LyricsLookup
+import org.shilpo.laboon.lyrics.LyricsRepository
+import org.shilpo.laboon.lyrics.LyricsRepositoryImpl
 import org.shilpo.laboon.search.SearchRepository
 import org.shilpo.laboon.search.SearchRepositoryImpl
 import kotlin.math.roundToInt
@@ -115,6 +119,7 @@ class PlaybackManagerImpl(
     private val playbackPersistence: PlaybackPersistence = PlaybackPersistence(
         SharedPreferencesKeyValueStore(context),
     ),
+    private val lyricsRepository: LyricsRepository = LyricsRepositoryImpl(),
 ) : PlaybackManager {
 
     private val spectrumVisualizer = SpectrumVisualizer()
@@ -162,6 +167,9 @@ class PlaybackManagerImpl(
     private var retryJob: Job? = null
     private var retryCount: Int = 0
     private var cacheBypassTrackId: String? = null
+    private var lyricsJob: Job? = null
+    private var lyricsGeneration = 0L
+    private var lyricsRequestedGeneration = -1L
 
     @Volatile
     private var currentDecoderName: String? = null
@@ -181,6 +189,10 @@ class PlaybackManagerImpl(
 
     init {
         initPlayer()
+        _state.value.currentTrack?.let { track ->
+            _state.value = _state.value.copy(lyricsLoading = true)
+            requestLyrics(track, _state.value.durationMs)
+        }
         scope.launch {
             queueManager.state.collect { qState ->
                 syncPlayerModes(qState)
@@ -357,6 +369,7 @@ class PlaybackManagerImpl(
                             currentPositionMs = pos,
                             progress = prog,
                         )
+                        _state.value.currentTrack?.let { track -> requestLyrics(track, dur) }
                         updateAudioQuality(exo)
                     }
 
@@ -624,6 +637,9 @@ class PlaybackManagerImpl(
     }
 
     private fun executePlayTrack(track: HomeTrack, startPositionMs: Long = 0L) {
+        lyricsJob?.cancel()
+        lyricsGeneration += 1L
+        lyricsRequestedGeneration = -1L
         resolveJob?.cancel()
         preloadJob?.cancel()
         cancelPrecache()
@@ -656,7 +672,11 @@ class PlaybackManagerImpl(
             durationMs = dur,
             progress = initialProg,
             error = null,
+            lyricsLines = emptyList(),
+            lyricsProvider = null,
+            lyricsLoading = true,
         )
+        requestLyrics(track, 0L)
         playbackPersistence.saveLastTrack(track)
         playbackPersistence.setPlayerDismissed(false)
         if (startPositionMs > 0L) {
@@ -689,6 +709,37 @@ class PlaybackManagerImpl(
                     )
                 }
             }
+        }
+    }
+
+    private fun requestLyrics(track: HomeTrack, durationMs: Long) {
+        val generation = lyricsGeneration
+        if (lyricsRequestedGeneration == generation) return
+        lyricsRequestedGeneration = generation
+        lyricsJob = scope.launch {
+            val result = try {
+                lyricsRepository.lookup(
+                    LyricsLookup(
+                        title = track.title,
+                        artists = listOf(track.artist),
+                        album = track.album,
+                        durationSeconds = durationMs.takeIf { it > 0L }?.div(1_000L),
+                        appleTrackId = track.providerTrackId.takeIf {
+                            track.source.orEmpty().contains("apple", ignoreCase = true)
+                        },
+                    )
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+            if (generation != lyricsGeneration || _state.value.currentTrack?.id != track.id) return@launch
+            _state.value = _state.value.copy(
+                lyricsLines = result?.lines.orEmpty(),
+                lyricsProvider = result?.provider,
+                lyricsLoading = false,
+            )
         }
     }
 
@@ -1474,6 +1525,9 @@ class PlaybackManagerImpl(
     }
 
     override fun stop() {
+        lyricsJob?.cancel()
+        lyricsGeneration += 1L
+        lyricsRequestedGeneration = -1L
         resolveJob?.cancel()
         preloadJob?.cancel()
         cancelPrecache()
@@ -1509,6 +1563,8 @@ class PlaybackManagerImpl(
     }
 
     override fun release() {
+        lyricsJob?.cancel()
+        lyricsGeneration += 1L
         resolveJob?.cancel()
         preloadJob?.cancel()
         cancelPrecache()

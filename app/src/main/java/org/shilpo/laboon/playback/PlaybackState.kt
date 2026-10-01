@@ -1,6 +1,7 @@
 package org.shilpo.laboon.playback
 
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.lyrics.LyricsLine
 
 enum class OutputDeviceType {
     PHONE_SPEAKER,
@@ -60,4 +61,7 @@ data class PlaybackState(
     val canSkipPrevious: Boolean = false,
     val isDiscovering: Boolean = false,
     val audioQuality: AudioQualityInfo? = null,
+    val lyricsLines: List<LyricsLine> = emptyList(),
+    val lyricsProvider: String? = null,
+    val lyricsLoading: Boolean = false,
 )

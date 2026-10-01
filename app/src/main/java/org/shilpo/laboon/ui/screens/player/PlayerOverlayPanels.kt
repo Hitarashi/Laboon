@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.lyrics.LyricsLine
 import org.shilpo.laboon.playback.AudioQualityInfo
 import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.playback.RepeatMode
@@ -39,7 +40,6 @@ import org.shilpo.laboon.ui.design.LiquidGlassSurface
 import org.shilpo.laboon.ui.design.MiniPlayerSpacing
 import org.shilpo.laboon.ui.design.NavigationBarHeight
 import org.shilpo.laboon.ui.design.NavigationBarMaxWidth
-import org.shilpo.laboon.ui.screens.player.lyrics.LyricLine
 import org.shilpo.laboon.ui.screens.player.lyrics.LyricsScreen
 import org.shilpo.laboon.ui.screens.player.queue.QueueScreen
 
@@ -58,7 +58,8 @@ internal data class PlayerOverlayState(
     val currentPositionMs: Long,
     val durationMs: Long,
     val queueState: QueueState?,
-    val lyricsLines: List<LyricLine>,
+    val lyricsLines: List<LyricsLine>,
+    val lyricsLoading: Boolean,
 )
 
 internal data class PlayerOverlayActions(
@@ -208,6 +209,7 @@ internal fun PlayerOverlayPanels(
                                 currentPositionMs = state.currentPositionMs,
                                 durationMs = state.durationMs,
                                 lyricsLines = state.lyricsLines,
+                                lyricsLoading = state.lyricsLoading,
                                 onSeek = actions.onSeek,
                                 lyricsFractionProvider = panelFractionProvider,
                                 lazyListState = lyricsListState,

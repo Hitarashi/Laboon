@@ -109,6 +109,7 @@ class HomeFeedCache(private val store: KeyValueStore) {
                 track.codec?.let { put("codec", it) }
                 track.mbid?.let { put("mbid", it) }
                 track.isrc?.let { put("isrc", it) }
+                track.providerTrackId?.let { put("providerTrackId", it) }
             }
             array.put(obj)
         }
@@ -138,6 +139,7 @@ class HomeFeedCache(private val store: KeyValueStore) {
                     codec = obj.optString("codec").takeIf { it.isNotBlank() },
                     mbid = obj.optString("mbid").takeIf { it.isNotBlank() },
                     isrc = obj.optString("isrc").takeIf { it.isNotBlank() },
+                    providerTrackId = obj.optString("providerTrackId").takeIf { it.isNotBlank() },
                 )
             )
         }

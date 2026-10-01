@@ -102,6 +102,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.lyrics.LyricsLine
 import org.shilpo.laboon.playback.ArtworkUrlHelper
 import org.shilpo.laboon.playback.AudioQualityInfo
 import org.shilpo.laboon.playback.QueueState
@@ -116,7 +117,6 @@ import org.shilpo.laboon.ui.design.NavigationBarHeight
 import org.shilpo.laboon.ui.design.NavigationBarMaxWidth
 import org.shilpo.laboon.ui.design.liquidGlassBackdropProducer
 import org.shilpo.laboon.ui.design.rememberLiquidGlassBackdropState
-import org.shilpo.laboon.ui.screens.player.lyrics.LyricLine
 import kotlin.math.abs
 import androidx.compose.ui.graphics.lerp as lerpColor
 import androidx.compose.ui.util.lerp as lerpFloat
@@ -186,7 +186,8 @@ fun MorphingPlayerSheet(
     onRemoveUpNext: ((Int) -> Unit)? = null,
     onMoveUpNext: ((Int, Int) -> Unit)? = null,
     onTrackClick: ((HomeTrack) -> Unit)? = null,
-    lyricsLines: List<LyricLine> = emptyList(),
+    lyricsLines: List<LyricsLine> = emptyList(),
+    lyricsLoading: Boolean = false,
 ) {
     val density = LocalDensity.current
     val coroutineScope = rememberCoroutineScope()
@@ -1443,6 +1444,7 @@ fun MorphingPlayerSheet(
                 durationMs = durationMs,
                 queueState = queueState,
                 lyricsLines = lyricsLines,
+                lyricsLoading = lyricsLoading,
             ),
             actions = PlayerOverlayActions(
                 onPlayPause = onPlayPauseClick,

@@ -66,7 +66,8 @@ object QueuePersistenceCodec {
 
     private const val VERSION = "v1"
     private const val HEADER_FIELDS = 6
-    private const val ITEM_FIELDS = 13
+    private const val LEGACY_ITEM_FIELDS = 13
+    private const val ITEM_FIELDS = 14
     private const val MAX_ITEMS = 200
 
     fun encode(state: QueueState): String {
@@ -139,11 +140,12 @@ object QueuePersistenceCodec {
         encodeOptional(track.codec),
         encodeOptional(track.mbid),
         encodeOptional(track.isrc),
+        encodeOptional(track.providerTrackId),
     ).joinToString("\t")
 
     fun decodeTrack(line: String): HomeTrack? {
         val fields = line.split('\t')
-        if (fields.size != ITEM_FIELDS) return null
+        if (fields.size != LEGACY_ITEM_FIELDS && fields.size != ITEM_FIELDS) return null
 
 
         val values = fields.map { unescape(it) ?: return null }
@@ -166,6 +168,7 @@ object QueuePersistenceCodec {
             codec = decodeOptional(values[10]),
             mbid = decodeOptional(values[11]),
             isrc = decodeOptional(values[12]),
+            providerTrackId = values.getOrNull(13)?.let(::decodeOptional),
         )
     }
 

@@ -14,6 +14,7 @@ data class HomeTrack(
     val codec: String? = null,
     val mbid: String? = null,
     val isrc: String? = null,
+    val providerTrackId: String? = null,
 )
 
 data class HomeArtist(

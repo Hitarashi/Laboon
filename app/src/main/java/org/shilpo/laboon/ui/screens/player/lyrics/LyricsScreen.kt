@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -36,62 +37,30 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
-
-data class LyricLine(
-    val startMs: Long,
-    val endMs: Long = 0L,
-    val text: String,
-)
-
-fun parseLrcLines(rawLrc: String): List<LyricLine> {
-    if (rawLrc.isBlank()) return emptyList()
-    val regex = Regex("""\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\](.*)""")
-    val parsed = mutableListOf<LyricLine>()
-    rawLrc.lineSequence().forEach { line ->
-        regex.find(line.trim())?.let { match ->
-            val min = match.groupValues[1].toLongOrNull() ?: 0L
-            val sec = match.groupValues[2].toLongOrNull() ?: 0L
-            val msStr = match.groupValues[3].padEnd(3, '0').take(3)
-            val ms = msStr.toLongOrNull() ?: 0L
-            val startMs = min * 60000L + sec * 1000L + ms
-            val text = match.groupValues[4].trim()
-            if (text.isNotEmpty()) {
-                parsed.add(LyricLine(startMs = startMs, text = text))
-            }
-        }
-    }
-    if (parsed.isEmpty()) {
-        return rawLrc.lineSequence()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .mapIndexed { index, text ->
-                LyricLine(startMs = index * 4000L, endMs = (index + 1) * 4000L, text = text)
-            }
-            .toList()
-    }
-    return parsed.mapIndexed { i, item ->
-        val nextStart = parsed.getOrNull(i + 1)?.startMs ?: (item.startMs + 6000L)
-        item.copy(endMs = nextStart)
-    }
-}
+import org.shilpo.laboon.lyrics.LyricsLine
 
 @Composable
 fun LyricsScreen(
     track: HomeTrack,
     currentPositionMs: Long,
     durationMs: Long,
-    lyricsLines: List<LyricLine>,
+    lyricsLines: List<LyricsLine>,
+    lyricsLoading: Boolean = false,
     onSeek: (Float) -> Unit,
     modifier: Modifier = Modifier,
     lyricsFractionProvider: () -> Float = { 1f },
     lazyListState: LazyListState = rememberLazyListState(),
 ) {
+    val hasTiming = lyricsLines.hasTiming()
     Box(
         modifier = modifier
             .fillMaxSize(),
@@ -101,10 +70,11 @@ fun LyricsScreen(
             currentPositionMs = currentPositionMs,
             durationMs = durationMs,
             lyricsLines = lyricsLines,
+            lyricsLoading = lyricsLoading,
             lyricsFractionProvider = lyricsFractionProvider,
             lazyListState = lazyListState,
             onLineClick = { line ->
-                if (durationMs > 0L) {
+                if (hasTiming && durationMs > 0L) {
                     val frac = (line.startMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
                     onSeek(frac)
                 }
@@ -120,16 +90,18 @@ fun LyricsContentCard(
     track: HomeTrack,
     currentPositionMs: Long,
     durationMs: Long,
-    lyricsLines: List<LyricLine>,
+    lyricsLines: List<LyricsLine>,
+    lyricsLoading: Boolean,
     lyricsFractionProvider: () -> Float,
     lazyListState: LazyListState,
-    onLineClick: (LyricLine) -> Unit,
+    onLineClick: (LyricsLine) -> Unit,
     onSeek: (Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val hasTiming = remember(lyricsLines) { lyricsLines.hasTiming() }
     val activeIndex by remember(currentPositionMs, lyricsLines) {
         derivedStateOf {
-            if (lyricsLines.isEmpty()) -1
+            if (lyricsLines.isEmpty() || !hasTiming) -1
             else {
                 val idx = lyricsLines.indexOfLast { it.startMs <= currentPositionMs }
                 if (idx >= 0) idx else 0
@@ -149,6 +121,7 @@ fun LyricsContentCard(
     val fadeHeight = 40.dp
     val primaryTextColor = MaterialTheme.colorScheme.onSurface
     val secondaryTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val karaokeHighlightColor = MaterialTheme.colorScheme.primary
 
     Box(modifier = modifier.fillMaxSize()) {
         if (lyricsLines.isEmpty()) {
@@ -171,14 +144,21 @@ fun LyricsContentCard(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "No Lyrics Available",
+                        text = if (lyricsLoading) "Searching for lyrics…" else "No Lyrics Available",
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         color = primaryTextColor,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
+                    if (lyricsLoading) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp
+                        )
+                    }
                     Text(
-                        text = "Enjoy the melody for ${track.title}",
+                        text = if (lyricsLoading) "Lyrics will appear here when found" else "Enjoy the melody for ${track.title}",
                         fontSize = 14.sp,
                         color = secondaryTextColor,
                         textAlign = TextAlign.Center,
@@ -239,10 +219,26 @@ fun LyricsContentCard(
                         label = "LineScale",
                     )
                     val lineAlpha by animateFloatAsState(
-                        targetValue = if (isActive) 1.0f else 0.40f,
+                        targetValue = if (isActive || !hasTiming) 1.0f else 0.52f,
                         animationSpec = tween(durationMillis = 250),
                         label = "LineAlpha",
                     )
+                    val karaokeText = remember(
+                        line,
+                        currentPositionMs,
+                        isActive,
+                        primaryTextColor,
+                        secondaryTextColor,
+                        karaokeHighlightColor,
+                    ) {
+                        line.toKaraokeText(
+                            currentPositionMs = currentPositionMs,
+                            isActive = isActive,
+                            completedColor = primaryTextColor,
+                            highlightColor = karaokeHighlightColor,
+                            upcomingColor = secondaryTextColor,
+                        )
+                    }
 
                     Box(
                         modifier = Modifier
@@ -256,11 +252,13 @@ fun LyricsContentCard(
                             .padding(vertical = 4.dp),
                     ) {
                         Text(
-                            text = line.text,
+                            text = karaokeText,
+                            textAlign = TextAlign.Center,
                             fontSize = if (isActive) 22.sp else 19.sp,
                             fontWeight = if (isActive) FontWeight.ExtraBold else FontWeight.SemiBold,
                             color = if (isActive) primaryTextColor else secondaryTextColor,
                             lineHeight = if (isActive) 30.sp else 26.sp,
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                 }
@@ -269,3 +267,58 @@ fun LyricsContentCard(
 
     }
 }
+
+private fun LyricsLine.toKaraokeText(
+    currentPositionMs: Long,
+    isActive: Boolean,
+    completedColor: Color,
+    highlightColor: Color,
+    upcomingColor: Color,
+): AnnotatedString {
+    if (!isActive || words.isEmpty()) return AnnotatedString(text)
+
+    return buildAnnotatedString {
+        append(text)
+
+        var searchFrom = 0
+        words.forEachIndexed { index, word ->
+            val wordStart = text.indexOf(word.text, startIndex = searchFrom)
+            if (wordStart < 0) return@forEachIndexed
+
+            val wordEnd = wordStart + word.text.length
+            val endMs = word.endMs
+                ?.takeIf { it > word.startMs }
+                ?: words.getOrNull(index + 1)?.startMs?.takeIf { it > word.startMs }
+                ?: this@toKaraokeText.endMs.takeIf { it > word.startMs }
+                ?: (word.startMs + 600L)
+            val wordStyle = when {
+                currentPositionMs >= endMs -> SpanStyle(
+                    color = completedColor,
+                    fontWeight = FontWeight.Bold,
+                )
+
+                currentPositionMs >= word.startMs -> {
+                    val durationMs = (endMs - word.startMs).coerceAtLeast(1L)
+                    val progress =
+                        ((currentPositionMs - word.startMs).toFloat() / durationMs).coerceIn(0f, 1f)
+                    SpanStyle(
+                        color = highlightColor,
+                        background = highlightColor.copy(alpha = 0.10f + (0.14f * progress)),
+                        fontWeight = FontWeight.ExtraBold,
+                    )
+                }
+
+                else -> SpanStyle(
+                    color = upcomingColor.copy(alpha = 0.45f),
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+
+            addStyle(wordStyle, wordStart, wordEnd)
+            searchFrom = wordEnd
+        }
+    }
+}
+
+private fun List<LyricsLine>.hasTiming(): Boolean =
+    any { line -> line.startMs > 0L || line.words.any { word -> word.startMs > 0L } }

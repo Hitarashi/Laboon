@@ -3,8 +3,10 @@ package org.shilpo.laboon.net
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.FormBody
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
@@ -49,6 +51,18 @@ class HttpJsonClient(
             .build()
     }
 
+    suspend fun postJson(
+        url: String,
+        body: String,
+        headers: Map<String, String> = emptyMap(),
+    ): HttpOutcome<String> = execute(url) {
+        Request.Builder()
+            .url(url)
+            .post(body.toRequestBody(JSON_BODY_MEDIA_TYPE))
+            .withHeaders(headers)
+            .build()
+    }
+
     suspend fun getJson(
         url: String,
         headers: Map<String, String> = emptyMap(),
@@ -68,7 +82,7 @@ class HttpJsonClient(
         withContext(Dispatchers.IO) {
             try {
                 httpClient.newCall(requestFactory()).execute().use { response ->
-                    val body = response.body?.string().orEmpty()
+                    val body = response.body.string().orEmpty()
                     if (!response.isSuccessful) {
                         return@withContext statusFailure(url, response.code, body)
                     }
@@ -155,6 +169,7 @@ class HttpJsonClient(
         private const val DEFAULT_TIMEOUT_MS = 8_000L
         private const val HTTP_TOO_MANY_REQUESTS = 429
         private const val JSON_MEDIA_TYPE = "application/json"
+        private val JSON_BODY_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         private const val MAX_BODY_SNIPPET = 200
 
 
