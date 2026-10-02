@@ -213,6 +213,7 @@ internal fun PlayerOverlayPanels(
                                 onSeek = actions.onSeek,
                                 lyricsFractionProvider = panelFractionProvider,
                                 lazyListState = lyricsListState,
+                                isPlaying = state.isPlaying,
                             )
 
                             PlayerPanelTab.Queue -> QueueScreen(
