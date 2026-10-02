@@ -15,7 +15,6 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
@@ -46,6 +45,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -66,12 +67,14 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineBreak
@@ -89,6 +92,7 @@ import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.lyrics.LyricsLine
 import org.shilpo.laboon.lyrics.LyricsTranslator
+import org.shilpo.laboon.ui.design.theme.GoogleSansFlex
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
@@ -106,12 +110,10 @@ private const val SMOOTH_PLAYBACK_MAX_FORWARD_DRIFT_MS = 80L
 private const val SMOOTH_PLAYBACK_MAX_BACKWARD_DRIFT_MS = 180L
 private const val SMOOTH_PLAYBACK_DRIFT_CORRECTION = 0.55f
 private const val LYRIC_FOCUS_SCROLL_DURATION_MS = 520
+private const val LYRICS_FONT_FEATURE_SETTINGS = "'liga' 0, 'clig' 0"
 
 private val SmoothDecelerateEasing = CubicBezierEasing(0.0f, 0.0f, 0.2f, 1.0f)
 private val NoSpaceAfterChars: Set<Char> = setOf('(', '[', '{', '«', '‹', '“', '‘')
-
-private fun lerp(start: Float, stop: Float, fraction: Float): Float =
-    start + (stop - start) * fraction.coerceIn(0f, 1f)
 
 private fun isChinese(text: String): Boolean = text.any { it.code in 0x4E00..0x9FFF }
 private fun isJapanese(text: String): Boolean =
@@ -258,6 +260,13 @@ fun LyricsScreen(
     val coroutineScope = rememberCoroutineScope()
     val hasTiming = remember(lyricsLines) { lyricsLines.hasTiming() }
     val hasWordTimings = remember(lyricsLines) { lyricsLines.hasWordTimings() }
+    val view = LocalView.current
+
+    DisposableEffect(view) {
+        val wasKeepingScreenOn = view.keepScreenOn
+        view.keepScreenOn = true
+        onDispose { view.keepScreenOn = wasKeepingScreenOn }
+    }
 
     Box(
         modifier = modifier.fillMaxSize(),
@@ -320,13 +329,11 @@ fun LyricsContentCard(
     }
     var isManualScrolling by remember { mutableStateOf(false) }
     var lastManualScrollTime by remember { mutableLongStateOf(0L) }
-    var frozenPositionMs by remember { mutableLongStateOf(-1L) }
 
     LaunchedEffect(track, lyricsLines) {
         playbackPositionMs.longValue = currentPositionMs.coerceAtLeast(0L)
         isManualScrolling = false
         lastManualScrollTime = 0L
-        frozenPositionMs = -1L
     }
 
     LaunchedEffect(track) {
@@ -505,12 +512,12 @@ fun LyricsContentCard(
 
     val currentTimeProvider: () -> Long = remember(leadMs) {
         {
-            val baseMs = if (isManualScrolling && frozenPositionMs >= 0L) {
-                frozenPositionMs
-            } else {
-                playbackPositionMs.longValue
-            }
-            (baseMs + leadMs + LYRIC_VISUAL_TUNING_OFFSET_MS + lyricsSyncOffsetMs).coerceAtLeast(0L)
+            (
+                    playbackPositionMs.longValue +
+                            leadMs +
+                            LYRIC_VISUAL_TUNING_OFFSET_MS +
+                            lyricsSyncOffsetMs
+                    ).coerceAtLeast(0L)
         }
     }
 
@@ -524,7 +531,6 @@ fun LyricsContentCard(
             }
         }
     }
-
     val nestedScrollConnection = remember {
         var lastUserScrollEventMs = 0L
         object : NestedScrollConnection {
@@ -555,17 +561,22 @@ fun LyricsContentCard(
 
     LaunchedEffect(isManualScrolling, lastManualScrollTime) {
         if (isManualScrolling) {
-            frozenPositionMs = playbackPositionMs.longValue
             delay(MANUAL_SCROLL_TIMEOUT_MS)
+            while (lazyListState.isScrollInProgress) {
+                delay(MANUAL_SCROLL_DEBOUNCE_MS)
+            }
             isManualScrolling = false
-            frozenPositionMs = -1L
-        } else {
-            frozenPositionMs = -1L
         }
     }
 
-    LaunchedEffect(activeIndex, isManualScrolling) {
-        if (!isManualScrolling && activeIndex in lyricsLines.indices && lyricsFractionProvider() > 0.05f) {
+    LaunchedEffect(activeIndex, isManualScrolling, isPlaying) {
+        if (!isPlaying || isManualScrolling || activeIndex !in lyricsLines.indices || lyricsFractionProvider() <= 0.05f) {
+            return@LaunchedEffect
+        }
+        while (lazyListState.isScrollInProgress) {
+            delay(MANUAL_SCROLL_DEBOUNCE_MS)
+        }
+        if (isPlaying && !isManualScrolling) {
             lazyListState.scrollLyricIntoFocus(
                 index = activeIndex,
                 animateToNearbyItem = true,
@@ -578,6 +589,10 @@ fun LyricsContentCard(
 
     val primaryTextColor = MaterialTheme.colorScheme.onSurface
     val secondaryTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val lyricsTextStyle = LocalTextStyle.current.copy(
+        fontFamily = GoogleSansFlex,
+        fontFeatureSettings = LYRICS_FONT_FEATURE_SETTINGS,
+    )
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val sheetMaxHeight = maxHeight
@@ -735,7 +750,6 @@ fun LyricsContentCard(
                                     Modifier
                                         .clickable {
                                             isManualScrolling = false
-                                            frozenPositionMs = -1L
                                             onLineClick(line, index)
                                         }
                                         .padding(vertical = 8.dp)
@@ -744,24 +758,25 @@ fun LyricsContentCard(
                                 }
                             )
 
-                        LyricsLineItem(
-                            line = line,
-                            isActive = isActive,
-                            index = index,
-                            nextLineStartMs = displayLyricsLines.getOrNull(index + 1)?.startMs,
-                            currentTimeProvider = currentTimeProvider,
-                            textColor = primaryTextColor,
-                            secondaryTextColor = secondaryTextColor,
-                            showRomanization = showRomanization,
-                            showTranslation = showTranslation,
-                            singerLaneMap = singerLaneMap,
-                            modifier = lineModifier,
-                            onLineClick = { clickedLine, clickedIndex ->
-                                isManualScrolling = false
-                                frozenPositionMs = -1L
-                                onLineClick(clickedLine, clickedIndex)
-                            },
-                        )
+                        CompositionLocalProvider(LocalTextStyle provides lyricsTextStyle) {
+                            LyricsLineItem(
+                                line = line,
+                                isActive = isActive,
+                                index = index,
+                                nextLineStartMs = displayLyricsLines.getOrNull(index + 1)?.startMs,
+                                currentTimeProvider = currentTimeProvider,
+                                textColor = primaryTextColor,
+                                secondaryTextColor = secondaryTextColor,
+                                showRomanization = showRomanization,
+                                showTranslation = showTranslation,
+                                singerLaneMap = singerLaneMap,
+                                modifier = lineModifier,
+                                onLineClick = { clickedLine, clickedIndex ->
+                                    isManualScrolling = false
+                                    onLineClick(clickedLine, clickedIndex)
+                                },
+                            )
+                        }
                     }
                 }
 
@@ -845,7 +860,6 @@ fun LyricsContentCard(
                                 Surface(
                                     onClick = {
                                         isManualScrolling = false
-                                        frozenPositionMs = -1L
                                         coroutineScope.launch {
                                             lazyListState.scrollLyricIntoFocus(
                                                 index = activeIndex,
@@ -1089,6 +1103,50 @@ private data class WordGroup(
     val syllables: List<WordRenderItem>,
 )
 
+private val BackgroundOuterBracketPairs = mapOf(
+    '(' to ')',
+    '[' to ']',
+    '{' to '}',
+    '（' to '）',
+    '［' to '］',
+    '｛' to '｝',
+    '〈' to '〉',
+    '《' to '》',
+    '「' to '」',
+    '『' to '』',
+)
+
+private fun stripOuterBackgroundBrackets(items: List<WordRenderItem>): List<WordRenderItem> {
+    var cleaned = items
+
+    while (true) {
+        val firstIndex = cleaned.indexOfFirst { item -> item.text.any { !it.isWhitespace() } }
+        val lastIndex = cleaned.indexOfLast { item -> item.text.any { !it.isWhitespace() } }
+        if (firstIndex < 0 || lastIndex < 0) {
+            return cleaned.filter { it.text.isNotBlank() }
+        }
+
+        val firstText = cleaned[firstIndex].text
+        val openingIndex = firstText.indexOfFirst { !it.isWhitespace() }
+        val closing = BackgroundOuterBracketPairs[firstText[openingIndex]] ?: return cleaned
+        val lastText = cleaned[lastIndex].text
+        val closingIndex = lastText.indexOfLast { !it.isWhitespace() }
+        if (lastText[closingIndex] != closing) return cleaned
+
+        val updated = cleaned.toMutableList()
+        val first = updated[firstIndex]
+        updated[firstIndex] = first.copy(
+            text = first.text.removeRange(openingIndex, openingIndex + 1),
+        )
+        val last = updated[lastIndex]
+        val updatedClosingIndex = last.text.indexOfLast { !it.isWhitespace() }
+        updated[lastIndex] = last.copy(
+            text = last.text.removeRange(updatedClosingIndex, updatedClosingIndex + 1),
+        )
+        cleaned = updated
+    }
+}
+
 private val WordBoundaryPunctuation =
     setOf(',', '.', '!', '?', ';', ':', '-', '—', ')', ']', '}', '"', '\'')
 
@@ -1308,7 +1366,7 @@ private fun LyricsLineItem(
     val bgWordsToRender: List<WordRenderItem> =
         remember(baseBgWords, line.text, lineIsRtl, isCjk, lineEndMs) {
             if (baseBgWords.isEmpty()) emptyList()
-            else {
+            else stripOuterBackgroundBrackets(
                 baseBgWords.mapIndexed { idx, word ->
                     val wordStartMs = word.startMs
                     val wordEndMs = word.endMs
@@ -1317,15 +1375,26 @@ private fun LyricsLineItem(
                         ?: lineEndMs.takeIf { it > wordStartMs }
                         ?: (wordStartMs + 400L)
                     WordRenderItem(word.text, wordStartMs, wordEndMs, true)
-                }
+                },
+            )
+        }
+    val visibleBgWords by remember(bgWordsToRender, currentTimeProvider) {
+        derivedStateOf {
+            val currentTime = currentTimeProvider()
+            val firstBackgroundStart = bgWordsToRender.minOfOrNull { it.startMs }
+            if (firstBackgroundStart != null && currentTime >= firstBackgroundStart) {
+                bgWordsToRender
+            } else {
+                emptyList()
             }
         }
+    }
 
     val wordGroups = remember(wordsToRender, line.text, isCjk, lineIsRtl) {
         groupIntoWords(wordsToRender, line.text, isCjk, lineIsRtl)
     }
-    val bgWordGroups = remember(bgWordsToRender, line.text, isCjk, lineIsRtl) {
-        groupIntoWords(bgWordsToRender, line.text, isCjk, lineIsRtl)
+    val bgWordGroups = remember(visibleBgWords, line.text, isCjk, lineIsRtl) {
+        groupIntoWords(visibleBgWords, line.text, isCjk, lineIsRtl)
     }
 
     Column(
@@ -1354,7 +1423,6 @@ private fun LyricsLineItem(
                                 inactiveAlpha = if (isActive) 0.35f else 0.52f,
                                 fontWeight = lineFontWeight,
                                 isBackground = false,
-                                nudgeEnabled = isActive,
                             )
                         }
                     }
@@ -1374,31 +1442,46 @@ private fun LyricsLineItem(
             )
         }
 
-        if (bgWordsToRender.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(4.dp))
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = bgFlowArrangement,
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                bgWordGroups.forEach { group ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        group.syllables.forEach { item ->
-                            KaraokeWord(
-                                text = item.text,
-                                startTime = item.startMs,
-                                endTime = item.endMs,
-                                currentTimeProvider = currentTimeProvider,
-                                isRtl = lineIsRtl,
-                                fontSize = 22.sp,
-                                textColor = textColor.copy(alpha = 0.92f),
-                                inactiveAlpha = if (isActive) 0.5f else 0.52f,
-                                fontWeight = FontWeight.SemiBold,
-                                isBackground = true,
-                                nudgeEnabled = isActive,
-                            )
+        AnimatedVisibility(
+            visible = visibleBgWords.isNotEmpty(),
+            enter = expandVertically(
+                expandFrom = Alignment.CenterVertically,
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+            ) + slideInVertically(
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+            ) { it / 3 },
+            exit = shrinkVertically(
+                shrinkTowards = Alignment.CenterVertically,
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+            ) + slideOutVertically(
+                animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+            ) { it / 3 },
+        ) {
+            Column {
+                Spacer(modifier = Modifier.height(4.dp))
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = bgFlowArrangement,
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    bgWordGroups.forEach { group ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            group.syllables.forEach { item ->
+                                KaraokeWord(
+                                    text = item.text,
+                                    startTime = item.startMs,
+                                    endTime = item.endMs,
+                                    currentTimeProvider = currentTimeProvider,
+                                    isRtl = lineIsRtl,
+                                    fontSize = 22.sp,
+                                    textColor = textColor.copy(alpha = 0.92f),
+                                    inactiveAlpha = if (isActive) 0.5f else 0.52f,
+                                    fontWeight = FontWeight.SemiBold,
+                                    isBackground = true,
+                                )
+                            }
                         }
                     }
                 }
@@ -1448,7 +1531,6 @@ private fun KaraokeWord(
     inactiveAlpha: Float,
     fontWeight: FontWeight = FontWeight.ExtraBold,
     isBackground: Boolean = false,
-    nudgeEnabled: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val duration = (endTime - startTime).coerceAtLeast(1L)
@@ -1457,25 +1539,6 @@ private fun KaraokeWord(
     val len = text.trim().length.coerceAtLeast(1)
     val msPerChar = duration.toFloat() / len.toFloat()
     val isHeavy = (msPerChar >= 200f && len <= 9) || duration >= 900L
-
-    val particleEmitter = remember { SparkleParticleEmitter() }
-    var particleTick by remember { mutableLongStateOf(0L) }
-    val isWordActive = nudgeEnabled && isHeavy
-
-    LaunchedEffect(isWordActive) {
-        if (!isWordActive) {
-            particleEmitter.clear()
-            return@LaunchedEffect
-        }
-        var lastNanos = withFrameNanos { it }
-        while (isWordActive) {
-            val now = withFrameNanos { it }
-            val dt = ((now - lastNanos) / 1_000_000_000f).coerceIn(0.001f, 0.05f)
-            lastNanos = now
-            particleEmitter.update(dt)
-            particleTick = now
-        }
-    }
 
     Box(
         modifier = modifier
@@ -1498,33 +1561,19 @@ private fun KaraokeWord(
             }
             .graphicsLayer {
                 clip = false
-                val currentTime = currentTimeProvider()
-
-                val maxShift = 5f
-                val attackDuration = 120L
-                val decayDuration = 250L
-                val totalImpulseTime = attackDuration + decayDuration
-
-                val shift =
-                    if (nudgeEnabled && currentTime >= startTime && currentTime < startTime + totalImpulseTime) {
-                        val timeSinceStart = currentTime - startTime
-                        if (timeSinceStart < attackDuration) {
-                            val progress = timeSinceStart.toFloat() / attackDuration.toFloat()
-                            lerp(0f, maxShift, progress)
-                        } else {
-                            val decayProgress =
-                                (timeSinceStart - attackDuration).toFloat() / decayDuration.toFloat()
-                            lerp(maxShift, 0f, decayProgress)
-                        }
-                    } else {
-                        0f
-                    }
-
-                translationX = if (isRtl) -shift else shift
             },
     ) {
         val effectiveFontSize = if (isBackground) fontSize * 0.78f else fontSize
         val effectiveAlpha = if (isBackground) 0.85f else 1f
+        val activeWordShadow = if (isHeavy) {
+            Shadow(
+                color = textColor.copy(alpha = 0.50f * effectiveAlpha),
+                offset = Offset.Zero,
+                blurRadius = 14f,
+            )
+        } else {
+            null
+        }
 
         // 1. Inactive (unfilled) layer
         Text(
@@ -1638,32 +1687,8 @@ private fun KaraokeWord(
                 lineHeight = 38.sp,
                 color = textColor.copy(alpha = effectiveAlpha),
                 fontWeight = fontWeight,
+                style = LocalTextStyle.current.copy(shadow = activeWordShadow),
             )
-        }
-
-        // 4. Vocal climax sparkle particle emitter
-        if (isHeavy) {
-            Canvas(Modifier.matchParentSize()) {
-                @Suppress("UNUSED_VARIABLE")
-                val tick = particleTick
-                val currentTime = currentTimeProvider()
-                if (currentTime in startTime..endTime) {
-                    val progress =
-                        ((currentTime - startTime).toFloat() / duration.toFloat()).coerceIn(0f, 1f)
-                    val paddingPx = glowPadding.toPx()
-                    val textWidth = (size.width - (paddingPx * 2)).coerceAtLeast(1f)
-                    val fillWidth = textWidth * progress
-                    val headX =
-                        if (!isRtl) paddingPx + fillWidth else paddingPx + (textWidth - fillWidth)
-                    particleEmitter.spawn(
-                        headX = headX,
-                        topY = paddingPx,
-                        bottomY = size.height - paddingPx,
-                        density = density,
-                    )
-                }
-                particleEmitter.draw(this, textColor)
-            }
         }
     }
 }

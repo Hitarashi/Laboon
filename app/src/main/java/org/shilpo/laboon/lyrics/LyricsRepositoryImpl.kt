@@ -78,6 +78,7 @@ internal class LyricsRepositoryImpl(
     private val http: LyricsHttp = LyricsHttp(),
     private val sources: List<LyricsSource> = defaultLyricsSources(),
     private val nowMs: () -> Long = System::currentTimeMillis,
+    private val diskCache: LyricsDiskCache? = null,
 ) : LyricsRepository {
 
     private data class Cached(val value: LyricsResult, val expiresAt: Long)
@@ -101,6 +102,11 @@ internal class LyricsRepositoryImpl(
             cache[key]?.also { if (it.expiresAt <= nowMs()) cache.remove(key) }
         }
         cached?.takeIf { it.expiresAt > nowMs() }?.let { return it.value }
+
+        diskCache?.get(key)?.takeIf { it.expiresAt > nowMs() }?.let { persisted ->
+            remember(key, persisted.value, persisted.expiresAt)
+            return persisted.value
+        }
 
         val candidates = coroutineScope {
             sources.map { source ->
@@ -127,11 +133,19 @@ internal class LyricsRepositoryImpl(
             ?.second
             ?.toResult(durationMs, track.artistString)
             ?: fallbackLyrics(track, durationMs)
-        if (best.provider != null) synchronized(cache) {
-            cache[key] = Cached(best, nowMs() + CACHE_TTL_MS)
-            while (cache.size > MAX_CACHE_ENTRIES) cache.remove(cache.entries.first().key)
+        if (best.provider != null) {
+            val expiresAt = nowMs() + CACHE_TTL_MS
+            remember(key, best, expiresAt)
+            diskCache?.put(key, best, expiresAt)
         }
         return best
+    }
+
+    private fun remember(key: String, value: LyricsResult, expiresAt: Long) {
+        synchronized(cache) {
+            cache[key] = Cached(value, expiresAt)
+            while (cache.size > MAX_CACHE_ENTRIES) cache.remove(cache.entries.first().key)
+        }
     }
 
     private fun fallbackLyrics(track: LyricsLookup, durationMs: Long): LyricsResult {

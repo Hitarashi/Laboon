@@ -57,6 +57,7 @@ import org.shilpo.laboon.auth.SessionStore
 import org.shilpo.laboon.auth.SharedPreferencesKeyValueStore
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.home.TrackIdentity
+import org.shilpo.laboon.lyrics.LyricsDiskCache
 import org.shilpo.laboon.lyrics.LyricsLookup
 import org.shilpo.laboon.lyrics.LyricsRepository
 import org.shilpo.laboon.lyrics.LyricsRepositoryImpl
@@ -119,7 +120,9 @@ class PlaybackManagerImpl(
     private val playbackPersistence: PlaybackPersistence = PlaybackPersistence(
         SharedPreferencesKeyValueStore(context),
     ),
-    private val lyricsRepository: LyricsRepository = LyricsRepositoryImpl(),
+    private val lyricsRepository: LyricsRepository = LyricsRepositoryImpl(
+        diskCache = LyricsDiskCache(context),
+    ),
 ) : PlaybackManager {
 
     private val spectrumVisualizer = SpectrumVisualizer()
