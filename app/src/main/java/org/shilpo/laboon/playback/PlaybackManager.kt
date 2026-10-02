@@ -408,10 +408,14 @@ class PlaybackManagerImpl(
 
 
                     Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT -> {
-                        _state.value = _state.value.copy(
-                            currentPositionMs = 0L,
-                            progress = 0f,
-                        )
+                        if (mediaItem != null && mediaItem.mediaId != _state.value.currentTrack?.id) {
+                            followPlayerTransition(exo)
+                        } else {
+                            _state.value = _state.value.copy(
+                                currentPositionMs = 0L,
+                                progress = 0f,
+                            )
+                        }
                     }
 
                     else -> Unit
@@ -599,6 +603,8 @@ class PlaybackManagerImpl(
     private fun followPlayerTransition(exo: ExoPlayer) {
         val nextTrack = queueManager.advanceToNext()
         if (nextTrack == null) return
+        val trackChanged = nextTrack.id != _state.value.currentTrack?.id
+        if (trackChanged) invalidateLyricsRequest()
         resetPipelineForTrack()
         val initialQuality = resolveQualityFromMetadata(nextTrack)
         _state.value = _state.value.copy(
@@ -606,7 +612,11 @@ class PlaybackManagerImpl(
             audioQuality = initialQuality,
             currentPositionMs = 0L,
             progress = 0f,
+            lyricsLines = if (trackChanged) emptyList() else _state.value.lyricsLines,
+            lyricsProvider = if (trackChanged) null else _state.value.lyricsProvider,
+            lyricsLoading = trackChanged || _state.value.lyricsLoading,
         )
+        if (trackChanged) requestLyrics(nextTrack, 0L)
         if (exo.mediaItemCount > 1 && exo.currentMediaItemIndex > 0) {
             exo.removeMediaItem(0)
         }
@@ -640,9 +650,7 @@ class PlaybackManagerImpl(
     }
 
     private fun executePlayTrack(track: HomeTrack, startPositionMs: Long = 0L) {
-        lyricsJob?.cancel()
-        lyricsGeneration += 1L
-        lyricsRequestedGeneration = -1L
+        invalidateLyricsRequest()
         resolveJob?.cancel()
         preloadJob?.cancel()
         cancelPrecache()
@@ -713,6 +721,12 @@ class PlaybackManagerImpl(
                 }
             }
         }
+    }
+
+    private fun invalidateLyricsRequest() {
+        lyricsJob?.cancel()
+        lyricsGeneration += 1L
+        lyricsRequestedGeneration = -1L
     }
 
     private fun requestLyrics(track: HomeTrack, durationMs: Long) {

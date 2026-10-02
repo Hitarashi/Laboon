@@ -18,6 +18,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -27,9 +33,11 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
+import kotlinx.coroutines.launch
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.lyrics.LyricsLine
+import org.shilpo.laboon.lyrics.LyricsTranslator
 import org.shilpo.laboon.playback.AudioQualityInfo
 import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.playback.RepeatMode
@@ -40,6 +48,8 @@ import org.shilpo.laboon.ui.design.LiquidGlassSurface
 import org.shilpo.laboon.ui.design.MiniPlayerSpacing
 import org.shilpo.laboon.ui.design.NavigationBarHeight
 import org.shilpo.laboon.ui.design.NavigationBarMaxWidth
+import org.shilpo.laboon.ui.screens.player.lyrics.LyricsControlsRow
+import org.shilpo.laboon.ui.screens.player.lyrics.LyricsDisplayOptions
 import org.shilpo.laboon.ui.screens.player.lyrics.LyricsScreen
 import org.shilpo.laboon.ui.screens.player.queue.QueueScreen
 
@@ -88,6 +98,39 @@ internal fun PlayerOverlayPanels(
     backdropState: LiquidGlassBackdropState?,
     handleSwipeDismiss: Boolean = true,
 ) {
+    val coroutineScope = rememberCoroutineScope()
+    var lyricsSyncOffsetMs by remember { mutableLongStateOf(0L) }
+    var showShareDialog by remember(state.track) { mutableStateOf(false) }
+    var showRomanization by remember(state.lyricsLines) { mutableStateOf(true) }
+    var showTranslation by remember(state.lyricsLines) { mutableStateOf(false) }
+    var translatedLines by remember(state.track, state.lyricsLines) {
+        mutableStateOf<List<LyricsLine>?>(null)
+    }
+    var isTranslating by remember(state.track, state.lyricsLines) { mutableStateOf(false) }
+    val lyricsHaveTiming = remember(state.lyricsLines) {
+        state.lyricsLines.any { line ->
+            line.startMs > 0L || line.endMs > 0L ||
+                    (line.words + line.backgroundWords).any { word -> word.startMs > 0L }
+        }
+    }
+    val onToggleTranslation: () -> Unit = {
+        val next = !showTranslation
+        showTranslation = next
+        if (
+            next && translatedLines == null &&
+            state.lyricsLines.none { it.translations.isNotEmpty() } && !isTranslating
+        ) {
+            isTranslating = true
+            coroutineScope.launch {
+                try {
+                    translatedLines = LyricsTranslator.translateLines(state.lyricsLines)
+                } finally {
+                    isTranslating = false
+                }
+            }
+        }
+    }
+
     BackHandler(enabled = selectedPanel != null) {
         onClosePanel()
     }
@@ -214,6 +257,14 @@ internal fun PlayerOverlayPanels(
                                 lyricsFractionProvider = panelFractionProvider,
                                 lazyListState = lyricsListState,
                                 isPlaying = state.isPlaying,
+                                displayOptions = LyricsDisplayOptions(
+                                    syncOffsetMs = lyricsSyncOffsetMs,
+                                    showRomanization = showRomanization,
+                                    showTranslation = showTranslation,
+                                    translatedLines = translatedLines,
+                                    showShareDialog = showShareDialog,
+                                ),
+                                onDismissShareDialog = { showShareDialog = false },
                             )
 
                             PlayerPanelTab.Queue -> QueueScreen(
@@ -248,6 +299,27 @@ internal fun PlayerOverlayPanels(
                         actions = actions,
                         onAudioQualityPositioned = onAudioQualityPositioned,
                         isDark = isDark,
+                        lyricsTools = if (
+                            activePanel == PlayerPanelTab.Lyrics && state.lyricsLines.isNotEmpty()
+                        ) {
+                            {
+                                LyricsControlsRow(
+                                    hasTiming = lyricsHaveTiming,
+                                    lyricsSyncOffsetMs = lyricsSyncOffsetMs,
+                                    onSyncOffsetChange = { lyricsSyncOffsetMs = it },
+                                    showRomanization = showRomanization,
+                                    onToggleRomanization = {
+                                        showRomanization = !showRomanization
+                                    },
+                                    showTranslation = showTranslation,
+                                    isTranslating = isTranslating,
+                                    onToggleTranslation = onToggleTranslation,
+                                    onShare = { showShareDialog = true },
+                                )
+                            }
+                        } else {
+                            null
+                        },
                     )
                 }
             }

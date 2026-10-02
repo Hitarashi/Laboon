@@ -17,12 +17,18 @@ internal fun PlayerOverlayController(
     onAudioQualityPositioned: (Rect) -> Unit,
     isDark: Boolean,
     modifier: Modifier = Modifier,
+    lyricsTools: (@Composable () -> Unit)? = null,
 ) {
     Column(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 20.dp, vertical = 12.dp),
     ) {
+        if (lyricsTools != null) {
+            lyricsTools()
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
         PlayerSeekBar(
             track = state.track,
             isPlaying = state.isPlaying,

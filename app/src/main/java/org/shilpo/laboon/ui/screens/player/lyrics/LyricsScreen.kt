@@ -14,9 +14,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -31,19 +31,28 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ButtonGroup
+import androidx.compose.material3.ButtonGroupDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalToggleButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.surfaceColorAtElevation
+import androidx.compose.material3.ToggleButtonSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -63,6 +72,7 @@ import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -76,6 +86,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
@@ -91,7 +102,6 @@ import kotlinx.coroutines.launch
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.lyrics.LyricsLine
-import org.shilpo.laboon.lyrics.LyricsTranslator
 import org.shilpo.laboon.ui.design.theme.GoogleSansFlex
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -114,6 +124,14 @@ private const val LYRICS_FONT_FEATURE_SETTINGS = "'liga' 0, 'clig' 0"
 
 private val SmoothDecelerateEasing = CubicBezierEasing(0.0f, 0.0f, 0.2f, 1.0f)
 private val NoSpaceAfterChars: Set<Char> = setOf('(', '[', '{', '«', '‹', '“', '‘')
+
+data class LyricsDisplayOptions(
+    val syncOffsetMs: Long = 0L,
+    val showRomanization: Boolean = true,
+    val showTranslation: Boolean = false,
+    val translatedLines: List<LyricsLine>? = null,
+    val showShareDialog: Boolean = false,
+)
 
 private fun isChinese(text: String): Boolean = text.any { it.code in 0x4E00..0x9FFF }
 private fun isJapanese(text: String): Boolean =
@@ -256,6 +274,8 @@ fun LyricsScreen(
     lyricsFractionProvider: () -> Float = { 1f },
     lazyListState: LazyListState = rememberLazyListState(),
     isPlaying: Boolean = true,
+    displayOptions: LyricsDisplayOptions = LyricsDisplayOptions(),
+    onDismissShareDialog: () -> Unit = {},
 ) {
     val coroutineScope = rememberCoroutineScope()
     val hasTiming = remember(lyricsLines) { lyricsLines.hasTiming() }
@@ -280,6 +300,8 @@ fun LyricsScreen(
             lyricsFractionProvider = lyricsFractionProvider,
             lazyListState = lazyListState,
             isPlaying = isPlaying,
+            displayOptions = displayOptions,
+            onDismissShareDialog = onDismissShareDialog,
             onLineClick = { line, index ->
                 if (hasTiming && durationMs > 0L) {
                     val frac = (line.startMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
@@ -302,6 +324,7 @@ fun LyricsScreen(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 fun LyricsContentCard(
     track: HomeTrack,
     currentPositionMs: Long,
@@ -314,6 +337,8 @@ fun LyricsContentCard(
     onSeek: (Float) -> Unit,
     modifier: Modifier = Modifier,
     isPlaying: Boolean = true,
+    displayOptions: LyricsDisplayOptions = LyricsDisplayOptions(),
+    onDismissShareDialog: () -> Unit = {},
 ) {
     val coroutineScope = rememberCoroutineScope()
     val hasTiming = remember(lyricsLines) { lyricsLines.hasTiming() }
@@ -323,6 +348,7 @@ fun LyricsContentCard(
     val latestPosition = rememberUpdatedState(currentPositionMs)
     val latestIsPlaying = rememberUpdatedState(isPlaying)
     val latestFraction = rememberUpdatedState(lyricsFractionProvider)
+    val latestSyncOffsetMs = rememberUpdatedState(displayOptions.syncOffsetMs)
 
     val playbackPositionMs = remember {
         mutableLongStateOf(currentPositionMs.coerceAtLeast(0L))
@@ -392,15 +418,7 @@ fun LyricsContentCard(
         }
     }
 
-    var lyricsSyncOffsetMs by remember { mutableLongStateOf(0L) }
-    var isNudgeExpanded by remember { mutableStateOf(false) }
-    var showShareDialog by remember { mutableStateOf(false) }
-    var showRomanization by remember { mutableStateOf(true) }
-    var showTranslation by remember { mutableStateOf(false) }
-    var translatedLines by remember(lyricsLines) { mutableStateOf<List<LyricsLine>?>(null) }
-    var isTranslating by remember { mutableStateOf(false) }
-
-    val displayLyricsLines = translatedLines ?: lyricsLines
+    val displayLyricsLines = displayOptions.translatedLines ?: lyricsLines
 
     val singerLaneMap = remember(displayLyricsLines, track.artist) {
         val allSingers = displayLyricsLines
@@ -516,7 +534,7 @@ fun LyricsContentCard(
                     playbackPositionMs.longValue +
                             leadMs +
                             LYRIC_VISUAL_TUNING_OFFSET_MS +
-                            lyricsSyncOffsetMs
+                            latestSyncOffsetMs.value
                     ).coerceAtLeast(0L)
         }
     }
@@ -598,44 +616,46 @@ fun LyricsContentCard(
         val sheetMaxHeight = maxHeight
 
         if (lyricsLines.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                    modifier = Modifier.padding(horizontal = 32.dp),
+            if (lyricsLoading) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Icon(
-                        painter = painterResource(id = R.drawable.ic_player_lyrics),
-                        contentDescription = null,
-                        tint = primaryTextColor.copy(alpha = 0.40f),
-                        modifier = Modifier.size(56.dp),
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = if (lyricsLoading) "Searching for lyrics…" else "No Lyrics Available",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = primaryTextColor,
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    if (lyricsLoading) {
+                    LoadingIndicator()
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                        modifier = Modifier.padding(horizontal = 32.dp),
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_player_lyrics),
+                            contentDescription = null,
+                            tint = primaryTextColor.copy(alpha = 0.40f),
+                            modifier = Modifier.size(56.dp),
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "No Lyrics Available",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = primaryTextColor,
+                        )
                         Spacer(modifier = Modifier.height(8.dp))
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            strokeWidth = 2.dp,
+                        Text(
+                            text = "Enjoy the melody for ${track.title}",
+                            fontSize = 14.sp,
+                            color = secondaryTextColor,
+                            textAlign = TextAlign.Center,
                         )
                     }
-                    Text(
-                        text = if (lyricsLoading) "Lyrics will appear here when found" else "Enjoy the melody for ${track.title}",
-                        fontSize = 14.sp,
-                        color = secondaryTextColor,
-                        textAlign = TextAlign.Center,
-                    )
                 }
             }
         } else {
@@ -767,8 +787,8 @@ fun LyricsContentCard(
                                 currentTimeProvider = currentTimeProvider,
                                 textColor = primaryTextColor,
                                 secondaryTextColor = secondaryTextColor,
-                                showRomanization = showRomanization,
-                                showTranslation = showTranslation,
+                                showRomanization = displayOptions.showRomanization,
+                                showTranslation = displayOptions.showTranslation,
                                 singerLaneMap = singerLaneMap,
                                 modifier = lineModifier,
                                 onLineClick = { clickedLine, clickedIndex ->
@@ -780,311 +800,63 @@ fun LyricsContentCard(
                     }
                 }
 
-                // Floating Controls: Sync, Timing Offset Nudge, and Share
+                // Keep the contextual sync action with the lyric list.
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .padding(bottom = 20.dp, start = 16.dp, end = 16.dp),
                     contentAlignment = Alignment.BottomCenter,
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    AnimatedVisibility(
+                        visible = isManualScrolling && hasTiming && activeIndex in lyricsLines.indices,
+                        enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { it / 2 },
+                        exit = fadeOut(tween(150)) + slideOutVertically(tween(150)) { it / 2 },
                     ) {
-                        // Expandable timing offset nudge row
-                        AnimatedVisibility(
-                            visible = isNudgeExpanded,
-                            enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { it / 2 },
-                            exit = fadeOut(tween(150)) + slideOutVertically(tween(150)) { it / 2 },
+                        Surface(
+                            onClick = {
+                                isManualScrolling = false
+                                coroutineScope.launch {
+                                    lazyListState.scrollLyricIntoFocus(
+                                        index = activeIndex,
+                                        animateToNearbyItem = true,
+                                        force = true,
+                                        alignByItemCenter = hasWordTimings,
+                                        isSeek = true,
+                                    )
+                                }
+                            },
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            shadowElevation = 8.dp,
                         ) {
-                            Surface(
-                                shape = RoundedCornerShape(20.dp),
-                                color = MaterialTheme.colorScheme.surfaceColorAtElevation(8.dp),
-                                shadowElevation = 8.dp,
-                                border = BorderStroke(
-                                    1.dp,
-                                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-                                ),
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
                             ) {
-                                Column(
-                                    modifier = Modifier.padding(
-                                        horizontal = 14.dp,
-                                        vertical = 10.dp
-                                    ),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                ) {
-                                    val offsetDisplay = if (lyricsSyncOffsetMs == 0L) "0.0s"
-                                    else "${if (lyricsSyncOffsetMs > 0) "+" else ""}${
-                                        String.format(
-                                            java.util.Locale.US,
-                                            "%.1fs",
-                                            lyricsSyncOffsetMs / 1000.0
-                                        )
-                                    }"
-                                    Text(
-                                        text = "Timing Offset: $offsetDisplay",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary,
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        NudgeChip(label = "-0.5s") { lyricsSyncOffsetMs -= 500L }
-                                        NudgeChip(label = "-0.1s") { lyricsSyncOffsetMs -= 100L }
-                                        NudgeChip(
-                                            label = "0.0s",
-                                            isReset = true,
-                                            isActive = lyricsSyncOffsetMs == 0L,
-                                        ) { lyricsSyncOffsetMs = 0L }
-                                        NudgeChip(label = "+0.1s") { lyricsSyncOffsetMs += 100L }
-                                        NudgeChip(label = "+0.5s") { lyricsSyncOffsetMs += 500L }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Bottom pills row
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            // 1. Sync button (only visible when manual scrolling)
-                            AnimatedVisibility(
-                                visible = isManualScrolling && hasTiming && activeIndex in lyricsLines.indices,
-                                enter = fadeIn(tween(200)) + slideInVertically(tween(200)) { it / 2 },
-                                exit = fadeOut(tween(150)) + slideOutVertically(tween(150)) { it / 2 },
-                            ) {
-                                Surface(
-                                    onClick = {
-                                        isManualScrolling = false
-                                        coroutineScope.launch {
-                                            lazyListState.scrollLyricIntoFocus(
-                                                index = activeIndex,
-                                                animateToNearbyItem = true,
-                                                force = true,
-                                                alignByItemCenter = hasWordTimings,
-                                                isSeek = true,
-                                            )
-                                        }
-                                    },
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    shadowElevation = 8.dp,
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(
-                                            horizontal = 14.dp,
-                                            vertical = 9.dp
-                                        ),
-                                    ) {
-                                        Icon(
-                                            painter = painterResource(id = R.drawable.ic_song_wave),
-                                            contentDescription = null,
-                                            modifier = Modifier.size(16.dp),
-                                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = "Sync",
-                                            style = MaterialTheme.typography.labelLarge,
-                                            fontWeight = FontWeight.Bold,
-                                        )
-                                    }
-                                }
-                            }
-
-                            // 2. Timing offset nudge trigger pill
-                            if (hasTiming) {
-                                Surface(
-                                    onClick = { isNudgeExpanded = !isNudgeExpanded },
-                                    shape = CircleShape,
-                                    color = if (lyricsSyncOffsetMs != 0L || isNudgeExpanded) {
-                                        MaterialTheme.colorScheme.secondaryContainer
-                                    } else {
-                                        MaterialTheme.colorScheme.surfaceColorAtElevation(6.dp)
-                                            .copy(alpha = 0.92f)
-                                    },
-                                    contentColor = if (lyricsSyncOffsetMs != 0L || isNudgeExpanded) {
-                                        MaterialTheme.colorScheme.onSecondaryContainer
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurface
-                                    },
-                                    shadowElevation = 6.dp,
-                                    border = BorderStroke(
-                                        1.dp,
-                                        if (lyricsSyncOffsetMs != 0L) MaterialTheme.colorScheme.secondary
-                                        else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-                                    ),
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(
-                                            horizontal = 12.dp,
-                                            vertical = 8.dp
-                                        ),
-                                    ) {
-                                        val offsetText = if (lyricsSyncOffsetMs == 0L) "±0.0s"
-                                        else "${if (lyricsSyncOffsetMs > 0) "+" else ""}${
-                                            String.format(
-                                                java.util.Locale.US,
-                                                "%.1fs",
-                                                lyricsSyncOffsetMs / 1000.0
-                                            )
-                                        }"
-                                        Text(
-                                            text = offsetText,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.Bold,
-                                        )
-                                    }
-                                }
-                            }
-
-                            // [Rom] chip
-                            Surface(
-                                onClick = { showRomanization = !showRomanization },
-                                shape = CircleShape,
-                                color = if (showRomanization) {
-                                    MaterialTheme.colorScheme.secondaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.surfaceColorAtElevation(6.dp)
-                                        .copy(alpha = 0.92f)
-                                },
-                                contentColor = if (showRomanization) {
-                                    MaterialTheme.colorScheme.onSecondaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                },
-                                shadowElevation = 6.dp,
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (showRomanization) MaterialTheme.colorScheme.secondary
-                                    else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-                                ),
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(
-                                        horizontal = 12.dp,
-                                        vertical = 8.dp
-                                    ),
-                                ) {
-                                    Text(
-                                        text = "Rom",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Bold,
-                                    )
-                                }
-                            }
-
-                            // [Trans] chip
-                            Surface(
-                                onClick = {
-                                    val next = !showTranslation
-                                    showTranslation = next
-                                    if (next && translatedLines == null && lyricsLines.none { it.translations.isNotEmpty() } && !isTranslating) {
-                                        isTranslating = true
-                                        coroutineScope.launch {
-                                            try {
-                                                translatedLines =
-                                                    LyricsTranslator.translateLines(lyricsLines)
-                                            } finally {
-                                                isTranslating = false
-                                            }
-                                        }
-                                    }
-                                },
-                                shape = CircleShape,
-                                color = if (showTranslation) {
-                                    MaterialTheme.colorScheme.secondaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.surfaceColorAtElevation(6.dp)
-                                        .copy(alpha = 0.92f)
-                                },
-                                contentColor = if (showTranslation) {
-                                    MaterialTheme.colorScheme.onSecondaryContainer
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                },
-                                shadowElevation = 6.dp,
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (showTranslation) MaterialTheme.colorScheme.secondary
-                                    else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-                                ),
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(
-                                        horizontal = 12.dp,
-                                        vertical = 8.dp
-                                    ),
-                                ) {
-                                    if (isTranslating) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(12.dp),
-                                            strokeWidth = 1.5.dp,
-                                            color = if (showTranslation) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.primary,
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                    }
-                                    Text(
-                                        text = "Trans",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Bold,
-                                    )
-                                }
-                            }
-
-                            // 3. Share button pill
-                            Surface(
-                                onClick = { showShareDialog = true },
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.surfaceColorAtElevation(6.dp)
-                                    .copy(alpha = 0.92f),
-                                contentColor = MaterialTheme.colorScheme.onSurface,
-                                shadowElevation = 6.dp,
-                                border = BorderStroke(
-                                    1.dp,
-                                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
-                                ),
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(
-                                        horizontal = 12.dp,
-                                        vertical = 8.dp
-                                    ),
-                                ) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.ic_player_lyrics),
-                                        contentDescription = "Share",
-                                        modifier = Modifier.size(15.dp),
-                                        tint = MaterialTheme.colorScheme.onSurface,
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "Share",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        fontWeight = FontWeight.Bold,
-                                    )
-                                }
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_song_wave),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Sync",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold,
+                                )
                             }
                         }
                     }
                 }
 
-                if (showShareDialog) {
+                if (displayOptions.showShareDialog) {
                     LyricsShareDialog(
                         track = track,
                         lyricsLines = displayLyricsLines,
                         activeLineIndex = activeIndex,
-                        onDismissRequest = { showShareDialog = false },
+                        onDismissRequest = onDismissShareDialog,
                     )
                 }
             }
@@ -1709,6 +1481,9 @@ private fun LineSyncedSweepText(
     val duration = (endTime - startTime).coerceAtLeast(1L)
     val lineHeight = 38.sp
     val paragraphStyle = LocalTextStyle.current.copy(lineBreak = LineBreak.Paragraph)
+    val textLayoutResult = remember(text, fontSize, alignment, isRtl) {
+        mutableStateOf<TextLayoutResult?>(null)
+    }
 
     if (!isActive) {
         Text(
@@ -1795,42 +1570,81 @@ private fun LineSyncedSweepText(
                     val isFading = currentTime >= endTime && currentTime < (endTime + fadeDuration)
 
                     if ((progress > 0f && progress < 1f) || isFading) {
+                        val layout = textLayoutResult.value ?: return@drawWithContent
                         drawContent()
 
+                        val codePointCount = text.codePointCount(0, text.length)
+                        val revealedCodePoints = (codePointCount * progress)
+                            .roundToInt()
+                            .coerceIn(0, codePointCount)
+                        val revealOffset = text.offsetByCodePoints(0, revealedCodePoints)
                         val fadeWidth = 40f
-                        val totalWidth = size.width
-                        val fillWidth = totalWidth * progress
 
-                        val endFraction = ((fillWidth + fadeWidth) / totalWidth).coerceIn(0f, 1f)
-                        val solidFraction = (fillWidth / totalWidth).coerceIn(0f, 1f)
+                        for (lineIndex in 0 until layout.lineCount) {
+                            val lineStart = layout.getLineStart(lineIndex)
+                            val lineEnd = layout.getLineEnd(lineIndex, visibleEnd = true)
+                            val lineTop = layout.getLineTop(lineIndex)
+                                .coerceIn(0f, size.height)
+                            val lineBottom = layout.getLineBottom(lineIndex)
+                                .coerceIn(lineTop, size.height)
+                            if (lineBottom <= lineTop || size.width <= 0f) continue
 
-                        val sweepBrush = if (!isRtl) {
-                            val solidPos = solidFraction.coerceIn(0f, 1f)
-                            val endPos = endFraction.coerceIn(solidPos, 1f)
-                            Brush.horizontalGradient(
-                                0f to Color.Black,
-                                solidPos to Color.Black,
-                                endPos to Color.Transparent,
-                                1f to Color.Transparent,
-                            )
-                        } else {
-                            val solidStartX = (totalWidth - fillWidth).coerceIn(0f, totalWidth)
-                            val fadeStartX = (solidStartX - fadeWidth).coerceIn(0f, totalWidth)
-                            val fadeStartPos = (fadeStartX / totalWidth).coerceIn(0f, 1f)
-                            val solidStartPos =
-                                (solidStartX / totalWidth).coerceIn(fadeStartPos, 1f)
-                            Brush.horizontalGradient(
-                                0f to Color.Transparent,
-                                fadeStartPos to Color.Transparent,
-                                solidStartPos to Color.Black,
-                                1f to Color.Black,
-                            )
+                            val maskTopLeft = Offset(0f, lineTop)
+                            val maskSize = Size(size.width, lineBottom - lineTop)
+                            when {
+                                revealOffset >= lineEnd -> drawRect(
+                                    color = Color.White,
+                                    topLeft = maskTopLeft,
+                                    size = maskSize,
+                                    blendMode = BlendMode.DstIn,
+                                )
+
+                                revealOffset <= lineStart -> drawRect(
+                                    color = Color.Transparent,
+                                    topLeft = maskTopLeft,
+                                    size = maskSize,
+                                    blendMode = BlendMode.DstIn,
+                                )
+
+                                else -> {
+                                    val boundaryX = layout.getHorizontalPosition(
+                                        revealOffset.coerceIn(lineStart, lineEnd),
+                                        usePrimaryDirection = true,
+                                    ).coerceIn(0f, size.width)
+                                    val sweepBrush = if (!isRtl) {
+                                        val solidPos = (boundaryX / size.width).coerceIn(0f, 1f)
+                                        val endPos =
+                                            ((boundaryX + fadeWidth) / size.width)
+                                                .coerceIn(solidPos, 1f)
+                                        Brush.horizontalGradient(
+                                            0f to Color.Black,
+                                            solidPos to Color.Black,
+                                            endPos to Color.Transparent,
+                                            1f to Color.Transparent,
+                                        )
+                                    } else {
+                                        val fadeStartX =
+                                            (boundaryX - fadeWidth).coerceIn(0f, size.width)
+                                        val fadeStartPos =
+                                            (fadeStartX / size.width).coerceIn(0f, 1f)
+                                        val solidStartPos =
+                                            (boundaryX / size.width).coerceIn(fadeStartPos, 1f)
+                                        Brush.horizontalGradient(
+                                            0f to Color.Transparent,
+                                            fadeStartPos to Color.Transparent,
+                                            solidStartPos to Color.Black,
+                                            1f to Color.Black,
+                                        )
+                                    }
+                                    drawRect(
+                                        brush = sweepBrush,
+                                        topLeft = maskTopLeft,
+                                        size = maskSize,
+                                        blendMode = BlendMode.DstIn,
+                                    )
+                                }
+                            }
                         }
-
-                        drawRect(
-                            brush = sweepBrush,
-                            blendMode = BlendMode.DstIn,
-                        )
                     }
                 },
         ) {
@@ -1842,36 +1656,220 @@ private fun LineSyncedSweepText(
                 textAlign = alignment,
                 lineHeight = lineHeight,
                 style = paragraphStyle,
+                onTextLayout = { textLayoutResult.value = it },
                 modifier = Modifier.fillMaxWidth(),
             )
         }
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun NudgeChip(
-    label: String,
-    isReset: Boolean = false,
-    isActive: Boolean = false,
-    onClick: () -> Unit,
+internal fun LyricsControlsRow(
+    hasTiming: Boolean,
+    lyricsSyncOffsetMs: Long,
+    onSyncOffsetChange: (Long) -> Unit,
+    showRomanization: Boolean,
+    onToggleRomanization: () -> Unit,
+    showTranslation: Boolean,
+    isTranslating: Boolean,
+    onToggleTranslation: () -> Unit,
+    onShare: () -> Unit,
 ) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(8.dp),
-        color = if (isActive) MaterialTheme.colorScheme.primaryContainer
-        else if (isReset) MaterialTheme.colorScheme.surfaceVariant
-        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-        contentColor = if (isActive) MaterialTheme.colorScheme.onPrimaryContainer
-        else MaterialTheme.colorScheme.onSurfaceVariant,
+    val interactionSources = remember(hasTiming) {
+        List(if (hasTiming) 4 else 3) { MutableInteractionSource() }
+    }
+    val romanizationSource = interactionSources[if (hasTiming) 1 else 0]
+    val translationSource = interactionSources[if (hasTiming) 2 else 1]
+    val shareSource = interactionSources.last()
+    val offsetIsActive = lyricsSyncOffsetMs != 0L
+
+    ButtonGroup(
+        modifier = Modifier.fillMaxWidth(),
+        overflowIndicator = { menuState ->
+            ButtonGroupDefaults.OverflowIndicator(menuState = menuState)
+        },
+        horizontalArrangement = Arrangement.spacedBy(
+            space = ButtonGroupDefaults.ConnectedSpaceBetween,
+            alignment = Alignment.CenterHorizontally,
+        ),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = label,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+        if (hasTiming) {
+            val offsetSource = interactionSources[0]
+            customItem(
+                buttonGroupContent = {
+                    Surface(
+                        modifier = Modifier.animateWidth(offsetSource),
+                        shape = CircleShape,
+                        color = if (offsetIsActive) {
+                            MaterialTheme.colorScheme.secondaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                        contentColor = if (offsetIsActive) {
+                            MaterialTheme.colorScheme.onSecondaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(
+                                onClick = { onSyncOffsetChange(lyricsSyncOffsetMs - 100L) },
+                                modifier = Modifier.size(40.dp),
+                                interactionSource = offsetSource,
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_stepper_minus),
+                                    contentDescription = "Decrease lyric timing offset by 0.1 seconds",
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                            Text(
+                                text = formatLyricsOffset(lyricsSyncOffsetMs, zero = "0.0s"),
+                                style = MaterialTheme.typography.labelMedium,
+                                maxLines = 1,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.widthIn(min = 36.dp),
+                            )
+                            IconButton(
+                                onClick = { onSyncOffsetChange(lyricsSyncOffsetMs + 100L) },
+                                modifier = Modifier.size(40.dp),
+                                interactionSource = offsetSource,
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_stepper_plus),
+                                    contentDescription = "Increase lyric timing offset by 0.1 seconds",
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
+                        }
+                    }
+                },
+                menuContent = { menuState ->
+                    Column {
+                        DropdownMenuItem(
+                            text = { Text("Decrease timing by 0.1s") },
+                            onClick = {
+                                onSyncOffsetChange(lyricsSyncOffsetMs - 100L)
+                                menuState.dismiss()
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Increase timing by 0.1s") },
+                            onClick = {
+                                onSyncOffsetChange(lyricsSyncOffsetMs + 100L)
+                                menuState.dismiss()
+                            },
+                        )
+                    }
+                },
+            )
+        }
+
+        customItem(
+            buttonGroupContent = {
+                FilledTonalToggleButton(
+                    checked = showRomanization,
+                    onCheckedChange = { checked ->
+                        if (checked != showRomanization) onToggleRomanization()
+                    },
+                    modifier = Modifier.animateWidth(romanizationSource),
+                    buttonSize = ToggleButtonSize.Small,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                    interactionSource = romanizationSource,
+                ) {
+                    Text("Rom", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                }
+            },
+            menuContent = { menuState ->
+                DropdownMenuItem(
+                    text = { Text("Romanization") },
+                    onClick = {
+                        onToggleRomanization()
+                        menuState.dismiss()
+                    },
+                )
+            },
+        )
+
+        customItem(
+            buttonGroupContent = {
+                FilledTonalToggleButton(
+                    checked = showTranslation,
+                    onCheckedChange = { checked ->
+                        if (checked != showTranslation) onToggleTranslation()
+                    },
+                    modifier = Modifier.animateWidth(translationSource),
+                    buttonSize = ToggleButtonSize.Small,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                    interactionSource = translationSource,
+                ) {
+                    if (isTranslating) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(12.dp),
+                            strokeWidth = 1.5.dp,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
+                    Text("Trans", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                }
+            },
+            menuContent = { menuState ->
+                DropdownMenuItem(
+                    text = { Text("Translation") },
+                    onClick = {
+                        onToggleTranslation()
+                        menuState.dismiss()
+                    },
+                )
+            },
+        )
+
+        customItem(
+            buttonGroupContent = {
+                FilledTonalButton(
+                    onClick = onShare,
+                    modifier = Modifier.animateWidth(shareSource),
+                    colors = ButtonDefaults.filledTonalButtonColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                    interactionSource = shareSource,
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_send),
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp),
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Share", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                }
+            },
+            menuContent = { menuState ->
+                DropdownMenuItem(
+                    text = { Text("Share lyrics") },
+                    onClick = {
+                        onShare()
+                        menuState.dismiss()
+                    },
+                )
+            },
         )
     }
 }
+
+private fun formatLyricsOffset(offsetMs: Long, zero: String): String =
+    if (offsetMs == 0L) zero
+    else "${if (offsetMs > 0L) "+" else ""}${
+        String.format(
+            java.util.Locale.US,
+            "%.1fs",
+            offsetMs / 1000.0
+        )
+    }"
 
 private fun List<LyricsLine>.hasTiming(): Boolean =
     any { line ->
