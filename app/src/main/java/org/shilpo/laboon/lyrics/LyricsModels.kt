@@ -30,6 +30,7 @@ data class LyricsLine(
     val backgroundWords: List<LyricsWord> = emptyList(),
     val alignment: String? = null,
     val agent: String? = null,
+    val singer: String? = null,
     val translations: List<LyricsTranslation> = emptyList(),
     val romanization: String? = null,
     val isInstrumental: Boolean = false,

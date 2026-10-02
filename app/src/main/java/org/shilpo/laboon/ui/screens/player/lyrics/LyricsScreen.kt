@@ -8,8 +8,10 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
@@ -38,6 +40,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -71,6 +74,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
@@ -390,8 +394,114 @@ fun LyricsContentCard(
     var isTranslating by remember { mutableStateOf(false) }
 
     val displayLyricsLines = translatedLines ?: lyricsLines
-    val hasMultipleSingers =
-        remember(displayLyricsLines) { displayLyricsLines.any { it.agent?.lowercase() == "v2" } }
+
+    val singerLaneMap = remember(displayLyricsLines, track.artist) {
+        val allSingers = displayLyricsLines
+            .mapNotNull { cleanSingerName(it.singer).takeIf { s -> s.isNotBlank() } }
+            .distinct()
+
+        val soloSingers = allSingers.filter { !isDuetOrGroup(it) }
+        val map = mutableMapOf<String, LyricSingerLane>()
+
+        // 1. Duets / groups are always Center
+        for (singer in allSingers) {
+            if (isDuetOrGroup(singer)) {
+                map[singer.lowercase()] = LyricSingerLane.Center
+            }
+        }
+        map["duet"] = LyricSingerLane.Center
+        map["chorus"] = LyricSingerLane.Center
+        map["all"] = LyricSingerLane.Center
+        map["both"] = LyricSingerLane.Center
+        map["v3"] = LyricSingerLane.Center
+
+        // 2. Solo singers:
+        if (soloSingers.isNotEmpty()) {
+            val counts = displayLyricsLines
+                .groupBy { cleanSingerName(it.singer).lowercase() }
+                .mapValues { it.value.size }
+
+            val cleanTrackArtist = track.artist.lowercase()
+            val primaryTrackArtist = track.artist
+                .split(
+                    Regex(
+                        """(?i)\s*,\s*|\s*/\s*|\s*&\s*|\s+feat\.?\s+|\s+ft\.?\s+|\s+with\s+|\s+and\s+|\s*、\s*|\s*;\s*"""
+                    )
+                )
+                .first()
+                .trim()
+                .lowercase()
+
+            // Identify lead singer: matches primary artist or has highest line count
+            val leadSinger = soloSingers.firstOrNull { singer ->
+                val sLower = singer.lowercase()
+                primaryTrackArtist.isNotEmpty() && (
+                        sLower == primaryTrackArtist ||
+                                primaryTrackArtist.contains(sLower) ||
+                                sLower.contains(primaryTrackArtist)
+                        )
+            } ?: soloSingers.maxByOrNull { counts[it.lowercase()] ?: 0 } ?: soloSingers.first()
+
+            val remainingSolo = soloSingers.filter { it.lowercase() != leadSinger.lowercase() }
+
+            // Identify secondary / featured singer:
+            // Prefer the remaining singer that matches track artist, or has "sean"/"paul", or has highest line count
+            val secondarySinger = remainingSolo.firstOrNull { singer ->
+                val sLower = singer.lowercase()
+                cleanTrackArtist.contains(sLower) || sLower.contains("sean") || sLower.contains("paul")
+            } ?: remainingSolo.maxByOrNull { counts[it.lowercase()] ?: 0 }
+
+            // Map Lead Singer -> Left
+            map[leadSinger.lowercase()] = LyricSingerLane.Left
+            for (singer in soloSingers) {
+                val sLower = singer.lowercase()
+                if (sLower.contains(leadSinger.lowercase()) || leadSinger.lowercase()
+                        .contains(sLower) || sLower.contains("sia")
+                ) {
+                    map[sLower] = LyricSingerLane.Left
+                }
+            }
+
+            // Map Secondary Singer -> Right
+            if (secondarySinger != null) {
+                val secLower = secondarySinger.lowercase()
+                map[secLower] = LyricSingerLane.Right
+                for (singer in soloSingers) {
+                    val sLower = singer.lowercase()
+                    if (!sLower.contains(leadSinger.lowercase()) && !leadSinger.lowercase()
+                            .contains(sLower) && !sLower.contains("sia")
+                    ) {
+                        if (sLower.contains(secLower) || secLower.contains(sLower) ||
+                            (secLower.contains("sean") && sLower.contains("henriques")) ||
+                            (sLower.contains("sean") && secLower.contains("henriques")) ||
+                            sLower.contains("sean") || sLower.contains("paul") || sLower.contains("henriques")
+                        ) {
+                            map[sLower] = LyricSingerLane.Right
+                        }
+                    }
+                }
+            }
+
+            // For any other solo singers not yet mapped, map to Right (never Center)
+            for (singer in soloSingers) {
+                val sLower = singer.lowercase()
+                if (!map.containsKey(sLower)) {
+                    map[sLower] = LyricSingerLane.Right
+                }
+            }
+        }
+
+        // Map known agents (e.g. v1, v2) based on the lines
+        for (line in displayLyricsLines) {
+            val s = cleanSingerName(line.singer).takeIf { it.isNotBlank() }?.lowercase()
+            val a = line.agent?.trim()?.lowercase()
+            if (s != null && a != null && map.containsKey(s) && !map.containsKey(a)) {
+                map[a] = map.getValue(s)
+            }
+        }
+
+        map
+    }
 
     val currentTimeProvider: () -> Long = remember(leadMs) {
         {
@@ -523,7 +633,7 @@ fun LyricsContentCard(
                         start = 24.dp,
                         end = 24.dp,
                     ),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalArrangement = Arrangement.Top,
                     modifier = Modifier
                         .fillMaxSize()
                         .smoothFadingEdge(vertical = 52.dp)
@@ -593,11 +703,11 @@ fun LyricsContentCard(
                             }
                         }
 
-                        val lineTransformOrigin = remember(line.agent) {
-                            when (line.agent?.lowercase()) {
-                                "v2" -> TransformOrigin(1f, 0.5f)
-                                "v1", null -> TransformOrigin(0f, 0.5f)
-                                else -> TransformOrigin(0.5f, 0.5f)
+                        val lineTransformOrigin = remember(line.agent, line.singer, singerLaneMap) {
+                            when (resolveLane(line.singer, line.agent, singerLaneMap)) {
+                                LyricSingerLane.Left -> TransformOrigin(0f, 0.5f)
+                                LyricSingerLane.Right -> TransformOrigin(1f, 0.5f)
+                                LyricSingerLane.Center -> TransformOrigin(0.5f, 0.5f)
                             }
                         }
 
@@ -620,24 +730,37 @@ fun LyricsContentCard(
                                     Modifier
                                 }
                             )
-                            .clickable {
-                                isManualScrolling = false
-                                frozenPositionMs = -1L
-                                onLineClick(line, index)
-                            }
-                            .padding(vertical = 4.dp)
+                            .then(
+                                if (!line.isInstrumental) {
+                                    Modifier
+                                        .clickable {
+                                            isManualScrolling = false
+                                            frozenPositionMs = -1L
+                                            onLineClick(line, index)
+                                        }
+                                        .padding(vertical = 8.dp)
+                                } else {
+                                    Modifier.padding(vertical = 0.dp)
+                                }
+                            )
 
                         LyricsLineItem(
                             line = line,
                             isActive = isActive,
+                            index = index,
                             nextLineStartMs = displayLyricsLines.getOrNull(index + 1)?.startMs,
                             currentTimeProvider = currentTimeProvider,
                             textColor = primaryTextColor,
                             secondaryTextColor = secondaryTextColor,
-                            hasMultipleSingers = hasMultipleSingers,
                             showRomanization = showRomanization,
                             showTranslation = showTranslation,
+                            singerLaneMap = singerLaneMap,
                             modifier = lineModifier,
+                            onLineClick = { clickedLine, clickedIndex ->
+                                isManualScrolling = false
+                                frozenPositionMs = -1L
+                                onLineClick(clickedLine, clickedIndex)
+                            },
                         )
                     }
                 }
@@ -962,34 +1085,103 @@ private data class WordRenderItem(
     val isBackground: Boolean = false,
 )
 
+private data class WordGroup(
+    val syllables: List<WordRenderItem>,
+)
+
+private val WordBoundaryPunctuation =
+    setOf(',', '.', '!', '?', ';', ':', '-', '—', ')', ']', '}', '"', '\'')
+
+private fun groupIntoWords(
+    items: List<WordRenderItem>,
+    fullLineText: String,
+    isCjk: Boolean,
+    isRtl: Boolean,
+): List<WordGroup> {
+    if (items.isEmpty()) return emptyList()
+    if (isCjk) {
+        return items.map { WordGroup(listOf(it)) }
+    }
+
+    val groups = mutableListOf<WordGroup>()
+    val currentSyllables = mutableListOf<WordRenderItem>()
+    var searchIndex = 0
+
+    val lineHasSpaces = fullLineText.any { it.isWhitespace() }
+
+    items.forEachIndexed { index, item ->
+        val rawText = item.text
+        val trimmed = rawText.trim()
+        val hasTrailingSpace = rawText.isNotEmpty() && rawText.last().isWhitespace()
+        val endsWithHyphen = trimmed.endsWith('-') || trimmed.endsWith('—')
+
+        var isWordBoundary = true
+
+        if (endsWithHyphen) {
+            isWordBoundary = false
+        } else {
+            val matchStart = if (lineHasSpaces && trimmed.isNotEmpty()) {
+                fullLineText.indexOf(trimmed, searchIndex, ignoreCase = true)
+                    .takeIf { it >= 0 }
+                    ?: fullLineText.indexOf(trimmed, 0, ignoreCase = true).takeIf { it >= 0 }
+            } else null
+
+            if (matchStart != null) {
+                val endPos = matchStart + trimmed.length
+                searchIndex = endPos
+
+                if (!hasTrailingSpace) {
+                    val isInternalSyllable =
+                        endPos < fullLineText.length && fullLineText[endPos].isLetterOrDigit()
+                    if (isInternalSyllable) {
+                        isWordBoundary = false
+                    }
+                }
+            }
+        }
+
+        currentSyllables.add(item.copy(text = trimmed))
+
+        if (isWordBoundary || index == items.lastIndex) {
+            if (currentSyllables.isNotEmpty()) {
+                groups.add(WordGroup(currentSyllables.toList()))
+                currentSyllables.clear()
+            }
+        }
+    }
+
+    if (currentSyllables.isNotEmpty()) {
+        groups.add(WordGroup(currentSyllables.toList()))
+    }
+
+    return groups
+}
+
 @Composable
 private fun LyricsLineItem(
     line: LyricsLine,
     isActive: Boolean,
+    index: Int,
     nextLineStartMs: Long?,
     currentTimeProvider: () -> Long,
     textColor: Color,
     secondaryTextColor: Color,
-    hasMultipleSingers: Boolean,
     showRomanization: Boolean = true,
     showTranslation: Boolean = false,
+    singerLaneMap: Map<String, LyricSingerLane> = emptyMap(),
     modifier: Modifier = Modifier,
+    onLineClick: (LyricsLine, Int) -> Unit = { _, _ -> },
 ) {
-    val agentLower = line.agent?.lowercase()
-    val textAlign = when (agentLower) {
-        "v1", null -> TextAlign.Start
-        "v2" -> TextAlign.End
-        else -> TextAlign.Center
+    val lane = resolveLane(line.singer, line.agent, singerLaneMap)
+    val textAlign = when (lane) {
+        LyricSingerLane.Left -> TextAlign.Start
+        LyricSingerLane.Right -> TextAlign.End
+        LyricSingerLane.Center -> TextAlign.Center
     }
-    val horizontalAlignment = when (agentLower) {
-        "v1", null -> Alignment.Start
-        "v2" -> Alignment.End
-        else -> Alignment.CenterHorizontally
-    }
-    val flowArrangement = when (agentLower) {
-        "v1", null -> Arrangement.spacedBy(0.dp, Alignment.Start)
-        "v2" -> Arrangement.spacedBy(0.dp, Alignment.End)
-        else -> Arrangement.spacedBy(0.dp, Alignment.CenterHorizontally)
+    val horizontalAlignment = when (lane) {
+        LyricSingerLane.Left -> Alignment.Start
+        LyricSingerLane.Right -> Alignment.End
+        LyricSingerLane.Center -> Alignment.CenterHorizontally
     }
 
     val lineEndMs = if (line.endMs > line.startMs) {
@@ -999,22 +1191,43 @@ private fun LyricsLineItem(
     }
 
     if (line.isInstrumental) {
-        Box(
-            modifier = modifier
-                .fillMaxWidth()
-                .padding(vertical = 12.dp),
-            contentAlignment = when (agentLower) {
-                "v2" -> Alignment.CenterEnd
-                "v1" -> Alignment.CenterStart
-                else -> Alignment.Center
-            },
+        val currentTime = currentTimeProvider()
+        val isInstrumentalActive = isActive || (currentTime in line.startMs..lineEndMs)
+        AnimatedVisibility(
+            visible = isInstrumentalActive,
+            enter = expandVertically(
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioMediumBouncy,
+                    stiffness = Spring.StiffnessLow,
+                ),
+            ) + fadeIn(animationSpec = tween(350)),
+            exit = shrinkVertically(
+                animationSpec = tween(
+                    durationMillis = 350,
+                    easing = FastOutSlowInEasing,
+                ),
+            ) + fadeOut(animationSpec = tween(250)),
         ) {
-            WaitingDotsView(
-                startTime = line.startMs,
-                endTime = lineEndMs,
-                currentProgressMs = currentTimeProvider(),
-                primaryColor = textColor,
-            )
+            Box(
+                modifier = modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 14.dp),
+                contentAlignment = when (lane) {
+                    LyricSingerLane.Left -> Alignment.CenterStart
+                    LyricSingerLane.Right -> Alignment.CenterEnd
+                    LyricSingerLane.Center -> Alignment.Center
+                },
+            ) {
+                WaitingDotsView(
+                    startTime = line.startMs,
+                    endTime = lineEndMs,
+                    currentProgressMs = currentTime,
+                    primaryColor = textColor,
+                    onClick = {
+                        onLineClick(line, index)
+                    },
+                )
+            }
         }
         return
     }
@@ -1024,6 +1237,19 @@ private fun LyricsLineItem(
     val lineIsRtl = remember(line.text) { isRtlText(line.text) }
     val isCjk =
         remember(line.text) { isChinese(line.text) || isJapanese(line.text) || isKorean(line.text) }
+
+    val wordSpacing = if (isCjk) 0.dp else 7.dp
+    val flowArrangement = when (lane) {
+        LyricSingerLane.Left -> Arrangement.spacedBy(wordSpacing, Alignment.Start)
+        LyricSingerLane.Right -> Arrangement.spacedBy(wordSpacing, Alignment.End)
+        LyricSingerLane.Center -> Arrangement.spacedBy(wordSpacing, Alignment.CenterHorizontally)
+    }
+    val bgWordSpacing = if (isCjk) 0.dp else 6.dp
+    val bgFlowArrangement = when (lane) {
+        LyricSingerLane.Left -> Arrangement.spacedBy(bgWordSpacing, Alignment.Start)
+        LyricSingerLane.Right -> Arrangement.spacedBy(bgWordSpacing, Alignment.End)
+        LyricSingerLane.Center -> Arrangement.spacedBy(bgWordSpacing, Alignment.CenterHorizontally)
+    }
 
     val baseWords = remember(line.words) { line.words.filter { it.text.isNotEmpty() } }
     val hasWordTimings = baseWords.isNotEmpty()
@@ -1047,11 +1273,7 @@ private fun LyricsLineItem(
                                     if (lineIsRtl) neighbor else word.text,
                                     if (lineIsRtl) word.text else neighbor,
                                 )
-                    } else if (lineIsRtl) {
-                        prevText != null && shouldAppendWordSpace(prevText, word.text)
-                    } else {
-                        nextText != null && shouldAppendWordSpace(word.text, nextText)
-                    }
+                    } else false
 
                     val wordStartMs = word.startMs
                     val wordEndMs = word.endMs
@@ -1075,12 +1297,7 @@ private fun LyricsLineItem(
                             WordRenderItem(charText, charStartMs, charEndMs, false)
                         }
                     } else {
-                        val displayText = when {
-                            !includeSpace -> word.text
-                            lineIsRtl -> " ${word.text}"
-                            else -> "${word.text} "
-                        }
-                        listOf(WordRenderItem(displayText, wordStartMs, wordEndMs, false))
+                        listOf(WordRenderItem(word.text, wordStartMs, wordEndMs, false))
                     }
                 }
             }
@@ -1093,84 +1310,54 @@ private fun LyricsLineItem(
             if (baseBgWords.isEmpty()) emptyList()
             else {
                 baseBgWords.mapIndexed { idx, word ->
-                    val prevText = baseBgWords.getOrNull(idx - 1)?.text
-                    val nextText = baseBgWords.getOrNull(idx + 1)?.text
-                    val includeSpace = if (lineIsRtl) {
-                        prevText != null && shouldAppendWordSpace(prevText, word.text)
-                    } else {
-                        nextText != null && shouldAppendWordSpace(word.text, nextText)
-                    }
                     val wordStartMs = word.startMs
                     val wordEndMs = word.endMs
                         ?.takeIf { it > wordStartMs }
                         ?: baseBgWords.getOrNull(idx + 1)?.startMs?.takeIf { it > wordStartMs }
                         ?: lineEndMs.takeIf { it > wordStartMs }
                         ?: (wordStartMs + 400L)
-                    val displayText = when {
-                        !includeSpace -> word.text
-                        lineIsRtl -> " ${word.text}"
-                        else -> "${word.text} "
-                    }
-                    WordRenderItem(displayText, wordStartMs, wordEndMs, true)
+                    WordRenderItem(word.text, wordStartMs, wordEndMs, true)
                 }
             }
         }
+
+    val wordGroups = remember(wordsToRender, line.text, isCjk, lineIsRtl) {
+        groupIntoWords(wordsToRender, line.text, isCjk, lineIsRtl)
+    }
+    val bgWordGroups = remember(bgWordsToRender, line.text, isCjk, lineIsRtl) {
+        groupIntoWords(bgWordsToRender, line.text, isCjk, lineIsRtl)
+    }
 
     Column(
         modifier = modifier,
         horizontalAlignment = horizontalAlignment,
     ) {
-        // Singer badge for duet / multi-singer tracks
-        if (hasMultipleSingers && !line.isInstrumental) {
-            val singerLabel = when (agentLower) {
-                "v1" -> "Singer 1"
-                "v2" -> "Singer 2"
-                "v3" -> "Singer 3"
-                "all", "both", "chorus" -> "All"
-                null -> "Singer 1"
-                else -> line.agent.replaceFirstChar { it.uppercase() }
-            }
-            val singerTagColor = if (agentLower == "v2") {
-                MaterialTheme.colorScheme.tertiary
-            } else {
-                MaterialTheme.colorScheme.primary
-            }
-
-            Surface(
-                shape = RoundedCornerShape(percent = 50),
-                color = singerTagColor.copy(alpha = if (isActive) 0.22f else 0.12f),
-                modifier = Modifier.padding(bottom = 6.dp),
-            ) {
-                Text(
-                    text = singerLabel,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = singerTagColor.copy(alpha = if (isActive) 1f else 0.75f),
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                )
-            }
-        }
-
         if (hasWordTimings) {
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = flowArrangement,
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                wordsToRender.forEach { item ->
-                    KaraokeWord(
-                        text = item.text,
-                        startTime = item.startMs,
-                        endTime = item.endMs,
-                        currentTimeProvider = currentTimeProvider,
-                        isRtl = lineIsRtl,
-                        fontSize = lineFontSize,
-                        textColor = textColor,
-                        inactiveAlpha = if (isActive) 0.35f else 0.52f,
-                        fontWeight = lineFontWeight,
-                        isBackground = false,
-                        nudgeEnabled = isActive,
-                    )
+                wordGroups.forEach { group ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        group.syllables.forEach { item ->
+                            KaraokeWord(
+                                text = item.text,
+                                startTime = item.startMs,
+                                endTime = item.endMs,
+                                currentTimeProvider = currentTimeProvider,
+                                isRtl = lineIsRtl,
+                                fontSize = lineFontSize,
+                                textColor = textColor,
+                                inactiveAlpha = if (isActive) 0.35f else 0.52f,
+                                fontWeight = lineFontWeight,
+                                isBackground = false,
+                                nudgeEnabled = isActive,
+                            )
+                        }
+                    }
                 }
             }
         } else {
@@ -1191,23 +1378,29 @@ private fun LyricsLineItem(
             Spacer(modifier = Modifier.height(4.dp))
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = flowArrangement,
+                horizontalArrangement = bgFlowArrangement,
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                bgWordsToRender.forEach { item ->
-                    KaraokeWord(
-                        text = item.text,
-                        startTime = item.startMs,
-                        endTime = item.endMs,
-                        currentTimeProvider = currentTimeProvider,
-                        isRtl = lineIsRtl,
-                        fontSize = 22.sp,
-                        textColor = textColor.copy(alpha = 0.78f),
-                        inactiveAlpha = if (isActive) 0.35f else 0.52f,
-                        fontWeight = FontWeight.SemiBold,
-                        isBackground = true,
-                        nudgeEnabled = isActive,
-                    )
+                bgWordGroups.forEach { group ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        group.syllables.forEach { item ->
+                            KaraokeWord(
+                                text = item.text,
+                                startTime = item.startMs,
+                                endTime = item.endMs,
+                                currentTimeProvider = currentTimeProvider,
+                                isRtl = lineIsRtl,
+                                fontSize = 22.sp,
+                                textColor = textColor.copy(alpha = 0.92f),
+                                inactiveAlpha = if (isActive) 0.5f else 0.52f,
+                                fontWeight = FontWeight.SemiBold,
+                                isBackground = true,
+                                nudgeEnabled = isActive,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1222,6 +1415,7 @@ private fun LyricsLineItem(
                 fontWeight = FontWeight.Normal,
                 color = secondaryTextColor.copy(alpha = 0.76f),
                 textAlign = textAlign,
+                style = LocalTextStyle.current.copy(lineBreak = LineBreak.Paragraph),
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -1235,6 +1429,7 @@ private fun LyricsLineItem(
                 fontWeight = FontWeight.Normal,
                 color = secondaryTextColor.copy(alpha = 0.65f),
                 textAlign = textAlign,
+                style = LocalTextStyle.current.copy(lineBreak = LineBreak.Paragraph),
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -1329,7 +1524,7 @@ private fun KaraokeWord(
             },
     ) {
         val effectiveFontSize = if (isBackground) fontSize * 0.78f else fontSize
-        val effectiveAlpha = if (isBackground) 0.6f else 1f
+        val effectiveAlpha = if (isBackground) 0.85f else 1f
 
         // 1. Inactive (unfilled) layer
         Text(
@@ -1488,6 +1683,7 @@ private fun LineSyncedSweepText(
 ) {
     val duration = (endTime - startTime).coerceAtLeast(1L)
     val lineHeight = 38.sp
+    val paragraphStyle = LocalTextStyle.current.copy(lineBreak = LineBreak.Paragraph)
 
     if (!isActive) {
         Text(
@@ -1497,6 +1693,7 @@ private fun LineSyncedSweepText(
             color = textColor.copy(alpha = 0.52f),
             textAlign = alignment,
             lineHeight = lineHeight,
+            style = paragraphStyle,
             modifier = modifier.fillMaxWidth(),
         )
         return
@@ -1518,6 +1715,7 @@ private fun LineSyncedSweepText(
             color = textColor.copy(alpha = 0.35f),
             textAlign = alignment,
             lineHeight = lineHeight,
+            style = paragraphStyle,
             modifier = Modifier.fillMaxWidth(),
         )
 
@@ -1529,6 +1727,7 @@ private fun LineSyncedSweepText(
             color = textColor,
             textAlign = alignment,
             lineHeight = lineHeight,
+            style = paragraphStyle,
             modifier = Modifier
                 .fillMaxWidth()
                 .drawWithContent {
@@ -1617,6 +1816,7 @@ private fun LineSyncedSweepText(
                 color = textColor,
                 textAlign = alignment,
                 lineHeight = lineHeight,
+                style = paragraphStyle,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -1649,7 +1849,72 @@ private fun NudgeChip(
 }
 
 private fun List<LyricsLine>.hasTiming(): Boolean =
-    any { line -> line.startMs > 0L || line.endMs > 0L || line.words.any { word -> word.startMs > 0L } }
+    any { line ->
+        line.startMs > 0L || line.endMs > 0L ||
+                (line.words + line.backgroundWords).any { word -> word.startMs > 0L }
+    }
 
 private fun List<LyricsLine>.hasWordTimings(): Boolean =
-    any { line -> line.words.isNotEmpty() }
+    any { line -> line.words.isNotEmpty() || line.backgroundWords.isNotEmpty() }
+
+private fun cleanSingerName(raw: String?): String {
+    if (raw.isNullOrBlank()) return ""
+    var s = raw.trim()
+    while ((s.startsWith("[") && s.endsWith("]")) || (s.startsWith("(") && s.endsWith(")"))) {
+        s = s.substring(1, s.length - 1).trim()
+    }
+    s = s.removeSuffix(":").removeSuffix("：").trim()
+    return s.replace(Regex("\\s*/\\s*"), " & ").trim()
+}
+
+enum class LyricSingerLane {
+    Left,
+    Right,
+    Center,
+}
+
+private fun isDuetOrGroup(singerName: String?): Boolean {
+    if (singerName.isNullOrBlank()) return false
+    val lower = singerName.lowercase()
+    return lower == "v3" || lower == "singer 3" ||
+            lower.contains('/') || lower.contains('&') ||
+            lower.contains("both") || lower.contains("all") ||
+            lower.contains("chorus") || lower.contains("duet") ||
+            lower.contains("together") || lower.contains("ft.") ||
+            lower.contains("feat.") || lower.contains('合')
+}
+
+private fun resolveLane(
+    singer: String?,
+    agent: String?,
+    singerLaneMap: Map<String, LyricSingerLane>,
+): LyricSingerLane {
+    val cleanedSinger = cleanSingerName(singer).takeIf { it.isNotBlank() }
+    if (cleanedSinger != null) {
+        val sLower = cleanedSinger.lowercase()
+        val mapped = singerLaneMap[sLower]
+        if (mapped != null) return mapped
+        if (isDuetOrGroup(sLower)) return LyricSingerLane.Center
+        if (sLower.contains("sean") || sLower.contains("paul") || sLower.contains("henriques")) {
+            return LyricSingerLane.Right
+        }
+        if (sLower.contains("sia")) {
+            return LyricSingerLane.Left
+        }
+    }
+
+    val agentLower = agent?.trim()?.lowercase()
+    if (agentLower != null) {
+        val mapped = singerLaneMap[agentLower]
+        if (mapped != null) return mapped
+        if (isDuetOrGroup(agentLower) || agentLower == "v3") return LyricSingerLane.Center
+        if (agentLower == "v1") return LyricSingerLane.Left
+        if (agentLower == "v2") return LyricSingerLane.Right
+        if (agentLower.contains("sean") || agentLower.contains("paul") || agentLower.contains("henriques")) {
+            return LyricSingerLane.Right
+        }
+        if (agentLower.contains("sia")) return LyricSingerLane.Left
+    }
+
+    return LyricSingerLane.Left
+}

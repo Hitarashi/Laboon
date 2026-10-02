@@ -28,12 +28,15 @@ internal data class LyricsCandidate(
             LyricsSyncLevel.Line -> 500
             LyricsSyncLevel.Plain -> 100
         }
+        val backgroundVocalBonus =
+            if (parsed.lines.any { it.backgroundWords.isNotEmpty() }) 200 else 0
         return if (parsed.plainText.trim().length < 10 || parsed.lines.size < 2) 0
-        else tierScore + weight + metadataScore
+        else tierScore + weight + metadataScore + backgroundVocalBonus
     }
 
-    fun toResult(durationMs: Long): LyricsResult {
-        val parsed = LyricsParser.fromText(text.orEmpty(), durationMs, ttmlRaw, structuredLines)
+    fun toResult(durationMs: Long, mainArtist: String? = null): LyricsResult {
+        val parsed =
+            LyricsParser.fromText(text.orEmpty(), durationMs, ttmlRaw, structuredLines, mainArtist)
         return LyricsResult(
             provider = provider,
             attribution = attribution,
@@ -122,7 +125,7 @@ internal class LyricsRepositoryImpl(
             .filter { it.second.score() > 0 }
             .maxWithOrNull(compareBy<Pair<Int, LyricsCandidate>> { it.second.score() }.thenBy { -it.first })
             ?.second
-            ?.toResult(durationMs)
+            ?.toResult(durationMs, track.artistString)
             ?: fallbackLyrics(track, durationMs)
         if (best.provider != null) synchronized(cache) {
             cache[key] = Cached(best, nowMs() + CACHE_TTL_MS)
