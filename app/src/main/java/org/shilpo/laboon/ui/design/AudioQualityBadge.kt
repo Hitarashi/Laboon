@@ -11,15 +11,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -40,8 +36,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
@@ -132,23 +126,6 @@ fun AudioQualityBadge(
     val kbpsStr = pipeline?.bitrateKbps?.let { "${it} kbps" }
 
     val colorScheme = MaterialTheme.colorScheme
-    val contentColor = colorScheme.onSurfaceVariant
-    val pillShape = RoundedCornerShape(percent = 50)
-
-    val glassBackground = Brush.verticalGradient(
-        colors = listOf(
-            colorScheme.surfaceContainerHigh.copy(alpha = 0.92f),
-            colorScheme.surfaceContainer.copy(alpha = 0.84f),
-        )
-    )
-
-    val glassBorder = Brush.verticalGradient(
-        colors = listOf(
-            colorScheme.outlineVariant.copy(alpha = 0.8f),
-            colorScheme.outlineVariant.copy(alpha = 0.4f),
-        )
-    )
-
     val infiniteTransition = rememberInfiniteTransition(label = "audioBadgePulse")
     val pulseAlpha by infiniteTransition.animateFloat(
         initialValue = 0.25f,
@@ -160,89 +137,120 @@ fun AudioQualityBadge(
         label = "pulseAlpha",
     )
 
-    val formatOptions = remember(availableVariants) {
-        availableVariants.distinctBy { it.format.lowercase(Locale.ROOT) }
-    }
+    val formatOptions =
+        remember(availableVariants, isDolby, isLossless, fallbackText, normCodec, track) {
+            val distinct = availableVariants.distinctBy { it.format.lowercase(Locale.ROOT) }
+            if (distinct.isNotEmpty()) {
+                distinct
+            } else {
+                val format = when {
+                    isDolby -> "ec-3"
+                    isLossless -> "alac"
+                    !fallbackText.isNullOrBlank() -> fallbackText.lowercase(Locale.ROOT)
+                    !normCodec.isNullOrBlank() -> normCodec
+                    else -> null
+                }
+                if (format != null) {
+                    listOf(
+                        TrackFormatVariant(
+                            format = format,
+                            backendTrackId = track?.backendTrackId ?: 0
+                        )
+                    )
+                } else {
+                    emptyList()
+                }
+            }
+        }
     val isQualityAvailable = showTrackInfo && quality != null && !isStale && quality.isLocked &&
             (!bitDepthStr.isNullOrBlank() || !kbpsStr.isNullOrBlank())
-    val showVariantGroup = formatOptions.size > 1 && onVariantSelected != null
 
-    if (showVariantGroup) {
-        ButtonGroup(
-            modifier = modifier,
-            overflowIndicator = { menuState ->
-                ButtonGroupDefaults.OverflowIndicator(menuState = menuState)
-            },
-            horizontalArrangement = Arrangement.spacedBy(
-                space = ButtonGroupDefaults.ConnectedSpaceBetween,
-                alignment = Alignment.CenterHorizontally,
-            ),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (isQualityAvailable) {
-                customItem(
-                    buttonGroupContent = {
-                        FilledTonalButton(
-                            onClick = { onClick?.invoke() },
-                            enabled = onClick != null,
-                            colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = colorScheme.secondaryContainer,
-                                contentColor = colorScheme.onSecondaryContainer,
-                            ),
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
-                            modifier = Modifier
-                                .height(42.dp)
-                                .semantics { contentDescription = "Audio quality details" },
-                        ) {
-                            QualityMetricsContent(
-                                detailState = AudioQualityDetailState.Locked,
-                                bitDepthStr = bitDepthStr,
-                                kbpsStr = kbpsStr,
-                                isHiRes = isHiRes,
-                                pulseAlpha = pulseAlpha,
-                                contentColor = colorScheme.onSecondaryContainer,
-                            )
-                        }
-                    },
-                    menuContent = { menuState ->
-                        DropdownMenuItem(
-                            text = { Text("Audio quality details") },
-                            enabled = onClick != null,
-                            onClick = {
-                                onClick?.invoke()
-                                menuState.dismiss()
-                            },
+    if (!isQualityAvailable && formatOptions.isEmpty()) {
+        return
+    }
+
+    ButtonGroup(
+        modifier = modifier,
+        overflowIndicator = { menuState ->
+            ButtonGroupDefaults.OverflowIndicator(menuState = menuState)
+        },
+        horizontalArrangement = Arrangement.spacedBy(
+            space = ButtonGroupDefaults.ConnectedSpaceBetween,
+            alignment = Alignment.CenterHorizontally,
+        ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (isQualityAvailable) {
+            customItem(
+                buttonGroupContent = {
+                    FilledTonalButton(
+                        onClick = { onClick?.invoke() },
+                        enabled = onClick != null,
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = colorScheme.secondaryContainer,
+                            contentColor = colorScheme.onSecondaryContainer,
+                        ),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                        modifier = Modifier
+                            .height(42.dp)
+                            .semantics { contentDescription = "Audio quality details" },
+                    ) {
+                        QualityMetricsContent(
+                            detailState = AudioQualityDetailState.Locked,
+                            bitDepthStr = bitDepthStr,
+                            kbpsStr = kbpsStr,
+                            isHiRes = isHiRes,
+                            pulseAlpha = pulseAlpha,
+                            contentColor = colorScheme.onSecondaryContainer,
                         )
-                    },
-                )
-            }
+                    }
+                },
+                menuContent = { menuState ->
+                    DropdownMenuItem(
+                        text = { Text("Audio quality details") },
+                        enabled = onClick != null,
+                        onClick = {
+                            onClick?.invoke()
+                            menuState.dismiss()
+                        },
+                    )
+                },
+            )
+        }
 
-            formatOptions.forEach { variant ->
-                val isSelected = variant.backendTrackId == track?.backendTrackId ||
-                        (track?.backendTrackId == null && variant.format.equals(
-                            track?.codec,
-                            ignoreCase = true
-                        ))
-                val isSwitching = switchingFormat.equals(variant.format, ignoreCase = true)
-                val isHiResVariant = isSelected && isHiRes
-                val accessibleFormat = if (
-                    variant.format.equals("alac", ignoreCase = true) && isHiResVariant
-                ) {
-                    "Hi-Res ${formatAccessibleName(variant.format)}"
-                } else {
-                    formatAccessibleName(variant.format)
-                }
-                customItem(
-                    buttonGroupContent = {
-                        val itemContentColor = if (isSelected) {
-                            colorScheme.onSecondary
-                        } else {
-                            colorScheme.onSecondaryContainer
-                        }
+        val hasMultipleVariants = formatOptions.size > 1 && onVariantSelected != null
+
+        formatOptions.forEach { variant ->
+            val isSelected = hasMultipleVariants && (
+                    variant.backendTrackId == track?.backendTrackId ||
+                            (track?.backendTrackId == null && variant.format.equals(
+                                track?.codec,
+                                ignoreCase = true
+                            ))
+                    )
+            val isSwitching = switchingFormat.equals(variant.format, ignoreCase = true)
+            val isHiResVariant = (isSelected || !hasMultipleVariants) && isHiRes
+            val accessibleFormat = if (
+                variant.format.equals("alac", ignoreCase = true) && isHiResVariant
+            ) {
+                "Hi-Res ${formatAccessibleName(variant.format)}"
+            } else {
+                formatAccessibleName(variant.format)
+            }
+            customItem(
+                buttonGroupContent = {
+                    val itemContentColor = if (isSelected) {
+                        colorScheme.onSecondary
+                    } else {
+                        colorScheme.onSecondaryContainer
+                    }
+                    if (hasMultipleVariants) {
                         FilledTonalToggleButton(
                             checked = isSelected,
                             onCheckedChange = { checked ->
-                                if (checked) onVariantSelected(variant)
+                                if (checked) {
+                                    onVariantSelected(variant)
+                                }
                             },
                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
                             modifier = Modifier
@@ -275,121 +283,68 @@ fun AudioQualityBadge(
                                 )
                             }
                         }
-                    },
-                    menuContent = { menuState ->
-                        DropdownMenuItem(
-                            text = { Text(formatAccessibleName(variant.format)) },
-                            leadingIcon = {
+                    } else {
+                        FilledTonalButton(
+                            onClick = { onClick?.invoke() },
+                            enabled = onClick != null,
+                            colors = ButtonDefaults.filledTonalButtonColors(
+                                containerColor = colorScheme.secondaryContainer,
+                                contentColor = colorScheme.onSecondaryContainer,
+                            ),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                            modifier = Modifier
+                                .height(42.dp)
+                                .semantics {
+                                    contentDescription = "$accessibleFormat quality"
+                                },
+                        ) {
+                            if (isSwitching) {
+                                CircularWavyProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    color = colorScheme.onSecondaryContainer,
+                                    trackColor = Color.Transparent,
+                                )
+                            } else if (variant.format.equals("aac", ignoreCase = true)) {
+                                Text(
+                                    text = "AAC",
+                                    color = colorScheme.onSecondaryContainer,
+                                    style = MaterialTheme.typography.labelMedium.copy(
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp,
+                                        letterSpacing = 0.2.sp,
+                                    ),
+                                )
+                            } else {
                                 VariantFormatMark(
                                     format = variant.format,
                                     isHiRes = isHiResVariant,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    color = colorScheme.onSecondaryContainer,
                                 )
-                            },
-                            onClick = {
-                                if (!isSelected) onVariantSelected(variant)
-                                menuState.dismiss()
-                            },
-                        )
-                    },
-                )
-            }
-        }
-    } else {
-        if (!showTrackInfo) return
-        Box(
-            modifier = modifier
-                .clip(pillShape)
-                .background(glassBackground)
-                .border(width = 0.5.dp, brush = glassBorder, shape = pillShape)
-                .then(
-                    if (onClick != null) {
-                        Modifier.clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = onClick,
-                        )
-                    } else Modifier
-                )
-                .padding(horizontal = 9.dp, vertical = 3.5.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.5.dp),
-            ) {
-                when {
-                    isHiRes && isLossless -> {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(3.dp),
-                        ) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_codec_hires),
-                                contentDescription = "Hi-Res",
-                                tint = contentColor,
-                                modifier = Modifier.size(11.dp),
-                            )
-                            val width = 9.dp * (15f / 9f)
-                            Icon(
-                                painter = painterResource(R.drawable.ic_codec_lossless),
-                                contentDescription = "Lossless",
-                                tint = contentColor,
-                                modifier = Modifier.size(width = width, height = 9.dp),
-                            )
+                            }
                         }
                     }
-
-                    isHiRes -> {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_codec_hires),
-                            contentDescription = "Hi-Res",
-                            tint = contentColor,
-                            modifier = Modifier.size(12.dp),
-                        )
-                    }
-
-                    isLossless -> {
-                        val width = 9.dp * (15f / 9f)
-                        Icon(
-                            painter = painterResource(R.drawable.ic_codec_lossless),
-                            contentDescription = "Lossless",
-                            tint = contentColor,
-                            modifier = Modifier.size(width = width, height = 9.dp),
-                        )
-                    }
-
-                    isDolby -> {
-                        val width = 9.dp * (103f / 73f)
-                        Icon(
-                            painter = painterResource(R.drawable.ic_codec_dolby),
-                            contentDescription = "Dolby Atmos",
-                            tint = contentColor,
-                            modifier = Modifier.size(width = width, height = 9.dp),
-                        )
-                    }
-
-                    !fallbackText.isNullOrBlank() -> {
-                        Text(
-                            text = fallbackText,
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 9.5.sp,
-                                letterSpacing = 0.4.sp,
-                            ),
-                            color = contentColor,
-                        )
-                    }
-                }
-
-                QualityMetricsContent(
-                    detailState = detailState,
-                    bitDepthStr = bitDepthStr,
-                    kbpsStr = kbpsStr,
-                    pulseAlpha = pulseAlpha,
-                    contentColor = contentColor,
-                )
-            }
+                },
+                menuContent = { menuState ->
+                    DropdownMenuItem(
+                        text = { Text(formatAccessibleName(variant.format)) },
+                        leadingIcon = {
+                            VariantFormatMark(
+                                format = variant.format,
+                                isHiRes = isHiResVariant,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        },
+                        onClick = {
+                            if (hasMultipleVariants && !isSelected) {
+                                onVariantSelected(variant)
+                            } else {
+                                onClick?.invoke()
+                            }
+                            menuState.dismiss()
+                        },
+                    )
+                },
+            )
         }
     }
 }
