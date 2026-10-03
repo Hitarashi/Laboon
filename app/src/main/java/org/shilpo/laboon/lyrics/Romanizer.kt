@@ -55,4 +55,12 @@ object Romanizer {
             null
         }
     }
+
+    fun addMissingRomanization(lines: List<LyricsLine>): List<LyricsLine> = lines.map { line ->
+        if (line.isInstrumental || !line.romanization.isNullOrBlank()) {
+            line
+        } else {
+            romanize(line.text)?.let { line.copy(romanization = it) } ?: line
+        }
+    }
 }

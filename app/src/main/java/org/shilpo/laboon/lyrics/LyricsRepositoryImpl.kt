@@ -28,10 +28,10 @@ internal class LyricsRepositoryImpl(
     override suspend fun lookup(track: LyricsLookup): LyricsResult = withContext(Dispatchers.IO) {
         val durationMs = track.durationSeconds?.coerceAtLeast(0L)?.times(1_000L) ?: 0L
         if (track.title.isBlank() || track.artistString.isBlank()) {
-            return@withContext fallbackLyrics(track, durationMs)
+            return@withContext fallbackLyrics(track, durationMs).withGeneratedRomanization()
         }
         val apiBaseUrl = LyricspornClient.normalizeApiBaseUrl(lyricspornApiUrlProvider())
-            ?: return@withContext fallbackLyrics(track, durationMs)
+            ?: return@withContext fallbackLyrics(track, durationMs).withGeneratedRomanization()
 
         val key = listOf(
             apiBaseUrl,
@@ -43,11 +43,17 @@ internal class LyricsRepositoryImpl(
         val cached = synchronized(cache) {
             cache[key]?.also { if (it.expiresAt <= nowMs()) cache.remove(key) }
         }
-        cached?.takeIf { it.expiresAt > nowMs() }?.let { return@withContext it.value }
+        cached?.takeIf { it.expiresAt > nowMs() }?.let { cachedValue ->
+            val value = cachedValue.value.withGeneratedRomanization()
+            if (value != cachedValue.value) remember(key, value, cachedValue.expiresAt)
+            return@withContext value
+        }
 
         diskCache?.get(key)?.takeIf { it.expiresAt > nowMs() }?.let { persisted ->
-            remember(key, persisted.value, persisted.expiresAt)
-            return@withContext persisted.value
+            val value = persisted.value.withGeneratedRomanization()
+            remember(key, value, persisted.expiresAt)
+            if (value != persisted.value) diskCache.put(key, value, persisted.expiresAt)
+            return@withContext value
         }
 
         val appleId = track.appleTrackId?.takeIf { it.isNumericId() }
@@ -56,7 +62,9 @@ internal class LyricsRepositoryImpl(
                 term = listOf(track.title.trim(), track.artistString.trim()).joinToString(" "),
                 limit = 1,
             ).firstOrNull()?.id
-        if (appleId.isNullOrBlank()) return@withContext fallbackLyrics(track, durationMs)
+        if (appleId.isNullOrBlank()) {
+            return@withContext fallbackLyrics(track, durationMs).withGeneratedRomanization()
+        }
 
         val url = "$apiBaseUrl/tracks/$appleId?include=lyrics&formats=json"
         val response = when (val outcome = client.getJson(url)) {
@@ -70,13 +78,19 @@ internal class LyricsRepositoryImpl(
             ?.objOrNull("content")
             ?.toLyricsResult()
             ?: fallbackLyrics(track, durationMs)
+        val resultWithRomanization = result.withGeneratedRomanization()
 
-        if (result.provider != null) {
+        if (resultWithRomanization.provider != null) {
             val expiresAt = nowMs() + CACHE_TTL_MS
-            remember(key, result, expiresAt)
-            diskCache?.put(key, result, expiresAt)
+            remember(key, resultWithRomanization, expiresAt)
+            diskCache?.put(key, resultWithRomanization, expiresAt)
         }
-        result
+        resultWithRomanization
+    }
+
+    private fun LyricsResult.withGeneratedRomanization(): LyricsResult {
+        val romanizedLines = Romanizer.addMissingRomanization(lines)
+        return if (romanizedLines == lines) this else copy(lines = romanizedLines)
     }
 
     private fun remember(key: String, value: LyricsResult, expiresAt: Long) {

@@ -867,7 +867,16 @@ private data class WordRenderItem(
 
 private data class WordGroup(
     val syllables: List<WordRenderItem>,
-)
+) {
+    val text: String
+        get() = syllables.joinToString(separator = "") { it.text }
+
+    val startMs: Long
+        get() = syllables.minOfOrNull { it.startMs } ?: 0L
+
+    val endMs: Long
+        get() = syllables.maxOfOrNull { it.endMs } ?: startMs
+}
 
 private val BackgroundOuterBracketPairs = mapOf(
     '(' to ')',
@@ -916,6 +925,12 @@ private fun stripOuterBackgroundBrackets(items: List<WordRenderItem>): List<Word
 private val WordBoundaryPunctuation =
     setOf(',', '.', '!', '?', ';', ':', '-', '—', ')', ']', '}', '"', '\'')
 
+private fun Char.isWordContinuation(): Boolean =
+    isLetterOrDigit() ||
+            category == CharCategory.NON_SPACING_MARK ||
+            category == CharCategory.COMBINING_SPACING_MARK ||
+            category == CharCategory.ENCLOSING_MARK
+
 private fun groupIntoWords(
     items: List<WordRenderItem>,
     fullLineText: String,
@@ -955,8 +970,8 @@ private fun groupIntoWords(
                 searchIndex = endPos
 
                 if (!hasTrailingSpace) {
-                    val isInternalSyllable =
-                        endPos < fullLineText.length && fullLineText[endPos].isLetterOrDigit()
+                    val isInternalSyllable = endPos < fullLineText.length &&
+                            fullLineText[endPos].isWordContinuation()
                     if (isInternalSyllable) {
                         isWordBoundary = false
                     }
@@ -1179,24 +1194,18 @@ private fun LyricsLineItem(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 wordGroups.forEach { group ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        group.syllables.forEach { item ->
-                            KaraokeWord(
-                                text = item.text,
-                                startTime = item.startMs,
-                                endTime = item.endMs,
-                                currentTimeProvider = currentTimeProvider,
-                                isRtl = lineIsRtl,
-                                fontSize = lineFontSize,
-                                textColor = textColor,
-                                inactiveAlpha = if (isActive) 0.35f else 0.52f,
-                                fontWeight = lineFontWeight,
-                                isBackground = false,
-                            )
-                        }
-                    }
+                    KaraokeWord(
+                        text = group.text,
+                        startTime = group.startMs,
+                        endTime = group.endMs,
+                        currentTimeProvider = currentTimeProvider,
+                        isRtl = lineIsRtl,
+                        fontSize = lineFontSize,
+                        textColor = textColor,
+                        inactiveAlpha = if (isActive) 0.35f else 0.52f,
+                        fontWeight = lineFontWeight,
+                        isBackground = false,
+                    )
                 }
             }
         } else {
@@ -1236,24 +1245,18 @@ private fun LyricsLineItem(
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     bgWordGroups.forEach { group ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            group.syllables.forEach { item ->
-                                KaraokeWord(
-                                    text = item.text,
-                                    startTime = item.startMs,
-                                    endTime = item.endMs,
-                                    currentTimeProvider = currentTimeProvider,
-                                    isRtl = lineIsRtl,
-                                    fontSize = 22.sp,
-                                    textColor = textColor.copy(alpha = 0.92f),
-                                    inactiveAlpha = if (isActive) 0.5f else 0.52f,
-                                    fontWeight = FontWeight.SemiBold,
-                                    isBackground = true,
-                                )
-                            }
-                        }
+                        KaraokeWord(
+                            text = group.text,
+                            startTime = group.startMs,
+                            endTime = group.endMs,
+                            currentTimeProvider = currentTimeProvider,
+                            isRtl = lineIsRtl,
+                            fontSize = 22.sp,
+                            textColor = textColor.copy(alpha = 0.92f),
+                            inactiveAlpha = if (isActive) 0.5f else 0.52f,
+                            fontWeight = FontWeight.SemiBold,
+                            isBackground = true,
+                        )
                     }
                 }
             }
@@ -1418,29 +1421,43 @@ private fun KaraokeWord(
 
                         val paddingPx = glowPadding.toPx()
                         val fadeWidth = 20f
+                        val totalTextWidth = (0 until layout.lineCount).sumOf { lineIndex ->
+                            (layout.getLineRight(lineIndex) - layout.getLineLeft(lineIndex))
+                                .coerceAtLeast(0f)
+                                .toDouble()
+                        }.toFloat()
+                        val revealWidth = totalTextWidth * progress
+                        var consumedWidth = 0f
 
                         for (lineIndex in 0 until layout.lineCount) {
                             val lineTop = (paddingPx + layout.getLineTop(lineIndex))
                                 .coerceIn(0f, size.height)
                             val lineBottom = (paddingPx + layout.getLineBottom(lineIndex))
                                 .coerceIn(lineTop, size.height)
-                            if (lineBottom <= lineTop || size.width <= 0f) continue
-
-                            val maskTopLeft = Offset(0f, lineTop)
-                            val maskSize = Size(size.width, lineBottom - lineTop)
                             val textStartX = (paddingPx + layout.getLineLeft(lineIndex))
                                 .coerceIn(0f, size.width)
                             val textEndX = (paddingPx + layout.getLineRight(lineIndex))
                                 .coerceIn(textStartX, size.width)
+                            val textWidth = textEndX - textStartX
+                            val lineProgress = if (textWidth > 0f) {
+                                ((revealWidth - consumedWidth) / textWidth).coerceIn(0f, 1f)
+                            } else {
+                                0f
+                            }
+                            consumedWidth += textWidth
+                            if (lineBottom <= lineTop || size.width <= 0f) continue
+
+                            val maskTopLeft = Offset(0f, lineTop)
+                            val maskSize = Size(size.width, lineBottom - lineTop)
                             when {
-                                progress >= 1f -> drawRect(
+                                lineProgress >= 1f -> drawRect(
                                     color = Color.White,
                                     topLeft = maskTopLeft,
                                     size = maskSize,
                                     blendMode = BlendMode.DstIn,
                                 )
 
-                                progress <= 0f -> drawRect(
+                                lineProgress <= 0f -> drawRect(
                                     color = Color.Transparent,
                                     topLeft = maskTopLeft,
                                     size = maskSize,
@@ -1448,11 +1465,10 @@ private fun KaraokeWord(
                                 )
 
                                 else -> {
-                                    val textWidth = textEndX - textStartX
                                     val boundaryX = if (isRtl) {
-                                        textEndX - textWidth * progress
+                                        textEndX - textWidth * lineProgress
                                     } else {
-                                        textStartX + textWidth * progress
+                                        textStartX + textWidth * lineProgress
                                     }
                                     val sweepBrush = if (!isRtl) {
                                         val solidPos = (boundaryX / size.width).coerceIn(0f, 1f)
@@ -1610,29 +1626,43 @@ private fun LineSyncedSweepText(
                         drawContent()
 
                         val fadeWidth = 40f
+                        val totalTextWidth = (0 until layout.lineCount).sumOf { lineIndex ->
+                            (layout.getLineRight(lineIndex) - layout.getLineLeft(lineIndex))
+                                .coerceAtLeast(0f)
+                                .toDouble()
+                        }.toFloat()
+                        val revealWidth = totalTextWidth * progress
+                        var consumedWidth = 0f
 
                         for (lineIndex in 0 until layout.lineCount) {
                             val lineTop = layout.getLineTop(lineIndex)
                                 .coerceIn(0f, size.height)
                             val lineBottom = layout.getLineBottom(lineIndex)
                                 .coerceIn(lineTop, size.height)
-                            if (lineBottom <= lineTop || size.width <= 0f) continue
-
-                            val maskTopLeft = Offset(0f, lineTop)
-                            val maskSize = Size(size.width, lineBottom - lineTop)
                             val textStartX = layout.getLineLeft(lineIndex)
                                 .coerceIn(0f, size.width)
                             val textEndX = layout.getLineRight(lineIndex)
                                 .coerceIn(textStartX, size.width)
+                            val textWidth = textEndX - textStartX
+                            val lineProgress = if (textWidth > 0f) {
+                                ((revealWidth - consumedWidth) / textWidth).coerceIn(0f, 1f)
+                            } else {
+                                0f
+                            }
+                            consumedWidth += textWidth
+                            if (lineBottom <= lineTop || size.width <= 0f) continue
+
+                            val maskTopLeft = Offset(0f, lineTop)
+                            val maskSize = Size(size.width, lineBottom - lineTop)
                             when {
-                                progress >= 1f -> drawRect(
+                                lineProgress >= 1f -> drawRect(
                                     color = Color.White,
                                     topLeft = maskTopLeft,
                                     size = maskSize,
                                     blendMode = BlendMode.DstIn,
                                 )
 
-                                progress <= 0f -> drawRect(
+                                lineProgress <= 0f -> drawRect(
                                     color = Color.Transparent,
                                     topLeft = maskTopLeft,
                                     size = maskSize,
@@ -1640,11 +1670,10 @@ private fun LineSyncedSweepText(
                                 )
 
                                 else -> {
-                                    val textWidth = textEndX - textStartX
                                     val boundaryX = if (isRtl) {
-                                        textEndX - textWidth * progress
+                                        textEndX - textWidth * lineProgress
                                     } else {
-                                        textStartX + textWidth * progress
+                                        textStartX + textWidth * lineProgress
                                     }
                                     val sweepBrush = if (!isRtl) {
                                         val solidPos = (boundaryX / size.width).coerceIn(0f, 1f)

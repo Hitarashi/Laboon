@@ -16,7 +16,6 @@ import android.text.TextPaint
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,10 +31,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -43,6 +41,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -68,6 +67,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -200,8 +202,7 @@ fun LyricsShareDialog(
 
                 Column(
                     modifier = Modifier
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState()),
+                        .weight(1f),
                 ) {
                     if (selectedTab == 0) {
                         FrostedLyricsCardPreview(
@@ -226,62 +227,18 @@ fun LyricsShareDialog(
                             modifier = Modifier.padding(top = 10.dp),
                         ) {
                             if (hasRomanization) {
-                                Surface(
+                                FilterChip(
+                                    selected = includeRomanization,
                                     onClick = { includeRomanization = !includeRomanization },
-                                    shape = CircleShape,
-                                    color = if (includeRomanization) MaterialTheme.colorScheme.secondaryContainer
-                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                                    contentColor = if (includeRomanization) MaterialTheme.colorScheme.onSecondaryContainer
-                                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    border = BorderStroke(
-                                        1.dp,
-                                        if (includeRomanization) MaterialTheme.colorScheme.secondary
-                                        else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-                                    ),
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(
-                                            horizontal = 12.dp,
-                                            vertical = 6.dp
-                                        ),
-                                    ) {
-                                        Text(
-                                            text = "Rom",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                        )
-                                    }
-                                }
+                                    label = { Text("Romanization") },
+                                )
                             }
                             if (hasTranslation) {
-                                Surface(
+                                FilterChip(
+                                    selected = includeTranslation,
                                     onClick = { includeTranslation = !includeTranslation },
-                                    shape = CircleShape,
-                                    color = if (includeTranslation) MaterialTheme.colorScheme.secondaryContainer
-                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                                    contentColor = if (includeTranslation) MaterialTheme.colorScheme.onSecondaryContainer
-                                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    border = BorderStroke(
-                                        1.dp,
-                                        if (includeTranslation) MaterialTheme.colorScheme.secondary
-                                        else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-                                    ),
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(
-                                            horizontal = 12.dp,
-                                            vertical = 6.dp
-                                        ),
-                                    ) {
-                                        Text(
-                                            text = "Trans",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            fontWeight = FontWeight.Bold,
-                                        )
-                                    }
-                                }
+                                    label = { Text("Translation") },
+                                )
                             }
                         }
                     }
@@ -289,10 +246,11 @@ fun LyricsShareDialog(
                     Spacer(modifier = Modifier.height(16.dp))
 
                     Text(
-                        text = "Select lines to share (${selectedLines.size})",
+                        text = "Select lines (${selectedLines.size}/6)",
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold,
+                        modifier = Modifier.semantics { heading() },
                     )
                     Spacer(modifier = Modifier.height(8.dp))
 
@@ -301,6 +259,7 @@ fun LyricsShareDialog(
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .weight(1f)
                             .heightIn(max = 200.dp),
                     ) {
                         LazyColumn(
@@ -312,23 +271,25 @@ fun LyricsShareDialog(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clickable {
-                                            if (isSelected) {
-                                                if (selectedIndices.size > 1) {
+                                        .toggleable(
+                                            value = isSelected,
+                                            role = Role.Checkbox,
+                                            onValueChange = { checked ->
+                                                if (checked) {
+                                                    if (selectedIndices.size < 6) {
+                                                        selectedIndices.add(index)
+                                                    } else {
+                                                        Toast.makeText(
+                                                            context,
+                                                            "Maximum 6 lines allowed",
+                                                            Toast.LENGTH_SHORT
+                                                        ).show()
+                                                    }
+                                                } else if (selectedIndices.size > 1) {
                                                     selectedIndices.remove(index)
                                                 }
-                                            } else {
-                                                if (selectedIndices.size < 6) {
-                                                    selectedIndices.add(index)
-                                                } else {
-                                                    Toast.makeText(
-                                                        context,
-                                                        "Maximum 6 lines allowed",
-                                                        Toast.LENGTH_SHORT
-                                                    ).show()
-                                                }
-                                            }
-                                        }
+                                            },
+                                        )
                                         .padding(horizontal = 12.dp, vertical = 6.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
@@ -362,7 +323,7 @@ fun LyricsShareDialog(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     OutlinedButton(
                         onClick = {
@@ -382,29 +343,21 @@ fun LyricsShareDialog(
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(12.dp),
                     ) {
-                        Text("Copy", fontWeight = FontWeight.SemiBold)
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            shareLyricsAsText(
-                                context,
-                                track,
-                                selectedLines,
-                                includeRomanization,
-                                includeTranslation
-                            )
-                            onDismissRequest()
-                        },
-                        modifier = Modifier.weight(1.2f),
-                        shape = RoundedCornerShape(12.dp),
-                    ) {
-                        Text("Share Text", fontWeight = FontWeight.SemiBold)
+                        Text("Copy text", fontWeight = FontWeight.SemiBold)
                     }
 
                     Button(
                         onClick = {
-                            if (!isGeneratingImage) {
+                            if (selectedTab == 1) {
+                                shareLyricsAsText(
+                                    context,
+                                    track,
+                                    selectedLines,
+                                    includeRomanization,
+                                    includeTranslation
+                                )
+                                onDismissRequest()
+                            } else if (!isGeneratingImage) {
                                 isGeneratingImage = true
                                 coroutineScope.launch {
                                     try {
@@ -429,8 +382,8 @@ fun LyricsShareDialog(
                                 }
                             }
                         },
-                        enabled = !isGeneratingImage && selectedLines.isNotEmpty(),
-                        modifier = Modifier.weight(1.4f),
+                        enabled = selectedLines.isNotEmpty() && !isGeneratingImage,
+                        modifier = Modifier.weight(1.6f),
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primary,
@@ -443,7 +396,10 @@ fun LyricsShareDialog(
                                 color = MaterialTheme.colorScheme.onPrimary,
                             )
                         } else {
-                            Text("Share Card", fontWeight = FontWeight.Bold)
+                            Text(
+                                text = if (selectedTab == 0) "Share card" else "Share text",
+                                fontWeight = FontWeight.Bold,
+                            )
                         }
                     }
                 }

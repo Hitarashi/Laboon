@@ -51,17 +51,7 @@ internal object LyricsParser {
         val withBreaks = if (tier != LyricsSyncLevel.Plain) {
             insertInstrumentalBreaks(normalized, durationMs)
         } else normalized
-        val withRomanization = withBreaks.map { line ->
-            if (!line.isInstrumental && line.romanization == null && line.text.isNotBlank() && Romanizer.needsRomanization(
-                    line.text
-                )
-            ) {
-                val roman = Romanizer.romanize(line.text)
-                if (roman != null) line.copy(romanization = roman) else line
-            } else {
-                line
-            }
-        }
+        val withRomanization = Romanizer.addMissingRomanization(withBreaks)
         val plainText = withRomanization.asSequence()
             .filterNot { it.isInstrumental }
             .map { it.text.trim() }
