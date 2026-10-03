@@ -640,6 +640,7 @@ fun shareLyricsAsText(
     context.startActivity(Intent.createChooser(intent, "Share Lyrics"))
 }
 
+@Suppress("UsePropertyAccessSyntax")
 fun copyLyricsToClipboard(
     context: Context,
     track: HomeTrack,
@@ -652,7 +653,7 @@ fun copyLyricsToClipboard(
         "Lyrics",
         formatShareText(track, lines, includeRomanization, includeTranslation)
     )
-    clipboard.primaryClip = clip
+    clipboard.setPrimaryClip(clip)
 }
 
 suspend fun renderCardBitmap(

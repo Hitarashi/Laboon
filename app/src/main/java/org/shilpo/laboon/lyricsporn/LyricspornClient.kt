@@ -33,6 +33,7 @@ data class LyricspornMotionArtwork(
 
 object LyricspornClient {
     private const val MAX_ARTWORK_LOOKUPS = 3
+    private const val DEFAULT_STOREFRONT = "us"
 
     private val http = HttpJsonClient()
     private val artworkCache = ConcurrentHashMap<String, String>()
@@ -48,7 +49,7 @@ object LyricspornClient {
     }
 
     fun normalizedArtworkKey(title: String, artist: String, apiBaseUrl: String?): String =
-        "${normalizeApiBaseUrl(apiBaseUrl).orEmpty()}:${title.normalized()}:${artist.normalized()}"
+        "${normalizeApiBaseUrl(apiBaseUrl).orEmpty()}:${currentStorefront()}:${title.normalized()}:${artist.normalized()}"
 
     suspend fun searchSongs(
         apiBaseUrl: String?,
@@ -60,7 +61,7 @@ object LyricspornClient {
         val query = encode(term.trim())
         val json = getJson(
             "$baseUrl/catalog/search?term=$query&types=songs&limit=${limit.coerceIn(1, 25)}" +
-                    "&artworkSize=300",
+                    "&storefront=${currentStorefront()}&artworkSize=300",
         ) ?: return emptyList()
         return json.objOrNull("results")?.objOrNull("songs")?.arrOrNull("items")
             ?.toCatalogItems(300)
@@ -73,7 +74,8 @@ object LyricspornClient {
         val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return emptyList()
         val query = encode(term.trim())
         val json = getJson(
-            "$baseUrl/catalog/search/hints?term=$query&limit=${limit.coerceIn(1, 25)}",
+            "$baseUrl/catalog/search/hints?term=$query&storefront=${currentStorefront()}" +
+                    "&limit=${limit.coerceIn(1, 25)}",
         ) ?: return emptyList()
         return json.arrOrNull("terms")?.let { items ->
             buildList {
@@ -94,7 +96,8 @@ object LyricspornClient {
         val query = encode(term.trim())
         val json = getJson(
             "$baseUrl/catalog/search/suggestions?term=$query&kinds=topResults&types=songs" +
-                    "&limit=${limit.coerceIn(1, 10)}&artworkSize=300",
+                    "&storefront=${currentStorefront()}&limit=${limit.coerceIn(1, 10)}" +
+                    "&artworkSize=300",
         ) ?: return emptyList()
         val suggestions = json.arrOrNull("suggestions") ?: return emptyList()
         return buildList {
@@ -136,9 +139,9 @@ object LyricspornClient {
             return null
         }
         val cacheKey = if (trackId != null) {
-            "$baseUrl:track-motion:$trackId"
+            "$baseUrl:${currentStorefront()}:track-motion:$trackId"
         } else {
-            "$baseUrl:track-motion:$normalizedTitle:$normalizedArtist:${
+            "$baseUrl:${currentStorefront()}:track-motion:$normalizedTitle:$normalizedArtist:${
                 album.orEmpty().normalized()
             }"
         }
@@ -147,7 +150,10 @@ object LyricspornClient {
         return artworkPermits.withPermit {
             motionArtworkCache[cacheKey]?.let { return@withPermit it }
             val artwork = if (trackId != null) {
-                getJson("$baseUrl/tracks/$trackId?include=motionArtwork")
+                getJson(
+                    "$baseUrl/tracks/$trackId?storefront=${currentStorefront()}" +
+                            "&include=motionArtwork"
+                )
                     ?.objOrNull("track")
                     ?.objOrNull("motionArtwork")
                     ?.toMotionArtwork()
@@ -197,7 +203,8 @@ object LyricspornClient {
         val normalizedArtist = artist.orEmpty().normalized()
         val normalizedAlbum = album.orEmpty().normalized()
         if (normalizedTitle.isBlank()) return null
-        val key = "$baseUrl:$type:$normalizedTitle:$normalizedArtist:$normalizedAlbum"
+        val key =
+            "$baseUrl:${currentStorefront()}:$type:$normalizedTitle:$normalizedArtist:$normalizedAlbum"
         artworkCache[key]?.let { return it }
 
         return artworkPermits.withPermit {
@@ -242,7 +249,8 @@ object LyricspornClient {
     ): List<LyricspornCatalogItem> {
         val json = getJson(
             "$apiBaseUrl/catalog/search?term=${encode(term)}&types=$type" +
-                    "&limit=${limit.coerceIn(1, 25)}&artworkSize=$artworkSize" +
+                    "&storefront=${currentStorefront()}&limit=${limit.coerceIn(1, 25)}" +
+                    "&artworkSize=$artworkSize" +
                     if (includeMotionArtwork) "&include=motionArtwork" else "",
         ) ?: return emptyList()
         return json.objOrNull("results")?.objOrNull(type)?.arrOrNull("items")
@@ -301,6 +309,15 @@ object LyricspornClient {
         .trim()
 
     private fun String.isNumericAppleId(): Boolean = isNotBlank() && all(Char::isDigit)
+
+    private fun currentStorefront(): String = Locale.getDefault().country
+        .takeIf { country ->
+            country.length == 2 && country.all { character ->
+                character in 'A'..'Z' || character in 'a'..'z'
+            }
+        }
+        ?.lowercase(Locale.ROOT)
+        ?: DEFAULT_STOREFRONT
 
     private fun encode(value: String): String =
         URLEncoder.encode(value, StandardCharsets.UTF_8.name())
