@@ -46,40 +46,86 @@ jobs:
           chmod 600 "$keystore_path"
           echo "ANDROID_KEYSTORE_PATH=$keystore_path" >> "$GITHUB_ENV"
 
-      - name: Build signed release APK
-        run: ./gradlew --no-daemon :app:assembleRelease
+      - name: Build signed release APKs
+        run: ./gradlew --no-daemon -PreleaseAbiSplits=true :app:assembleRelease
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
 
-      - name: Verify APK signature
+      - name: Verify and package APKs
         env:
-          APK_PATH: app/build/outputs/apk/release/app-release.apk
+          APK_DIRECTORY: app/build/outputs/apk/release
         run: |
-          test -f "$APK_PATH"
-          sdk_root="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
-          "$sdk_root/build-tools/37.0.0/apksigner" verify --verbose --print-certs "$APK_PATH"
-
-      - name: Package release asset
-        id: package
-        env:
-          APK_PATH: app/build/outputs/apk/release/app-release.apk
-        run: |
+          set -euo pipefail
+          sdk_root="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          test -n "$sdk_root"
+          apksigner="$sdk_root/build-tools/37.0.0/apksigner"
           safe_tag="${GITHUB_REF_NAME//\//-}"
-          asset_path="$RUNNER_TEMP/Laboon-${safe_tag}.apk"
-          cp "$APK_PATH" "$asset_path"
-          echo "apk_path=$asset_path" >> "$GITHUB_OUTPUT"
+          asset_directory="$RUNNER_TEMP/release-assets"
+          mkdir -p "$asset_directory"
+
+          python3 - "$APK_DIRECTORY" "$asset_directory" "$GITHUB_REF_NAME" <<'PY'
+          import pathlib
+          import shutil
+          import sys
+          import zipfile
+
+          source_directory = pathlib.Path(sys.argv[1])
+          asset_directory = pathlib.Path(sys.argv[2])
+          tag = sys.argv[3].replace("/", "-")
+          expected_arches = {"armeabi-v7a", "arm64-v8a", "x86", "x86_64"}
+          apk_files = sorted(source_directory.glob("*.apk"))
+          if len(apk_files) != 5:
+              raise SystemExit(f"Expected five ABI split APKs, found {len(apk_files)}")
+
+          variants = {}
+          for apk_path in apk_files:
+              with zipfile.ZipFile(apk_path) as apk:
+                  arches = {
+                      entry.split("/")[1]
+                      for entry in apk.namelist()
+                      if entry.startswith("lib/") and entry.count("/") >= 2
+                  }
+              if arches == expected_arches:
+                  variant = "universal"
+              elif len(arches) == 1 and arches <= expected_arches:
+                  variant = next(iter(arches))
+              else:
+                  raise SystemExit(f"Unexpected ABI set in {apk_path.name}: {sorted(arches)}")
+              if variant in variants:
+                  raise SystemExit(f"Multiple APKs found for {variant}")
+              variants[variant] = apk_path
+
+          expected_variants = expected_arches | {"universal"}
+          if set(variants) != expected_variants:
+              raise SystemExit(f"Missing APK variants: {sorted(expected_variants - set(variants))}")
+
+          asset_directory.mkdir(parents=True, exist_ok=True)
+          for variant, apk_path in variants.items():
+              shutil.copy2(apk_path, asset_directory / f"Laboon-{tag}-{variant}.apk")
+          PY
+
+          for abi in arm64-v8a armeabi-v7a x86 x86_64 universal; do
+            apk_path="$asset_directory/Laboon-${safe_tag}-${abi}.apk"
+            "$apksigner" verify --verbose "$apk_path"
+          done
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          APK_PATH: ${{ steps.package.outputs.apk_path }}
         run: |
+          set -euo pipefail
+          safe_tag="${GITHUB_REF_NAME//\//-}"
+          assets=()
+          for abi in arm64-v8a armeabi-v7a x86 x86_64 universal; do
+            assets+=("$RUNNER_TEMP/release-assets/Laboon-${safe_tag}-${abi}.apk")
+          done
+
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$APK_PATH" --clobber
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "$APK_PATH" \
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
               --verify-tag \
               --title "Laboon $GITHUB_REF_NAME" \
               --generate-notes

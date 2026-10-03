@@ -7,6 +7,7 @@ val releaseKeyStorePath = providers.environmentVariable("ANDROID_KEYSTORE_PATH")
 val releaseKeyStorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orNull
 val releaseKeyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS").orNull
 val releaseKeyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD").orNull
+val releaseAbiSplitsEnabled = providers.gradleProperty("releaseAbiSplits").orNull == "true"
 val releaseSigningValues = listOf(
     releaseKeyStorePath,
     releaseKeyStorePassword,
@@ -31,10 +32,19 @@ android {
         applicationId = "org.shilpo.laboon"
         minSdk = 33
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.0.1"
+        versionCode = 2
+        versionName = "0.0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    splits {
+        abi {
+            isEnable = releaseAbiSplitsEnabled
+            reset()
+            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            isUniversalApk = releaseAbiSplitsEnabled
+        }
     }
 
     signingConfigs {
@@ -49,6 +59,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+        }
         release {
             optimization {
                 enable = false
