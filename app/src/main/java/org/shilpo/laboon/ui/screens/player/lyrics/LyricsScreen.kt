@@ -1416,17 +1416,10 @@ private fun KaraokeWord(
                         val layout = wordTextLayoutResult.value ?: return@drawWithContent
                         drawContent()
 
-                        val codePointCount = text.codePointCount(0, text.length)
-                        val revealedCodePoints = (codePointCount * progress)
-                            .roundToInt()
-                            .coerceIn(0, codePointCount)
-                        val revealOffset = text.offsetByCodePoints(0, revealedCodePoints)
                         val paddingPx = glowPadding.toPx()
                         val fadeWidth = 20f
 
                         for (lineIndex in 0 until layout.lineCount) {
-                            val lineStart = layout.getLineStart(lineIndex)
-                            val lineEnd = layout.getLineEnd(lineIndex, visibleEnd = true)
                             val lineTop = (paddingPx + layout.getLineTop(lineIndex))
                                 .coerceIn(0f, size.height)
                             val lineBottom = (paddingPx + layout.getLineBottom(lineIndex))
@@ -1435,15 +1428,19 @@ private fun KaraokeWord(
 
                             val maskTopLeft = Offset(0f, lineTop)
                             val maskSize = Size(size.width, lineBottom - lineTop)
+                            val textStartX = (paddingPx + layout.getLineLeft(lineIndex))
+                                .coerceIn(0f, size.width)
+                            val textEndX = (paddingPx + layout.getLineRight(lineIndex))
+                                .coerceIn(textStartX, size.width)
                             when {
-                                revealOffset >= lineEnd -> drawRect(
+                                progress >= 1f -> drawRect(
                                     color = Color.White,
                                     topLeft = maskTopLeft,
                                     size = maskSize,
                                     blendMode = BlendMode.DstIn,
                                 )
 
-                                revealOffset <= lineStart -> drawRect(
+                                progress <= 0f -> drawRect(
                                     color = Color.Transparent,
                                     topLeft = maskTopLeft,
                                     size = maskSize,
@@ -1451,10 +1448,12 @@ private fun KaraokeWord(
                                 )
 
                                 else -> {
-                                    val boundaryX = (paddingPx + layout.getHorizontalPosition(
-                                        revealOffset.coerceIn(lineStart, lineEnd),
-                                        usePrimaryDirection = true,
-                                    )).coerceIn(0f, size.width)
+                                    val textWidth = textEndX - textStartX
+                                    val boundaryX = if (isRtl) {
+                                        textEndX - textWidth * progress
+                                    } else {
+                                        textStartX + textWidth * progress
+                                    }
                                     val sweepBrush = if (!isRtl) {
                                         val solidPos = (boundaryX / size.width).coerceIn(0f, 1f)
                                         val endPos =
@@ -1610,16 +1609,9 @@ private fun LineSyncedSweepText(
                         val layout = textLayoutResult.value ?: return@drawWithContent
                         drawContent()
 
-                        val codePointCount = text.codePointCount(0, text.length)
-                        val revealedCodePoints = (codePointCount * progress)
-                            .roundToInt()
-                            .coerceIn(0, codePointCount)
-                        val revealOffset = text.offsetByCodePoints(0, revealedCodePoints)
                         val fadeWidth = 40f
 
                         for (lineIndex in 0 until layout.lineCount) {
-                            val lineStart = layout.getLineStart(lineIndex)
-                            val lineEnd = layout.getLineEnd(lineIndex, visibleEnd = true)
                             val lineTop = layout.getLineTop(lineIndex)
                                 .coerceIn(0f, size.height)
                             val lineBottom = layout.getLineBottom(lineIndex)
@@ -1628,15 +1620,19 @@ private fun LineSyncedSweepText(
 
                             val maskTopLeft = Offset(0f, lineTop)
                             val maskSize = Size(size.width, lineBottom - lineTop)
+                            val textStartX = layout.getLineLeft(lineIndex)
+                                .coerceIn(0f, size.width)
+                            val textEndX = layout.getLineRight(lineIndex)
+                                .coerceIn(textStartX, size.width)
                             when {
-                                revealOffset >= lineEnd -> drawRect(
+                                progress >= 1f -> drawRect(
                                     color = Color.White,
                                     topLeft = maskTopLeft,
                                     size = maskSize,
                                     blendMode = BlendMode.DstIn,
                                 )
 
-                                revealOffset <= lineStart -> drawRect(
+                                progress <= 0f -> drawRect(
                                     color = Color.Transparent,
                                     topLeft = maskTopLeft,
                                     size = maskSize,
@@ -1644,10 +1640,12 @@ private fun LineSyncedSweepText(
                                 )
 
                                 else -> {
-                                    val boundaryX = layout.getHorizontalPosition(
-                                        revealOffset.coerceIn(lineStart, lineEnd),
-                                        usePrimaryDirection = true,
-                                    ).coerceIn(0f, size.width)
+                                    val textWidth = textEndX - textStartX
+                                    val boundaryX = if (isRtl) {
+                                        textEndX - textWidth * progress
+                                    } else {
+                                        textStartX + textWidth * progress
+                                    }
                                     val sweepBrush = if (!isRtl) {
                                         val solidPos = (boundaryX / size.width).coerceIn(0f, 1f)
                                         val endPos =

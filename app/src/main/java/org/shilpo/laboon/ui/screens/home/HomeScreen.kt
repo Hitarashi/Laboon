@@ -150,10 +150,11 @@ fun HomeScreen(
 
     val sessionStore = remember(context) { SessionStore(SharedPreferencesKeyValueStore(context)) }
     val ripWsClient = remember(sessionStore) { RipWebSocketClient(sessionStore) }
+    val ripState by ripWsClient.state.collectAsState()
     var showRipVisualizer by rememberSaveable { mutableStateOf(false) }
 
-    DisposableEffect(showRipVisualizer) {
-        if (showRipVisualizer) {
+    DisposableEffect(ripWsClient, session?.serverUrl, session?.token) {
+        if (session != null) {
             ripWsClient.start()
         }
         onDispose {
@@ -445,6 +446,10 @@ fun HomeScreen(
                         onAddToQueue = { track ->
                             playbackManager.addToQueue(track)
                         },
+                        ripTasks = ripState.activeTasks,
+                        pendingRipTrackIds = ripState.pendingTrackIds,
+                        onRipTrack = { track -> ripWsClient.startRip(track) },
+                        onOpenRipVisualizer = { showRipVisualizer = true },
                         modifier = Modifier.fillMaxSize(),
                     )
 

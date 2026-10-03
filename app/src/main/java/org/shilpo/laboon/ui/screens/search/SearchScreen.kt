@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -35,6 +36,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -50,6 +52,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -64,6 +68,7 @@ import org.shilpo.laboon.R
 import org.shilpo.laboon.auth.SessionStore
 import org.shilpo.laboon.auth.SharedPreferencesKeyValueStore
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.rip.RipTaskSnapshot
 import org.shilpo.laboon.search.SearchRepository
 import org.shilpo.laboon.search.SearchRepositoryImpl
 import org.shilpo.laboon.ui.design.CodecIcon
@@ -74,6 +79,10 @@ fun SearchScreen(
     onPlayWithContext: ((HomeTrack, List<HomeTrack>) -> Unit)? = null,
     onPlayNext: ((HomeTrack) -> Unit)? = null,
     onAddToQueue: ((HomeTrack) -> Unit)? = null,
+    ripTasks: List<RipTaskSnapshot> = emptyList(),
+    pendingRipTrackIds: Set<String> = emptySet(),
+    onRipTrack: (HomeTrack) -> Unit = {},
+    onOpenRipVisualizer: () -> Unit = {},
     modifier: Modifier = Modifier,
     searchRepository: SearchRepository? = null,
 ) {
@@ -241,6 +250,10 @@ fun SearchScreen(
                                 onPlayWithContext = onPlayWithContext,
                                 onPlayNext = onPlayNext,
                                 onAddToQueue = onAddToQueue,
+                                ripTasks = ripTasks,
+                                pendingRipTrackIds = pendingRipTrackIds,
+                                onRipTrack = onRipTrack,
+                                onOpenRipVisualizer = onOpenRipVisualizer,
                             )
                         }
                     }
@@ -274,6 +287,10 @@ fun SearchScreen(
                                     onPlayWithContext = onPlayWithContext,
                                     onPlayNext = onPlayNext,
                                     onAddToQueue = onAddToQueue,
+                                    ripTasks = ripTasks,
+                                    pendingRipTrackIds = pendingRipTrackIds,
+                                    onRipTrack = onRipTrack,
+                                    onOpenRipVisualizer = onOpenRipVisualizer,
                                 )
                             }
                         }
@@ -292,8 +309,19 @@ private fun SearchTrackRow(
     onPlayWithContext: ((HomeTrack, List<HomeTrack>) -> Unit)?,
     onPlayNext: ((HomeTrack) -> Unit)?,
     onAddToQueue: ((HomeTrack) -> Unit)?,
+    ripTasks: List<RipTaskSnapshot>,
+    pendingRipTrackIds: Set<String>,
+    onRipTrack: (HomeTrack) -> Unit,
+    onOpenRipVisualizer: () -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    val sourceTrackId = track.providerTrackId
+    val ripTask = remember(ripTasks, sourceTrackId) {
+        ripTasks.firstOrNull {
+            it.provider.equals("apple", ignoreCase = true) && it.sourceTrackId == sourceTrackId
+        }
+    }
+    val isRipPending = sourceTrackId != null && sourceTrackId in pendingRipTrackIds
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -371,6 +399,15 @@ private fun SearchTrackRow(
             }
         }
 
+        if (sourceTrackId != null && (!track.isCached || ripTask != null || isRipPending)) {
+            RipSearchAction(
+                task = ripTask,
+                isPending = isRipPending,
+                onDownload = { onRipTrack(track) },
+                onOpenProgress = onOpenRipVisualizer,
+            )
+        }
+
         if (onPlayNext != null || onAddToQueue != null) {
             Box {
                 IconButton(
@@ -408,6 +445,64 @@ private fun SearchTrackRow(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun RipSearchAction(
+    task: RipTaskSnapshot?,
+    isPending: Boolean,
+    onDownload: () -> Unit,
+    onOpenProgress: () -> Unit,
+) {
+    val isInProgress = task != null || isPending
+    val progress = task?.let {
+        (it.percent ?: it.download?.percent ?: it.upload?.percent)
+            ?.div(100f)
+            ?.coerceIn(0f, 1f)
+            ?: if (it.completed) 1f else null
+    }
+    IconButton(
+        onClick = if (isInProgress) onOpenProgress else onDownload,
+        modifier = Modifier
+            .size(40.dp)
+            .semantics {
+                contentDescription = when {
+                    !isInProgress -> "Add to rip"
+                    task?.completed == true -> "Rip complete"
+                    progress != null -> "Rip progress ${(progress * 100).toInt()} percent"
+                    else -> "Rip in progress"
+                }
+            },
+    ) {
+        if (!isInProgress) {
+            Icon(
+                painter = painterResource(R.drawable.ic_cloud_download),
+                contentDescription = "Add to rip",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp),
+            )
+        } else if (progress != null) {
+            val activeColor = MaterialTheme.colorScheme.primary
+            CircularWavyProgressIndicator(
+                progress = { progress },
+                modifier = Modifier.size(28.dp),
+                color = activeColor,
+                trackColor = Color.Transparent,
+                amplitude = { value -> if (value > 0f) 1f else 0f },
+                wavelength = WavyProgressIndicatorDefaults.CircularWavelength,
+                waveSpeed = WavyProgressIndicatorDefaults.CircularWavelength / 2f,
+            )
+        } else {
+            val activeColor = MaterialTheme.colorScheme.primary
+            CircularWavyProgressIndicator(
+                modifier = Modifier.size(28.dp),
+                color = activeColor,
+                trackColor = Color.Transparent,
+                wavelength = WavyProgressIndicatorDefaults.CircularWavelength,
+                waveSpeed = WavyProgressIndicatorDefaults.CircularWavelength / 2f,
+            )
         }
     }
 }

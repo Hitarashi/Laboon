@@ -284,5 +284,6 @@ enum class RipWsStatus {
 data class RipVisualizerState(
     val wsStatus: RipWsStatus = RipWsStatus.DISCONNECTED,
     val activeTasks: List<RipTaskSnapshot> = emptyList(),
+    val pendingTrackIds: Set<String> = emptySet(),
     val errorMessage: String? = null,
 )
