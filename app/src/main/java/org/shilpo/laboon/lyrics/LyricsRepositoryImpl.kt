@@ -5,8 +5,6 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import org.shilpo.laboon.lyricsporn.LyricspornClient
-import org.shilpo.laboon.net.HttpJsonClient
-import org.shilpo.laboon.net.HttpOutcome
 import org.shilpo.laboon.net.arrOrNull
 import org.shilpo.laboon.net.objAtOrNull
 import org.shilpo.laboon.net.objOrNull
@@ -16,7 +14,6 @@ import kotlin.math.roundToLong
 
 internal class LyricsRepositoryImpl(
     private val lyricspornApiUrlProvider: () -> String?,
-    private val client: HttpJsonClient = HttpJsonClient(),
     private val nowMs: () -> Long = System::currentTimeMillis,
     private val diskCache: LyricsDiskCache? = null,
 ) : LyricsRepository {
@@ -35,6 +32,7 @@ internal class LyricsRepositoryImpl(
 
         val key = listOf(
             apiBaseUrl,
+            LyricspornClient.currentStorefront(),
             track.appleTrackId.orEmpty(),
             track.title.trim().lowercase(Locale.ROOT),
             track.artistString.trim().lowercase(Locale.ROOT),
@@ -66,11 +64,7 @@ internal class LyricsRepositoryImpl(
             return@withContext fallbackLyrics(track, durationMs).withGeneratedRomanization()
         }
 
-        val url = "$apiBaseUrl/tracks/$appleId?include=lyrics&formats=json"
-        val response = when (val outcome = client.getJson(url)) {
-            is HttpOutcome.Success -> outcome.value
-            is HttpOutcome.Failure -> null
-        }
+        val response = LyricspornClient.getTrackLyrics(apiBaseUrl, appleId)
         val result = response?.objOrNull("lyrics")
             ?.objOrNull("formats")
             ?.objOrNull("json")

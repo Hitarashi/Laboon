@@ -3,10 +3,28 @@ plugins {
     alias(libs.plugins.compose.compiler)
 }
 
+val releaseKeyStorePath = providers.environmentVariable("ANDROID_KEYSTORE_PATH").orNull
+val releaseKeyStorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orNull
+val releaseKeyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS").orNull
+val releaseKeyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD").orNull
+val releaseSigningValues = listOf(
+    releaseKeyStorePath,
+    releaseKeyStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+)
+val releaseSigningConfigured = releaseSigningValues.all { !it.isNullOrBlank() }
+
+check(releaseSigningValues.none { !it.isNullOrBlank() } || releaseSigningConfigured) {
+    "Set all Android release signing environment variables or leave them all unset."
+}
+
 android {
     namespace = "org.shilpo.laboon"
     compileSdk {
-        version = release(37)
+        version = release(37) {
+            minorApiLevel = 0
+        }
     }
 
     defaultConfig {
@@ -19,10 +37,24 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            create("release") {
+                storeFile = file(releaseKeyStorePath!!)
+                storePassword = releaseKeyStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             optimization {
                 enable = false
+            }
+            if (releaseSigningConfigured) {
+                signingConfig = signingConfigs.getByName("release")
             }
         }
     }

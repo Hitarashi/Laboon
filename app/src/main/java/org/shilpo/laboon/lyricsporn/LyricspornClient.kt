@@ -61,7 +61,7 @@ object LyricspornClient {
         val query = encode(term.trim())
         val json = getJson(
             "$baseUrl/catalog/search?term=$query&types=songs&limit=${limit.coerceIn(1, 25)}" +
-                    "&storefront=${currentStorefront()}&artworkSize=300",
+                    "&artworkSize=300",
         ) ?: return emptyList()
         return json.objOrNull("results")?.objOrNull("songs")?.arrOrNull("items")
             ?.toCatalogItems(300)
@@ -69,13 +69,18 @@ object LyricspornClient {
             .filter { it.type == "song" && it.id.isNumericAppleId() }
     }
 
+    suspend fun getTrackLyrics(apiBaseUrl: String?, appleTrackId: String): JSONObject? {
+        val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return null
+        val trackId = appleTrackId.takeIf { it.isNumericAppleId() } ?: return null
+        return getJson("$baseUrl/tracks/$trackId?include=lyrics&formats=json")
+    }
+
     suspend fun searchHints(apiBaseUrl: String?, term: String, limit: Int = 5): List<String> {
         if (term.isBlank()) return emptyList()
         val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return emptyList()
         val query = encode(term.trim())
         val json = getJson(
-            "$baseUrl/catalog/search/hints?term=$query&storefront=${currentStorefront()}" +
-                    "&limit=${limit.coerceIn(1, 25)}",
+            "$baseUrl/catalog/search/hints?term=$query&limit=${limit.coerceIn(1, 25)}",
         ) ?: return emptyList()
         return json.arrOrNull("terms")?.let { items ->
             buildList {
@@ -96,8 +101,7 @@ object LyricspornClient {
         val query = encode(term.trim())
         val json = getJson(
             "$baseUrl/catalog/search/suggestions?term=$query&kinds=topResults&types=songs" +
-                    "&storefront=${currentStorefront()}&limit=${limit.coerceIn(1, 10)}" +
-                    "&artworkSize=300",
+                    "&limit=${limit.coerceIn(1, 10)}&artworkSize=300",
         ) ?: return emptyList()
         val suggestions = json.arrOrNull("suggestions") ?: return emptyList()
         return buildList {
@@ -151,8 +155,7 @@ object LyricspornClient {
             motionArtworkCache[cacheKey]?.let { return@withPermit it }
             val artwork = if (trackId != null) {
                 getJson(
-                    "$baseUrl/tracks/$trackId?storefront=${currentStorefront()}" +
-                            "&include=motionArtwork"
+                    "$baseUrl/tracks/$trackId?include=motionArtwork"
                 )
                     ?.objOrNull("track")
                     ?.objOrNull("motionArtwork")
@@ -249,7 +252,7 @@ object LyricspornClient {
     ): List<LyricspornCatalogItem> {
         val json = getJson(
             "$apiBaseUrl/catalog/search?term=${encode(term)}&types=$type" +
-                    "&storefront=${currentStorefront()}&limit=${limit.coerceIn(1, 25)}" +
+                    "&limit=${limit.coerceIn(1, 25)}" +
                     "&artworkSize=$artworkSize" +
                     if (includeMotionArtwork) "&include=motionArtwork" else "",
         ) ?: return emptyList()
@@ -259,10 +262,27 @@ object LyricspornClient {
     }
 
     private suspend fun getJson(url: String): JSONObject? =
-        when (val response = http.getJson(url)) {
+        when (val response = http.getJson(url.withCurrentStorefront())) {
             is HttpOutcome.Success -> response.value
             is HttpOutcome.Failure -> null
         }
+
+    private fun String.withCurrentStorefront(): String {
+        val queryStart = indexOf('?')
+        val path = if (queryStart < 0) this else substring(0, queryStart)
+        val query = if (queryStart < 0) emptyList() else substring(queryStart + 1).split('&')
+        val otherParameters = query.filterNot { it.substringBefore('=') == "storefront" }
+        return buildString {
+            append(path)
+            append('?')
+            if (otherParameters.isNotEmpty()) {
+                append(otherParameters.joinToString("&"))
+                append('&')
+            }
+            append("storefront=")
+            append(currentStorefront())
+        }
+    }
 
     private fun org.json.JSONArray.toCatalogItems(artworkSize: Int): List<LyricspornCatalogItem> =
         buildList {
@@ -310,7 +330,7 @@ object LyricspornClient {
 
     private fun String.isNumericAppleId(): Boolean = isNotBlank() && all(Char::isDigit)
 
-    private fun currentStorefront(): String = Locale.getDefault().country
+    internal fun currentStorefront(): String = Locale.getDefault().country
         .takeIf { country ->
             country.length == 2 && country.all { character ->
                 character in 'A'..'Z' || character in 'a'..'z'
