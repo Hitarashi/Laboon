@@ -34,7 +34,6 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.ForwardingAudioSink
-import androidx.media3.exoplayer.audio.TeeAudioProcessor
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.LoadEventInfo
 import androidx.media3.exoplayer.source.MediaLoadData
@@ -66,6 +65,7 @@ import org.shilpo.laboon.lyrics.LyricsRepositoryImpl
 import org.shilpo.laboon.lyricsporn.LyricspornClient
 import org.shilpo.laboon.search.SearchRepository
 import org.shilpo.laboon.search.SearchRepositoryImpl
+import java.nio.ByteBuffer
 import kotlin.math.roundToInt
 
 private fun resourceContentLength(responseHeaders: Map<String, List<String>>): Long? {
@@ -345,20 +345,56 @@ class PlaybackManagerImpl(
                 enableFloatOutput: Boolean,
                 enableAudioOutputPlaybackParams: Boolean
             ): AudioSink {
-                val teeProcessor = TeeAudioProcessor(spectrumVisualizer.sink)
                 val defaultSink = DefaultAudioSink.Builder(context)
                     .setEnableFloatOutput(true)
                     .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
-                    .setAudioProcessors(arrayOf(teeProcessor))
                     .build()
 
                 return object : ForwardingAudioSink(defaultSink) {
+                    private var visualizedBuffer: ByteBuffer? = null
+                    private var inputIsPcm = false
+
                     override fun configure(audioSinkConfig: AudioSink.AudioSinkConfig) {
+                        super.configure(audioSinkConfig)
                         sinkInputFormat = audioSinkConfig.format
+                        inputIsPcm = audioSinkConfig.format.sampleMimeType == MimeTypes.AUDIO_RAW
+                        visualizedBuffer = null
+                        spectrumVisualizer.sink.flush(
+                            audioSinkConfig.format.sampleRate,
+                            audioSinkConfig.format.channelCount,
+                            audioSinkConfig.format.pcmEncoding,
+                        )
                         scope.launch {
                             player?.let { updateAudioQuality(it) }
                         }
-                        super.configure(audioSinkConfig)
+                    }
+
+                    override fun handleBuffer(
+                        buffer: ByteBuffer,
+                        presentationTimeUs: Long,
+                        encodedAccessUnitCount: Int,
+                    ): Boolean {
+                        // The custom chain skips float PCM, and a rejected sink buffer is retried.
+                        if (inputIsPcm && visualizedBuffer !== buffer) {
+                            spectrumVisualizer.sink.handleBuffer(buffer)
+                            visualizedBuffer = buffer
+                        }
+                        val consumed =
+                            super.handleBuffer(buffer, presentationTimeUs, encodedAccessUnitCount)
+                        if (consumed) visualizedBuffer = null
+                        return consumed
+                    }
+
+                    override fun flush() {
+                        super.flush()
+                        visualizedBuffer = null
+                        spectrumVisualizer.reset()
+                    }
+
+                    override fun reset() {
+                        super.reset()
+                        visualizedBuffer = null
+                        spectrumVisualizer.reset()
                     }
 
                     override fun setListener(listener: AudioSink.Listener) {

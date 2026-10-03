@@ -102,6 +102,7 @@ import kotlinx.coroutines.launch
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.lyrics.LyricsLine
+import org.shilpo.laboon.playback.SpectrumFrame
 import org.shilpo.laboon.ui.design.theme.GoogleSansFlex
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -237,7 +238,6 @@ private suspend fun LazyListState.scrollLyricIntoFocus(
     val viewportHeight = viewportEnd - viewportStart
     if (viewportHeight <= 0) return
 
-    // Center alignment for all synced lines
     val itemFocusPoint = itemInfo.offset + itemInfo.size / 2
     val targetFocusPoint = viewportStart + (viewportHeight * 0.50f).roundToInt()
     val scrollDelta = itemFocusPoint - targetFocusPoint
@@ -276,6 +276,7 @@ fun LyricsScreen(
     isPlaying: Boolean = true,
     displayOptions: LyricsDisplayOptions = LyricsDisplayOptions(),
     onDismissShareDialog: () -> Unit = {},
+    spectrum: SpectrumFrame = SpectrumFrame(),
 ) {
     val coroutineScope = rememberCoroutineScope()
     val hasTiming = remember(lyricsLines) { lyricsLines.hasTiming() }
@@ -302,6 +303,7 @@ fun LyricsScreen(
             isPlaying = isPlaying,
             displayOptions = displayOptions,
             onDismissShareDialog = onDismissShareDialog,
+            spectrum = spectrum,
             onLineClick = { line, index ->
                 if (hasTiming && durationMs > 0L) {
                     val frac = (line.startMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
@@ -339,6 +341,7 @@ fun LyricsContentCard(
     isPlaying: Boolean = true,
     displayOptions: LyricsDisplayOptions = LyricsDisplayOptions(),
     onDismissShareDialog: () -> Unit = {},
+    spectrum: SpectrumFrame = SpectrumFrame(),
 ) {
     val coroutineScope = rememberCoroutineScope()
     val hasTiming = remember(lyricsLines) { lyricsLines.hasTiming() }
@@ -419,7 +422,6 @@ fun LyricsContentCard(
     }
 
     val displayLyricsLines = displayOptions.translatedLines ?: lyricsLines
-
     val singerLaneMap = remember(displayLyricsLines, track.artist) {
         val allSingers = displayLyricsLines
             .mapNotNull { cleanSingerName(it.singer).takeIf { s -> s.isNotBlank() } }
@@ -428,7 +430,6 @@ fun LyricsContentCard(
         val soloSingers = allSingers.filter { !isDuetOrGroup(it) }
         val map = mutableMapOf<String, LyricSingerLane>()
 
-        // 1. Duets / groups are always Center
         for (singer in allSingers) {
             if (isDuetOrGroup(singer)) {
                 map[singer.lowercase()] = LyricSingerLane.Center
@@ -440,7 +441,6 @@ fun LyricsContentCard(
         map["both"] = LyricSingerLane.Center
         map["v3"] = LyricSingerLane.Center
 
-        // 2. Solo singers:
         if (soloSingers.isNotEmpty()) {
             val counts = displayLyricsLines
                 .groupBy { cleanSingerName(it.singer).lowercase() }
@@ -457,7 +457,6 @@ fun LyricsContentCard(
                 .trim()
                 .lowercase()
 
-            // Identify lead singer: matches primary artist or has highest line count
             val leadSinger = soloSingers.firstOrNull { singer ->
                 val sLower = singer.lowercase()
                 primaryTrackArtist.isNotEmpty() && (
@@ -469,14 +468,11 @@ fun LyricsContentCard(
 
             val remainingSolo = soloSingers.filter { it.lowercase() != leadSinger.lowercase() }
 
-            // Identify secondary / featured singer:
-            // Prefer the remaining singer that matches track artist, or has "sean"/"paul", or has highest line count
             val secondarySinger = remainingSolo.firstOrNull { singer ->
                 val sLower = singer.lowercase()
                 cleanTrackArtist.contains(sLower) || sLower.contains("sean") || sLower.contains("paul")
             } ?: remainingSolo.maxByOrNull { counts[it.lowercase()] ?: 0 }
 
-            // Map Lead Singer -> Left
             map[leadSinger.lowercase()] = LyricSingerLane.Left
             for (singer in soloSingers) {
                 val sLower = singer.lowercase()
@@ -487,7 +483,6 @@ fun LyricsContentCard(
                 }
             }
 
-            // Map Secondary Singer -> Right
             if (secondarySinger != null) {
                 val secLower = secondarySinger.lowercase()
                 map[secLower] = LyricSingerLane.Right
@@ -507,7 +502,6 @@ fun LyricsContentCard(
                 }
             }
 
-            // For any other solo singers not yet mapped, map to Right (never Center)
             for (singer in soloSingers) {
                 val sLower = singer.lowercase()
                 if (!map.containsKey(sLower)) {
@@ -516,7 +510,6 @@ fun LyricsContentCard(
             }
         }
 
-        // Map known agents (e.g. v1, v2) based on the lines
         for (line in displayLyricsLines) {
             val s = cleanSingerName(line.singer).takeIf { it.isNotBlank() }?.lowercase()
             val a = line.agent?.trim()?.lowercase()
@@ -791,6 +784,8 @@ fun LyricsContentCard(
                                 showTranslation = displayOptions.showTranslation,
                                 singerLaneMap = singerLaneMap,
                                 modifier = lineModifier,
+                                spectrum = spectrum,
+                                isPlaying = isPlaying,
                                 onLineClick = { clickedLine, clickedIndex ->
                                     isManualScrolling = false
                                     onLineClick(clickedLine, clickedIndex)
@@ -800,7 +795,6 @@ fun LyricsContentCard(
                     }
                 }
 
-                // Keep the contextual sync action with the lyric list.
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -1000,6 +994,8 @@ private fun LyricsLineItem(
     showTranslation: Boolean = false,
     singerLaneMap: Map<String, LyricSingerLane> = emptyMap(),
     modifier: Modifier = Modifier,
+    spectrum: SpectrumFrame = SpectrumFrame(),
+    isPlaying: Boolean = true,
     onLineClick: (LyricsLine, Int) -> Unit = { _, _ -> },
 ) {
     val lane = resolveLane(line.singer, line.agent, singerLaneMap)
@@ -1023,6 +1019,7 @@ private fun LyricsLineItem(
     if (line.isInstrumental) {
         val currentTime = currentTimeProvider()
         val isInstrumentalActive = isActive || (currentTime in line.startMs..lineEndMs)
+
         AnimatedVisibility(
             visible = isInstrumentalActive,
             enter = expandVertically(
@@ -1048,11 +1045,13 @@ private fun LyricsLineItem(
                     LyricSingerLane.Center -> Alignment.Center
                 },
             ) {
-                WaitingDotsView(
+                InstrumentalWaveformView(
                     startTime = line.startMs,
                     endTime = lineEndMs,
                     currentProgressMs = currentTime,
-                    primaryColor = textColor,
+                    primaryColor = MaterialTheme.colorScheme.primary,
+                    spectrum = spectrum,
+                    isPlaying = isPlaying,
                     onClick = {
                         onLineClick(line, index)
                     },
@@ -1356,7 +1355,6 @@ private fun KaraokeWord(
             null
         }
 
-        // 1. Inactive (unfilled) layer
         Text(
             text = text,
             fontSize = effectiveFontSize,
@@ -1366,7 +1364,6 @@ private fun KaraokeWord(
             modifier = Modifier.padding(glowPadding),
         )
 
-        // 2. Completed (filled) layer
         Text(
             text = text,
             fontSize = effectiveFontSize,
@@ -1384,7 +1381,6 @@ private fun KaraokeWord(
                 },
         )
 
-        // 3. Active (filling) layer - soft mask
         Box(
             modifier = Modifier
                 .graphicsLayer {
@@ -1551,7 +1547,6 @@ private fun LineSyncedSweepText(
             else -> Alignment.Center
         },
     ) {
-        // 1. Inactive underlying text
         Text(
             text = text,
             fontSize = fontSize,
@@ -1563,7 +1558,6 @@ private fun LineSyncedSweepText(
             modifier = Modifier.fillMaxWidth(),
         )
 
-        // 2. Completed layer (once current time >= endTime)
         Text(
             text = text,
             fontSize = fontSize,
@@ -1582,7 +1576,6 @@ private fun LineSyncedSweepText(
                 },
         )
 
-        // 3. Active filling layer with horizontal sweep gradient
         Box(
             modifier = Modifier
                 .fillMaxWidth()

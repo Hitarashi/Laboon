@@ -100,12 +100,10 @@ fun LyricsShareDialog(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
-    // Filter valid vocal lines
     val vocalLines = remember(lyricsLines) {
         lyricsLines.filter { !it.isInstrumental && it.text.isNotBlank() }
     }
 
-    // Default select active line or first line
     val selectedIndices = remember(vocalLines, activeLineIndex) {
         mutableStateListOf<Int>().apply {
             if (vocalLines.isNotEmpty()) {
@@ -118,7 +116,7 @@ fun LyricsShareDialog(
         }
     }
 
-    var selectedTab by remember { mutableIntStateOf(0) } // 0: Card Preview, 1: Text Preview
+    var selectedTab by remember { mutableIntStateOf(0) }
     var isGeneratingImage by remember { mutableStateOf(false) }
 
     val hasRomanization =
@@ -150,7 +148,6 @@ fun LyricsShareDialog(
                     .fillMaxSize()
                     .padding(20.dp),
             ) {
-                // Header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -181,7 +178,6 @@ fun LyricsShareDialog(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Tabs: Frosted Card vs Plain Text
                 PrimaryTabRow(
                     selectedTabIndex = selectedTab,
                     containerColor = Color.Transparent,
@@ -202,14 +198,12 @@ fun LyricsShareDialog(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Scrollable Content
                 Column(
                     modifier = Modifier
                         .weight(1f)
                         .verticalScroll(rememberScrollState()),
                 ) {
                     if (selectedTab == 0) {
-                        // Frosted Glass Card Preview
                         FrostedLyricsCardPreview(
                             track = track,
                             selectedLines = selectedLines,
@@ -217,7 +211,6 @@ fun LyricsShareDialog(
                             includeTranslation = includeTranslation,
                         )
                     } else {
-                        // Plain Text Preview
                         PlainTextPreview(
                             track = track,
                             selectedLines = selectedLines,
@@ -295,7 +288,6 @@ fun LyricsShareDialog(
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Line Selection Section
                     Text(
                         text = "Select lines to share (${selectedLines.size})",
                         style = MaterialTheme.typography.labelLarge,
@@ -368,7 +360,6 @@ fun LyricsShareDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Bottom Action Buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -490,7 +481,6 @@ private fun FrostedLyricsCardPreview(
                 .padding(20.dp),
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
-                // Header: Artwork + Track Details
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth(),
@@ -531,7 +521,6 @@ private fun FrostedLyricsCardPreview(
 
                 Spacer(modifier = Modifier.height(18.dp))
 
-                // Lyric lines block with accent quote line
                 Row(modifier = Modifier.fillMaxWidth()) {
                     Box(
                         modifier = Modifier
@@ -592,7 +581,6 @@ private fun FrostedLyricsCardPreview(
 
                 Spacer(modifier = Modifier.height(18.dp))
 
-                // Branding footer
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth(),
@@ -720,7 +708,6 @@ suspend fun renderCardBitmap(
 ): Bitmap = withContext(Dispatchers.IO) {
     val width = 1080
 
-    // Load artwork bitmap
     val artworkBitmap: Bitmap? = track.artworkUrl?.let { url ->
         runCatching {
             val loader = SingletonImageLoader.get(context)
@@ -804,7 +791,6 @@ suspend fun renderCardBitmap(
     val bitmap = Bitmap.createBitmap(width, cardHeight, Bitmap.Config.ARGB_8888)
     val canvas = android.graphics.Canvas(bitmap)
 
-    // Background gradient: Dark rich glass gradient
     val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         shader = LinearGradient(
             0f, 0f, width.toFloat(), cardHeight.toFloat(),
@@ -819,7 +805,6 @@ suspend fun renderCardBitmap(
     }
     canvas.drawRect(0f, 0f, width.toFloat(), cardHeight.toFloat(), bgPaint)
 
-    // Artwork glow in top-left
     artworkBitmap?.let { art ->
         val artPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             alpha = 32
@@ -828,7 +813,6 @@ suspend fun renderCardBitmap(
         canvas.drawBitmap(scaledArt, 0f, -width * 0.35f, artPaint)
     }
 
-    // Outer card rounded rectangle border & subtle translucent fill
     val cardRect = RectF(padding, padding, width - padding, cardHeight - padding)
     val cardFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.argb(90, 25, 27, 42)
@@ -842,11 +826,9 @@ suspend fun renderCardBitmap(
     canvas.drawRoundRect(cardRect, 48f, 48f, cardFillPaint)
     canvas.drawRoundRect(cardRect, 48f, 48f, cardBorderPaint)
 
-    // Inner content coordinates
     val innerLeft = cardRect.left + 54f
     var currentY = cardRect.top + 54f
 
-    // Artwork thumbnail in header
     val artSize = 130f
     val artRect = RectF(innerLeft, currentY, innerLeft + artSize, currentY + artSize)
     if (artworkBitmap != null) {
@@ -866,7 +848,6 @@ suspend fun renderCardBitmap(
         canvas.drawRoundRect(artRect, 26f, 26f, placeholderPaint)
     }
 
-    // Title and Artist in header
     val titlePaint = TextPaint().apply {
         isAntiAlias = true
         color = android.graphics.Color.WHITE
@@ -885,7 +866,6 @@ suspend fun renderCardBitmap(
 
     currentY += artSize + 60f
 
-    // Accent line next to lyrics
     val accentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.argb(160, 255, 255, 255)
         strokeWidth = 7f
@@ -899,7 +879,6 @@ suspend fun renderCardBitmap(
         accentPaint
     )
 
-    // Draw each lyric block
     var lyricY = currentY
     blocks.forEach { block ->
         canvas.save()
@@ -929,7 +908,6 @@ suspend fun renderCardBitmap(
         lyricY += 28f
     }
 
-    // Footer branding
     val footerPaint = TextPaint().apply {
         isAntiAlias = true
         color = android.graphics.Color.argb(180, 255, 255, 255)

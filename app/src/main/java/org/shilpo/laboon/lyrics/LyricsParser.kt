@@ -77,14 +77,12 @@ internal object LyricsParser {
         if (lines.isEmpty()) return emptyList()
         val roleResolvedLines = reconcileLeadSpeakerAgents(lines, mainArtist)
         val tracker = SingerTracker()
-        // Pre-register any known agents from TTML metadata
         for (line in roleResolvedLines) {
             if (!line.singer.isNullOrBlank() && !line.agent.isNullOrBlank()) {
                 tracker.registerSinger(line.singer, line.agent)
             }
         }
 
-        // Identify solo singers to ensure lead artist gets v1 and featured gets v2
         val allSingers =
             roleResolvedLines.mapNotNull { it.singer?.trim()?.ifBlank { null } }.distinct()
         val soloSingers = allSingers.filter { !tracker.isDuetOrGroup(it.lowercase()) }
@@ -149,7 +147,6 @@ internal object LyricsParser {
             val standalone = parseStandaloneSingerHeader(cleanText)
             if (standalone != null) {
                 tracker.setSinger(standalone)
-                // Do not emit singer header lines as lyrics!
                 continue
             }
 

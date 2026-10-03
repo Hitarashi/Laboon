@@ -36,7 +36,6 @@ object LyricsTranslator {
         val nonInstrumental = lines.filter { !it.isInstrumental && it.text.isNotBlank() }
         if (nonInstrumental.isEmpty()) return@withContext lines
 
-        // Try single batch request first
         val joinedText = nonInstrumental.joinToString("\n") { it.text.trim() }
         val translatedJoined = translate(joinedText, targetLanguage)
         val parsedLines = translatedJoined?.lines()?.map { it.trim() }
@@ -47,7 +46,6 @@ object LyricsTranslator {
                     nonInstrumental[i].text.trim() to parsedLines[i]
                 }
             } else {
-                // Fallback: translate individual lines in parallel
                 coroutineScope {
                     nonInstrumental.map { line ->
                         async {

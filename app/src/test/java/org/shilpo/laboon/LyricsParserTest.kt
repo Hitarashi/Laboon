@@ -80,7 +80,6 @@ class LyricsParserTest {
         assertEquals("v1", vocalLines[0].agent)
         assertEquals("v2", vocalLines[1].agent)
 
-        // Also verify intro instrumental break is inserted (since first vocal line starts at 6s >= 5s)
         val firstLine = parsed.lines.first()
         assertTrue("Intro instrumental break should be inserted", firstLine.isInstrumental)
         assertEquals(0L, firstLine.startMs)
@@ -89,13 +88,13 @@ class LyricsParserTest {
 
     @Test
     fun `Romanizer detects non-Latin scripts correctly`() {
-        assertTrue(org.shilpo.laboon.lyrics.Romanizer.needsRomanization("আমি বাংলায় গান গাই")) // Bengali
-        assertTrue(org.shilpo.laboon.lyrics.Romanizer.needsRomanization("नमस्ते दुनिया")) // Devanagari
-        assertTrue(org.shilpo.laboon.lyrics.Romanizer.needsRomanization("こんにちは")) // Japanese Hiragana
-        assertTrue(org.shilpo.laboon.lyrics.Romanizer.needsRomanization("東京")) // Kanji
-        assertTrue(org.shilpo.laboon.lyrics.Romanizer.needsRomanization("안녕하세요")) // Korean Hangul
-        assertTrue(org.shilpo.laboon.lyrics.Romanizer.needsRomanization("Привет мир")) // Cyrillic
-        assertTrue(org.shilpo.laboon.lyrics.Romanizer.needsRomanization("مرحبا بالعالم")) // Arabic
+        assertTrue(org.shilpo.laboon.lyrics.Romanizer.needsRomanization("আমি বাংলায় গান গাই"))
+        assertTrue(org.shilpo.laboon.lyrics.Romanizer.needsRomanization("नमस्ते दुनिया"))
+        assertTrue(org.shilpo.laboon.lyrics.Romanizer.needsRomanization("こんにちは"))
+        assertTrue(org.shilpo.laboon.lyrics.Romanizer.needsRomanization("東京"))
+        assertTrue(org.shilpo.laboon.lyrics.Romanizer.needsRomanization("안녕하세요"))
+        assertTrue(org.shilpo.laboon.lyrics.Romanizer.needsRomanization("Привет мир"))
+        assertTrue(org.shilpo.laboon.lyrics.Romanizer.needsRomanization("مرحبا بالعالم"))
 
         assertFalse(org.shilpo.laboon.lyrics.Romanizer.needsRomanization("Hello World"))
         assertFalse(org.shilpo.laboon.lyrics.Romanizer.needsRomanization("La vie en rose 123!"))
@@ -171,7 +170,6 @@ class LyricsParserTest {
         val parsed = LyricsParser.fromText(lrc, durationMs = 35_000L)
         val vocalLines = parsed.lines.filter { !it.isInstrumental }
 
-        // Standalone singer headers should not be emitted
         assertFalse(vocalLines.any { it.text == "Sia:" || it.text == "[Sean Paul]" || it.text == "Sia/ Sean Paul:" || it.text == "Both:" })
         assertEquals(5, vocalLines.size)
 
@@ -353,7 +351,6 @@ class LyricsParserTest {
         val parsed = LyricsParser.fromText(elrc, durationMs = 30_000L)
         val vocalLines = parsed.lines.filter { !it.isInstrumental }
 
-        // Singer headers should be dropped
         assertFalse(vocalLines.any { it.text.contains("Sia:") || it.text.contains("Sia/Sean Paul:") })
         assertEquals(3, vocalLines.size)
 
@@ -475,17 +472,14 @@ class LyricsParserTest {
 
         assertEquals(3, vocalLines.size)
 
-        // Sean Paul is the featured singer -> v2
         assertEquals("Up with it girl", vocalLines[0].text)
         assertEquals("v2", vocalLines[0].agent)
         assertEquals("Sean Paul", vocalLines[0].singer)
 
-        // Sia is the lead singer -> v1
         assertEquals("Come on come on turn the radio on", vocalLines[1].text)
         assertEquals("v1", vocalLines[1].agent)
         assertEquals("Sia", vocalLines[1].singer)
 
-        // Duet -> v3
         assertEquals("'Til I hit the dance floor", vocalLines[2].text)
         assertEquals("v3", vocalLines[2].agent)
         assertEquals("Sia/Sean Paul", vocalLines[2].singer)

@@ -1469,6 +1469,7 @@ fun MorphingPlayerSheet(
                 queueState = queueState,
                 lyricsLines = lyricsLines,
                 lyricsLoading = lyricsLoading,
+                spectrum = spectrum,
             ),
             actions = PlayerOverlayActions(
                 onPlayPause = onPlayPauseClick,

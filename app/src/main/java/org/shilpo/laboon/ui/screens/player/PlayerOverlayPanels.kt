@@ -42,6 +42,7 @@ import org.shilpo.laboon.lyrics.LyricsTranslator
 import org.shilpo.laboon.playback.AudioQualityInfo
 import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.playback.RepeatMode
+import org.shilpo.laboon.playback.SpectrumFrame
 import org.shilpo.laboon.ui.design.FloatingNavigationBar
 import org.shilpo.laboon.ui.design.FloatingNavigationItem
 import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
@@ -72,6 +73,7 @@ internal data class PlayerOverlayState(
     val queueState: QueueState?,
     val lyricsLines: List<LyricsLine>,
     val lyricsLoading: Boolean,
+    val spectrum: SpectrumFrame = SpectrumFrame(),
 )
 
 internal data class PlayerOverlayActions(
@@ -268,6 +270,7 @@ internal fun PlayerOverlayPanels(
                                     showShareDialog = showShareDialog,
                                 ),
                                 onDismissShareDialog = { showShareDialog = false },
+                                spectrum = state.spectrum,
                             )
 
                             PlayerPanelTab.Queue -> QueueScreen(
