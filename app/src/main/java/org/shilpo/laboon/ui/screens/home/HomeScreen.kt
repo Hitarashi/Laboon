@@ -75,6 +75,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
@@ -165,6 +167,10 @@ fun HomeScreen(
     val playbackState by playbackManager.state.collectAsState()
     val queueState by playbackManager.queueManager.state.collectAsState()
     val spectrumState by playbackManager.spectrumState.collectAsState()
+
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        playbackManager.syncWithCurrentPlayer()
+    }
 
     var isPlayerDismissed by rememberSaveable { mutableStateOf(playbackPersistence.isPlayerDismissed()) }
     var fallbackTrack by remember { mutableStateOf<HomeTrack?>(playbackPersistence.getLastTrack()) }
@@ -501,8 +507,16 @@ fun HomeScreen(
                     currentPositionMs = currentPositionMs,
                     durationMs = currentDurationMs,
                     audioQuality = playbackState.audioQuality,
+                    switchingQualityFormat = playbackState.switchingQualityFormat,
+                    onQualityVariantSelected = { variant ->
+                        playbackManager.switchQualityVariant(track, variant)
+                    },
                     lyricsLines = playbackState.lyricsLines,
                     lyricsLoading = playbackState.lyricsLoading,
+                    motionArtwork = playbackState.motionArtwork.takeIf {
+                        playbackState.motionArtworkTrackId == track.id
+                    },
+                    onRequestMotionArtwork = { playbackManager.requestMotionArtwork(track) },
                     isShuffle = queueState.isShuffle,
                     repeatMode = queueState.repeatMode,
                     spectrum = spectrumState,

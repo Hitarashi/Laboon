@@ -1307,6 +1307,9 @@ private fun KaraokeWord(
 ) {
     val duration = (endTime - startTime).coerceAtLeast(1L)
     val glowPadding = 10.dp
+    val wordTextLayoutResult = remember(text, fontSize, isRtl, isBackground) {
+        mutableStateOf<TextLayoutResult?>(null)
+    }
 
     val len = text.trim().length.coerceAtLeast(1)
     val msPerChar = duration.toFloat() / len.toFloat()
@@ -1316,15 +1319,21 @@ private fun KaraokeWord(
         modifier = modifier
             .layout { measurable, constraints ->
                 val glowPaddingPx = glowPadding.roundToPx()
+                val maxChildWidth = if (constraints.maxWidth == Constraints.Infinity) {
+                    Constraints.Infinity
+                } else {
+                    constraints.maxWidth + glowPaddingPx * 2
+                }
                 val looseConstraints = constraints.copy(
                     minWidth = 0,
-                    maxWidth = Constraints.Infinity,
+                    maxWidth = maxChildWidth,
                     minHeight = 0,
                     maxHeight = Constraints.Infinity,
                 )
                 val placeable = measurable.measure(looseConstraints)
 
-                val coreWidth = (placeable.width - glowPaddingPx * 2).coerceAtLeast(0)
+                val coreWidth = (placeable.width - glowPaddingPx * 2)
+                    .coerceIn(constraints.minWidth, constraints.maxWidth)
                 val coreHeight = (placeable.height - glowPaddingPx * 2).coerceAtLeast(0)
 
                 layout(coreWidth, coreHeight) {
@@ -1408,47 +1417,81 @@ private fun KaraokeWord(
                     val isFading = currentTime >= endTime && currentTime < (endTime + fadeDuration)
 
                     if ((progress > 0f && progress < 1f) || isFading) {
+                        val layout = wordTextLayoutResult.value ?: return@drawWithContent
                         drawContent()
 
-                        val fadeWidth = 20f
-                        val totalWidth = size.width
+                        val codePointCount = text.codePointCount(0, text.length)
+                        val revealedCodePoints = (codePointCount * progress)
+                            .roundToInt()
+                            .coerceIn(0, codePointCount)
+                        val revealOffset = text.offsetByCodePoints(0, revealedCodePoints)
                         val paddingPx = glowPadding.toPx()
+                        val fadeWidth = 20f
 
-                        val textWidth = totalWidth - (paddingPx * 2)
-                        val fillWidth = textWidth * progress
+                        for (lineIndex in 0 until layout.lineCount) {
+                            val lineStart = layout.getLineStart(lineIndex)
+                            val lineEnd = layout.getLineEnd(lineIndex, visibleEnd = true)
+                            val lineTop = (paddingPx + layout.getLineTop(lineIndex))
+                                .coerceIn(0f, size.height)
+                            val lineBottom = (paddingPx + layout.getLineBottom(lineIndex))
+                                .coerceIn(lineTop, size.height)
+                            if (lineBottom <= lineTop || size.width <= 0f) continue
 
-                        val endFraction =
-                            ((paddingPx + fillWidth + fadeWidth) / totalWidth).coerceIn(0f, 1f)
-                        val solidFraction = ((paddingPx + fillWidth) / totalWidth).coerceIn(0f, 1f)
+                            val maskTopLeft = Offset(0f, lineTop)
+                            val maskSize = Size(size.width, lineBottom - lineTop)
+                            when {
+                                revealOffset >= lineEnd -> drawRect(
+                                    color = Color.White,
+                                    topLeft = maskTopLeft,
+                                    size = maskSize,
+                                    blendMode = BlendMode.DstIn,
+                                )
 
-                        val softFillBrush = if (!isRtl) {
-                            val solidPos = solidFraction.coerceIn(0f, 1f)
-                            val endPos = endFraction.coerceIn(solidPos, 1f)
-                            Brush.horizontalGradient(
-                                0f to Color.Black,
-                                solidPos to Color.Black,
-                                endPos to Color.Transparent,
-                                1f to Color.Transparent,
-                            )
-                        } else {
-                            val solidStartX =
-                                (paddingPx + (textWidth - fillWidth)).coerceIn(0f, totalWidth)
-                            val fadeStartX = (solidStartX - fadeWidth).coerceIn(0f, totalWidth)
-                            val fadeStartPos = (fadeStartX / totalWidth).coerceIn(0f, 1f)
-                            val solidStartPos =
-                                (solidStartX / totalWidth).coerceIn(fadeStartPos, 1f)
-                            Brush.horizontalGradient(
-                                0f to Color.Transparent,
-                                fadeStartPos to Color.Transparent,
-                                solidStartPos to Color.Black,
-                                1f to Color.Black,
-                            )
+                                revealOffset <= lineStart -> drawRect(
+                                    color = Color.Transparent,
+                                    topLeft = maskTopLeft,
+                                    size = maskSize,
+                                    blendMode = BlendMode.DstIn,
+                                )
+
+                                else -> {
+                                    val boundaryX = (paddingPx + layout.getHorizontalPosition(
+                                        revealOffset.coerceIn(lineStart, lineEnd),
+                                        usePrimaryDirection = true,
+                                    )).coerceIn(0f, size.width)
+                                    val sweepBrush = if (!isRtl) {
+                                        val solidPos = (boundaryX / size.width).coerceIn(0f, 1f)
+                                        val endPos =
+                                            ((boundaryX + fadeWidth) / size.width)
+                                                .coerceIn(solidPos, 1f)
+                                        Brush.horizontalGradient(
+                                            0f to Color.Black,
+                                            solidPos to Color.Black,
+                                            endPos to Color.Transparent,
+                                            1f to Color.Transparent,
+                                        )
+                                    } else {
+                                        val fadeStartX =
+                                            (boundaryX - fadeWidth).coerceIn(0f, size.width)
+                                        val fadeStartPos = fadeStartX / size.width
+                                        val solidStartPos =
+                                            (boundaryX / size.width).coerceIn(fadeStartPos, 1f)
+                                        Brush.horizontalGradient(
+                                            0f to Color.Transparent,
+                                            fadeStartPos to Color.Transparent,
+                                            solidStartPos to Color.Black,
+                                            1f to Color.Black,
+                                        )
+                                    }
+                                    drawRect(
+                                        brush = sweepBrush,
+                                        topLeft = maskTopLeft,
+                                        size = maskSize,
+                                        blendMode = BlendMode.DstIn,
+                                    )
+                                }
+                            }
                         }
-
-                        drawRect(
-                            brush = softFillBrush,
-                            blendMode = BlendMode.DstIn,
-                        )
                     }
                 }
                 .padding(glowPadding),
@@ -1460,6 +1503,7 @@ private fun KaraokeWord(
                 color = textColor.copy(alpha = effectiveAlpha),
                 fontWeight = fontWeight,
                 style = LocalTextStyle.current.copy(shadow = activeWordShadow),
+                onTextLayout = { wordTextLayoutResult.value = it },
             )
         }
     }

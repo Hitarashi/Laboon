@@ -32,14 +32,18 @@ internal fun PlayerOverlayController(
         PlayerSeekBar(
             track = state.track,
             isPlaying = state.isPlaying,
+            isBuffering = state.isBuffering,
             currentPositionMs = state.currentPositionMs,
             durationMs = state.durationMs,
             audioQuality = state.audioQuality,
+            switchingQualityFormat = state.switchingQualityFormat,
+            onQualityVariantSelected = actions.onQualityVariantSelected,
             onSeek = actions.onSeek,
             onAudioQualityClick = actions.onAudioQualityClick,
             onAudioQualityPositioned = onAudioQualityPositioned,
             audioBadgeAlpha = 1f,
             isDark = isDark,
+            showAudioQuality = false,
         )
 
         Spacer(modifier = Modifier.height(14.dp))

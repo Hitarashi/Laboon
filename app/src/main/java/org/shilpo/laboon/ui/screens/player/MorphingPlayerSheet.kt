@@ -98,11 +98,14 @@ import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.lyrics.LyricsLine
+import org.shilpo.laboon.lyricsporn.LyricspornMotionArtwork
 import org.shilpo.laboon.playback.ArtworkUrlHelper
 import org.shilpo.laboon.playback.AudioQualityInfo
 import org.shilpo.laboon.playback.QueueState
@@ -122,6 +125,8 @@ import androidx.compose.ui.graphics.lerp as lerpColor
 import androidx.compose.ui.util.lerp as lerpFloat
 
 private const val SettleDurationMs = 400
+private const val MotionArtworkRequestProgress = 0.97f
+private const val MotionArtworkDisplayProgress = 0.96f
 private val SettleEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 
 private val CookieMorph = Morph(MaterialShapes.Circle, MaterialShapes.Cookie12Sided)
@@ -168,6 +173,8 @@ fun MorphingPlayerSheet(
     currentPositionMs: Long = 0L,
     durationMs: Long = 0L,
     audioQuality: AudioQualityInfo? = null,
+    switchingQualityFormat: String? = null,
+    onQualityVariantSelected: ((TrackFormatVariant) -> Unit)? = null,
     isShuffle: Boolean = false,
     repeatMode: RepeatMode = RepeatMode.OFF,
     spectrum: SpectrumFrame = SpectrumFrame(),
@@ -188,6 +195,8 @@ fun MorphingPlayerSheet(
     onTrackClick: ((HomeTrack) -> Unit)? = null,
     lyricsLines: List<LyricsLine> = emptyList(),
     lyricsLoading: Boolean = false,
+    motionArtwork: LyricspornMotionArtwork? = null,
+    onRequestMotionArtwork: (() -> Unit)? = null,
 ) {
     val density = LocalDensity.current
     val coroutineScope = rememberCoroutineScope()
@@ -196,6 +205,12 @@ fun MorphingPlayerSheet(
 
     val progressAnimatable = remember { Animatable(0f) }
     val progress = progressAnimatable.value.coerceIn(0f, 1f)
+    val currentOnRequestMotionArtwork = rememberUpdatedState(onRequestMotionArtwork)
+    LaunchedEffect(track.id) {
+        snapshotFlow { progressAnimatable.value }
+            .first { it >= MotionArtworkRequestProgress }
+        currentOnRequestMotionArtwork.value?.invoke()
+    }
     var activePanel by remember { mutableStateOf<PlayerPanelTab?>(null) }
     val activePanelProvider = rememberUpdatedState(activePanel)
     val panelFraction = remember { Animatable(0f) }
@@ -380,11 +395,11 @@ fun MorphingPlayerSheet(
         val fullCapsuleWidth = minOf(250.dp, fullControlsWidth - 100.dp)
         val fullCapsuleX = (screenWidth - fullCapsuleWidth) / 2
 
-        val seekHeight = 64.dp
-        val seekY = fullCapsuleY - 24.dp - seekHeight
+        val seekHeight = 84.dp
+        val seekY = fullCapsuleY - 36.dp - seekHeight
 
-        val fullMetaHeight = 56.dp
-        val fullMetaY = seekY - 12.dp - fullMetaHeight
+        val fullMetaHeight = 58.dp
+        val fullMetaY = seekY - 16.dp - fullMetaHeight
 
         val availableCoverHeight = (fullMetaY - toolbarBottom - 12.dp).coerceAtLeast(160.dp)
         val fullArtSize =
@@ -798,16 +813,9 @@ fun MorphingPlayerSheet(
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .graphicsLayer { alpha = fullAlpha },
-                        ) {
-                            DancingGlowBackground(
-                                artworkUrl = track.artworkUrl,
-                                spectrum = spectrum,
-                                isPlaying = isPlaying,
-                                isDark = isDark,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
+                                .graphicsLayer { alpha = fullAlpha }
+                                .background(MaterialTheme.colorScheme.background),
+                        )
                     }
 
                     if (miniAlpha > 0.001f) {
@@ -987,6 +995,18 @@ fun MorphingPlayerSheet(
                                 modifier = Modifier.size(lerp(24.dp, 72.dp, progress)),
                             )
                         }
+                        if (motionArtwork != null && progress >= MotionArtworkDisplayProgress) {
+                            MotionArtworkVideo(
+                                artwork = motionArtwork,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer {
+                                        alpha = ((progress - MotionArtworkDisplayProgress) /
+                                                (1f - MotionArtworkDisplayProgress))
+                                            .coerceIn(0f, 1f)
+                                    },
+                            )
+                        }
                     }
 
                     if (miniIndicatorAlpha > 0.001f) {
@@ -1100,9 +1120,12 @@ fun MorphingPlayerSheet(
                         PlayerSeekBar(
                             track = track,
                             isPlaying = isPlaying,
+                            isBuffering = isBuffering,
                             currentPositionMs = currentPositionMs,
                             durationMs = durationMs,
                             audioQuality = audioQuality,
+                            switchingQualityFormat = switchingQualityFormat,
+                            onQualityVariantSelected = onQualityVariantSelected,
                             onSeek = onSeek,
                             onAudioQualityClick = { showAudioInfo = true },
                             onAudioQualityPositioned = { coords -> audioBadgeBounds = coords },
@@ -1111,7 +1134,7 @@ fun MorphingPlayerSheet(
                             modifier = Modifier
                                 .offset(x = fullControlsX, y = seekY)
                                 .width(fullControlsWidth)
-                                .height(62.dp)
+                                .height(seekHeight)
                                 .graphicsLayer {
                                     alpha = fullControlsAlpha
                                     scaleX = fullControlsScale
@@ -1436,6 +1459,7 @@ fun MorphingPlayerSheet(
             state = PlayerOverlayState(
                 track = track,
                 audioQuality = audioQuality,
+                switchingQualityFormat = switchingQualityFormat,
                 isPlaying = isPlaying,
                 isBuffering = isBuffering,
                 isShuffle = isShuffle,
@@ -1454,6 +1478,7 @@ fun MorphingPlayerSheet(
                 onToggleShuffle = onToggleShuffle,
                 onCycleRepeatMode = onCycleRepeatMode,
                 onAudioQualityClick = { showAudioInfo = true },
+                onQualityVariantSelected = onQualityVariantSelected ?: {},
                 onTrackClick = { selected -> onTrackClick?.invoke(selected) },
                 onRemoveUpNext = { index -> onRemoveUpNext?.invoke(index) },
                 onMoveUpNext = { from, to -> onMoveUpNext?.invoke(from, to) },

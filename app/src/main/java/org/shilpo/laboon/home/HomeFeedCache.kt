@@ -110,6 +110,17 @@ class HomeFeedCache(private val store: KeyValueStore) {
                 track.mbid?.let { put("mbid", it) }
                 track.isrc?.let { put("isrc", it) }
                 track.providerTrackId?.let { put("providerTrackId", it) }
+                if (track.availableVariants.isNotEmpty()) {
+                    put("availableVariants", JSONArray().apply {
+                        track.availableVariants.forEach { variant ->
+                            put(JSONObject().apply {
+                                put("format", variant.format)
+                                put("backendTrackId", variant.backendTrackId)
+                                variant.fileSizeBytes?.let { put("fileSizeBytes", it) }
+                            })
+                        }
+                    })
+                }
             }
             array.put(obj)
         }
@@ -124,6 +135,26 @@ class HomeFeedCache(private val store: KeyValueStore) {
             val id = obj.optString("id").takeIf { it.isNotBlank() } ?: continue
             val title = obj.optString("title").takeIf { it.isNotBlank() } ?: continue
             val artist = obj.optString("artist").takeIf { it.isNotBlank() } ?: continue
+            val variants = obj.optJSONArray("availableVariants")?.let { values ->
+                buildList {
+                    for (index in 0 until values.length()) {
+                        val variant = values.optJSONObject(index) ?: continue
+                        val format = variant.optString("format").takeIf { it.isNotBlank() }
+                            ?: continue
+                        val backendTrackId = variant.optInt("backendTrackId")
+                            .takeIf { variant.has("backendTrackId") && it > 0 } ?: continue
+                        val fileSizeBytes = variant.optLong("fileSizeBytes")
+                            .takeIf { variant.has("fileSizeBytes") && it > 0L }
+                        add(
+                            TrackFormatVariant(
+                                format = format,
+                                backendTrackId = backendTrackId,
+                                fileSizeBytes = fileSizeBytes,
+                            )
+                        )
+                    }
+                }
+            }.orEmpty()
             list.add(
                 HomeTrack(
                     id = id,
@@ -140,6 +171,8 @@ class HomeFeedCache(private val store: KeyValueStore) {
                     mbid = obj.optString("mbid").takeIf { it.isNotBlank() },
                     isrc = obj.optString("isrc").takeIf { it.isNotBlank() },
                     providerTrackId = obj.optString("providerTrackId").takeIf { it.isNotBlank() },
+                    availableFormats = variants.map(TrackFormatVariant::format),
+                    availableVariants = variants,
                 )
             )
         }

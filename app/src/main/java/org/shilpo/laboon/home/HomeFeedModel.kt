@@ -1,5 +1,11 @@
 package org.shilpo.laboon.home
 
+data class TrackFormatVariant(
+    val format: String,
+    val backendTrackId: Int,
+    val fileSizeBytes: Long? = null,
+)
+
 data class HomeTrack(
     val id: String,
     val title: String,
@@ -16,6 +22,7 @@ data class HomeTrack(
     val isrc: String? = null,
     val providerTrackId: String? = null,
     val availableFormats: List<String> = emptyList(),
+    val availableVariants: List<TrackFormatVariant> = emptyList(),
     val durationMs: Long? = null,
 )
 

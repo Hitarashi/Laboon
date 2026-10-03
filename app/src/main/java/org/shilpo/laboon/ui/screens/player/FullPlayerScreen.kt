@@ -87,6 +87,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.lyrics.LyricsLine
 import org.shilpo.laboon.playback.ArtworkUrlHelper
 import org.shilpo.laboon.playback.AudioQualityInfo
@@ -161,6 +162,8 @@ fun FullPlayerScreen(
     onTrackClick: ((HomeTrack) -> Unit)? = null,
     lyricsLines: List<LyricsLine> = emptyList(),
     lyricsLoading: Boolean = false,
+    switchingQualityFormat: String? = null,
+    onQualityVariantSelected: ((TrackFormatVariant) -> Unit)? = null,
 ) {
     val coroutineScope = rememberCoroutineScope()
     var activePanel by remember { mutableStateOf<PlayerPanelTab?>(null) }
@@ -273,16 +276,9 @@ fun FullPlayerScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background)
                     .liquidGlassBackdropProducer(playerBackdropState, playerBackdropLayer),
             ) {
-                DancingGlowBackground(
-                    artworkUrl = track.artworkUrl,
-                    spectrum = spectrum,
-                    isPlaying = isPlaying,
-                    isDark = isDark,
-                    modifier = Modifier.fillMaxSize(),
-                )
-
                 FullPlayerLayout(
                     modifier = Modifier
                         .fillMaxSize()
@@ -312,6 +308,8 @@ fun FullPlayerScreen(
                             currentPositionMs = currentPositionMs,
                             durationMs = durationMs,
                             audioQuality = audioQuality,
+                            switchingQualityFormat = switchingQualityFormat,
+                            onQualityVariantSelected = onQualityVariantSelected,
                             isShuffle = isShuffle,
                             repeatMode = repeatMode,
                             onPlayPauseClick = onPlayPauseClick,
@@ -340,6 +338,7 @@ fun FullPlayerScreen(
             state = PlayerOverlayState(
                 track = track,
                 audioQuality = audioQuality,
+                switchingQualityFormat = switchingQualityFormat,
                 isPlaying = isPlaying,
                 isBuffering = isBuffering,
                 isShuffle = isShuffle,
@@ -358,6 +357,7 @@ fun FullPlayerScreen(
                 onToggleShuffle = onToggleShuffle,
                 onCycleRepeatMode = onCycleRepeatMode,
                 onAudioQualityClick = { showAudioInfo = true },
+                onQualityVariantSelected = onQualityVariantSelected ?: {},
                 onTrackClick = { selected -> onTrackClick?.invoke(selected) },
                 onRemoveUpNext = { index -> onRemoveUpNext?.invoke(index) },
                 onMoveUpNext = { from, to -> onMoveUpNext?.invoke(from, to) },
@@ -663,6 +663,8 @@ private fun FullPlayerControls(
     currentPositionMs: Long,
     durationMs: Long,
     audioQuality: AudioQualityInfo? = null,
+    switchingQualityFormat: String? = null,
+    onQualityVariantSelected: ((TrackFormatVariant) -> Unit)? = null,
     isShuffle: Boolean,
     repeatMode: RepeatMode,
     onPlayPauseClick: () -> Unit,
@@ -710,14 +712,17 @@ private fun FullPlayerControls(
             )
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
         PlayerSeekBar(
             track = track,
             isPlaying = isPlaying,
+            isBuffering = isBuffering,
             currentPositionMs = currentPositionMs,
             durationMs = durationMs,
             audioQuality = audioQuality,
+            switchingQualityFormat = switchingQualityFormat,
+            onQualityVariantSelected = onQualityVariantSelected,
             onSeek = onSeek,
             onAudioQualityClick = onAudioQualityClick,
             onAudioQualityPositioned = onAudioQualityPositioned,
@@ -725,10 +730,10 @@ private fun FullPlayerControls(
             isDark = isDark,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(62.dp),
+                .height(84.dp),
         )
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(24.dp))
 
         FullPlayerTransportControls(
             isPlaying = isPlaying,

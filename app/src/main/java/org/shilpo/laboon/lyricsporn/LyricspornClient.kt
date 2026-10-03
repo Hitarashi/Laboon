@@ -21,8 +21,14 @@ data class LyricspornCatalogItem(
     val artistName: String? = null,
     val albumName: String? = null,
     val artworkUrl: String? = null,
+    val motionArtwork: LyricspornMotionArtwork? = null,
     val durationMs: Long? = null,
     val isrc: String? = null,
+)
+
+data class LyricspornMotionArtwork(
+    val url: String,
+    val format: String? = null,
 )
 
 object LyricspornClient {
@@ -30,6 +36,7 @@ object LyricspornClient {
 
     private val http = HttpJsonClient()
     private val artworkCache = ConcurrentHashMap<String, String>()
+    private val motionArtworkCache = ConcurrentHashMap<String, LyricspornMotionArtwork>()
     private val artworkPermits = Semaphore(MAX_ARTWORK_LOOKUPS)
 
     fun normalizeApiBaseUrl(value: String?): String? {
@@ -114,6 +121,63 @@ object LyricspornClient {
             album = album,
         )
 
+    suspend fun resolveTrackMotionArtwork(
+        apiBaseUrl: String?,
+        appleTrackId: String?,
+        title: String,
+        artist: String,
+        album: String? = null,
+    ): LyricspornMotionArtwork? {
+        val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return null
+        val trackId = appleTrackId?.takeIf { id -> id.isNotBlank() && id.all(Char::isDigit) }
+        val normalizedTitle = title.normalized()
+        val normalizedArtist = artist.normalized()
+        if (trackId == null && (normalizedTitle.isBlank() || normalizedArtist.isBlank())) {
+            return null
+        }
+        val cacheKey = if (trackId != null) {
+            "$baseUrl:track-motion:$trackId"
+        } else {
+            "$baseUrl:track-motion:$normalizedTitle:$normalizedArtist:${
+                album.orEmpty().normalized()
+            }"
+        }
+        motionArtworkCache[cacheKey]?.let { return it }
+
+        return artworkPermits.withPermit {
+            motionArtworkCache[cacheKey]?.let { return@withPermit it }
+            val artwork = if (trackId != null) {
+                getJson("$baseUrl/tracks/$trackId?include=motionArtwork")
+                    ?.objOrNull("track")
+                    ?.objOrNull("motionArtwork")
+                    ?.toMotionArtwork()
+            } else {
+                val query = listOf(title.trim(), artist.trim(), album.orEmpty().trim())
+                    .filter(String::isNotEmpty)
+                    .joinToString(" ")
+                val items = searchCatalogItems(
+                    apiBaseUrl = baseUrl,
+                    term = query,
+                    type = "songs",
+                    limit = 5,
+                    artworkSize = 50,
+                    includeMotionArtwork = true,
+                )
+                val exactMatch = items.firstOrNull { item ->
+                    item.name.normalized() == normalizedTitle &&
+                            item.artistName.orEmpty().normalized() == normalizedArtist &&
+                            (album.isNullOrBlank() ||
+                                    item.albumName.orEmpty().normalized() == album.normalized())
+                } ?: items.firstOrNull { item ->
+                    item.name.normalized() == normalizedTitle &&
+                            item.artistName.orEmpty().normalized() == normalizedArtist
+                }
+                exactMatch?.motionArtwork
+            }
+            artwork?.also { motionArtworkCache[cacheKey] = it }
+        }
+    }
+
     suspend fun resolveAlbumArtwork(apiBaseUrl: String?, title: String, artist: String): String? =
         resolveArtwork(apiBaseUrl = apiBaseUrl, type = "albums", title = title, artist = artist)
 
@@ -174,10 +238,12 @@ object LyricspornClient {
         type: String,
         limit: Int,
         artworkSize: Int,
+        includeMotionArtwork: Boolean = false,
     ): List<LyricspornCatalogItem> {
         val json = getJson(
             "$apiBaseUrl/catalog/search?term=${encode(term)}&types=$type" +
-                    "&limit=${limit.coerceIn(1, 25)}&artworkSize=$artworkSize",
+                    "&limit=${limit.coerceIn(1, 25)}&artworkSize=$artworkSize" +
+                    if (includeMotionArtwork) "&include=motionArtwork" else "",
         ) ?: return emptyList()
         return json.objOrNull("results")?.objOrNull(type)?.arrOrNull("items")
             ?.toCatalogItems(artworkSize)
@@ -211,8 +277,22 @@ object LyricspornClient {
             artistName = stringOrNull("artistName"),
             albumName = stringOrNull("albumName"),
             artworkUrl = artworkUrl,
+            motionArtwork = objOrNull("motionArtwork")?.toMotionArtwork(),
             durationMs = optLong("durationMs").takeIf { has("durationMs") && !isNull("durationMs") },
             isrc = stringOrNull("isrc"),
+        )
+    }
+
+    private fun JSONObject.toMotionArtwork(): LyricspornMotionArtwork? {
+        val variants = objOrNull("variants") ?: return null
+        val variant = variants.objOrNull("default")
+            ?: variants.objOrNull("square")
+            ?: variants.objOrNull("portrait")
+            ?: return null
+        val url = variant.stringOrNull("url")?.takeIf(String::isNotBlank) ?: return null
+        return LyricspornMotionArtwork(
+            url = url,
+            format = variant.stringOrNull("format")?.lowercase(Locale.ROOT),
         )
     }
 

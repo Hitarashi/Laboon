@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.lerp
 import kotlinx.coroutines.launch
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.lyrics.LyricsLine
 import org.shilpo.laboon.lyrics.LyricsTranslator
 import org.shilpo.laboon.playback.AudioQualityInfo
@@ -61,6 +62,7 @@ internal enum class PlayerPanelTab {
 internal data class PlayerOverlayState(
     val track: HomeTrack,
     val audioQuality: AudioQualityInfo?,
+    val switchingQualityFormat: String? = null,
     val isPlaying: Boolean,
     val isBuffering: Boolean,
     val isShuffle: Boolean,
@@ -80,6 +82,7 @@ internal data class PlayerOverlayActions(
     val onToggleShuffle: () -> Unit,
     val onCycleRepeatMode: () -> Unit,
     val onAudioQualityClick: () -> Unit,
+    val onQualityVariantSelected: (TrackFormatVariant) -> Unit,
     val onTrackClick: (HomeTrack) -> Unit,
     val onRemoveUpNext: (Int) -> Unit,
     val onMoveUpNext: (Int, Int) -> Unit,

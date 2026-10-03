@@ -15,6 +15,8 @@ import org.shilpo.laboon.home.TrackIdentity
 interface QueueManager {
     val state: StateFlow<QueueState>
     fun play(track: HomeTrack, contextTracks: List<HomeTrack>? = null)
+    fun updateCurrentTrack(track: HomeTrack)
+    fun selectCurrentById(trackId: String): HomeTrack?
     fun playNext(track: HomeTrack)
     fun addToQueue(track: HomeTrack)
 
@@ -72,6 +74,31 @@ class QueueManagerImpl(
                 preShuffleOrder = if (s.isShuffle) items else null,
             )
         }
+    }
+
+    override fun updateCurrentTrack(track: HomeTrack) {
+        mutate { state ->
+            val index = state.currentIndex
+            val current = state.items.getOrNull(index) ?: return@mutate state
+            if (!TrackIdentity.isSameTrack(current, track)) return@mutate state
+
+            val updatedItems = state.items.toMutableList().apply { set(index, track) }
+            val updatedPreShuffleOrder = state.preShuffleOrder?.map { queuedTrack ->
+                if (TrackIdentity.isSameTrack(queuedTrack, track)) track else queuedTrack
+            }
+            state.copy(items = updatedItems, preShuffleOrder = updatedPreShuffleOrder)
+        }
+    }
+
+    override fun selectCurrentById(trackId: String): HomeTrack? {
+        var selectedTrack: HomeTrack? = null
+        mutate { state ->
+            val index = state.items.indexOfFirst { it.id == trackId }
+            if (index < 0) return@mutate state
+            selectedTrack = state.items[index]
+            if (index == state.currentIndex) state else state.copy(currentIndex = index)
+        }
+        return selectedTrack
     }
 
     override fun playNext(track: HomeTrack) {

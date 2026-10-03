@@ -4,8 +4,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 import org.shilpo.laboon.auth.KeyValueStore
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.home.TrackIdentity
 
 
@@ -67,7 +70,8 @@ object QueuePersistenceCodec {
     private const val VERSION = "v1"
     private const val HEADER_FIELDS = 6
     private const val LEGACY_ITEM_FIELDS = 13
-    private const val ITEM_FIELDS = 14
+    private const val PREVIOUS_ITEM_FIELDS = 14
+    private const val ITEM_FIELDS = 15
     private const val MAX_ITEMS = 200
 
     fun encode(state: QueueState): String {
@@ -141,11 +145,14 @@ object QueuePersistenceCodec {
         encodeOptional(track.mbid),
         encodeOptional(track.isrc),
         encodeOptional(track.providerTrackId),
+        encodeOptional(track.availableVariants.takeIf { it.isNotEmpty() }?.let(::encodeVariants)),
     ).joinToString("\t")
 
     fun decodeTrack(line: String): HomeTrack? {
         val fields = line.split('\t')
-        if (fields.size != LEGACY_ITEM_FIELDS && fields.size != ITEM_FIELDS) return null
+        if (fields.size != LEGACY_ITEM_FIELDS && fields.size != PREVIOUS_ITEM_FIELDS &&
+            fields.size != ITEM_FIELDS
+        ) return null
 
 
         val values = fields.map { unescape(it) ?: return null }
@@ -169,8 +176,50 @@ object QueuePersistenceCodec {
             mbid = decodeOptional(values[11]),
             isrc = decodeOptional(values[12]),
             providerTrackId = values.getOrNull(13)?.let(::decodeOptional),
+            availableFormats = values.getOrNull(14)
+                ?.let(::decodeOptional)
+                ?.let(::decodeVariants)
+                ?.map(TrackFormatVariant::format)
+                .orEmpty(),
+            availableVariants = values.getOrNull(14)
+                ?.let(::decodeOptional)
+                ?.let(::decodeVariants)
+                .orEmpty(),
         )
     }
+
+    private fun encodeVariants(variants: List<TrackFormatVariant>): String =
+        JSONArray().apply {
+            variants.forEach { variant ->
+                put(JSONObject().apply {
+                    put("format", variant.format)
+                    put("backendTrackId", variant.backendTrackId)
+                    variant.fileSizeBytes?.let { put("fileSizeBytes", it) }
+                })
+            }
+        }.toString()
+
+    private fun decodeVariants(raw: String): List<TrackFormatVariant> =
+        runCatching { JSONArray(raw) }.getOrNull()?.let { array ->
+            buildList {
+                for (index in 0 until array.length()) {
+                    val variant = array.optJSONObject(index) ?: continue
+                    val format = variant.optString("format").takeIf { it.isNotBlank() }
+                        ?: continue
+                    val backendTrackId = variant.optInt("backendTrackId")
+                        .takeIf { variant.has("backendTrackId") && it > 0 } ?: continue
+                    val fileSizeBytes = variant.optLong("fileSizeBytes")
+                        .takeIf { variant.has("fileSizeBytes") && it > 0L }
+                    add(
+                        TrackFormatVariant(
+                            format = format,
+                            backendTrackId = backendTrackId,
+                            fileSizeBytes = fileSizeBytes,
+                        )
+                    )
+                }
+            }
+        }.orEmpty()
 
     private fun dedupe(tracks: List<HomeTrack>): List<HomeTrack> {
         val seen = HashSet<String>(tracks.size)

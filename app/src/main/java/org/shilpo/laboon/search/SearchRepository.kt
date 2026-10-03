@@ -9,6 +9,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.shilpo.laboon.auth.SessionStore
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.lyricsporn.LyricspornCatalogItem
 import org.shilpo.laboon.lyricsporn.LyricspornClient
 import org.shilpo.laboon.net.HttpJsonClient
@@ -39,7 +40,7 @@ class SearchRepositoryImpl(
 ) : SearchRepository {
 
     private data class CachedTrackAvailability(
-        val formats: List<String>,
+        val variants: List<TrackFormatVariant>,
         val preferredCodec: String?,
         val playbackTrackId: Int?,
     )
@@ -81,11 +82,12 @@ class SearchRepositoryImpl(
                 artworkUrl = item.artworkUrl,
                 source = null,
                 backendTrackId = availability?.playbackTrackId,
-                isCached = availability?.formats?.isNotEmpty() == true,
+                isCached = availability?.variants?.isNotEmpty() == true,
                 codec = availability?.preferredCodec,
                 isrc = item.isrc,
                 providerTrackId = item.id,
-                availableFormats = availability?.formats.orEmpty(),
+                availableFormats = availability?.variants.orEmpty().map(TrackFormatVariant::format),
+                availableVariants = availability?.variants.orEmpty(),
                 durationMs = item.durationMs,
             )
         }
@@ -124,39 +126,42 @@ class SearchRepositoryImpl(
                     val track = tracks.objAtOrNull(index) ?: continue
                     val appleId = track.stringOrNull("apple_track_id") ?: continue
                     val cachedFormats = track.arrOrNull("formats")?.let { values ->
-                        buildList<CachedFormat> {
+                        buildList<TrackFormatVariant> {
                             for (formatIndex in 0 until values.length()) {
                                 val value = values.objAtOrNull(formatIndex) ?: continue
                                 val format =
                                     value.stringOrNull("format")?.normalizeFormat() ?: continue
-                                if (format !in SUPPORTED_FORMATS || any { it.codec == format }) continue
-                                val playbackTrackId = if (value.has("id") && !value.isNull("id")) {
-                                    value.optInt("id").takeIf { it > 0 }
-                                } else {
-                                    null
-                                }
-                                add(CachedFormat(format, playbackTrackId))
+                                if (format !in SUPPORTED_FORMATS || any { it.format == format }) continue
+                                val playbackTrackId = value.optInt("id")
+                                    .takeIf { value.has("id") && !value.isNull("id") && it > 0 }
+                                    ?: continue
+                                val fileSizeBytes = value.optLong("file_size_bytes")
+                                    .takeIf {
+                                        value.has("file_size_bytes") &&
+                                                !value.isNull("file_size_bytes") && it > 0L
+                                    }
+                                add(
+                                    TrackFormatVariant(
+                                        format = format,
+                                        backendTrackId = playbackTrackId,
+                                        fileSizeBytes = fileSizeBytes,
+                                    )
+                                )
                             }
                         }
                     }.orEmpty()
                     if (cachedFormats.isNotEmpty()) {
-                        val preferred = cachedFormats
-                            .filter { it.playbackTrackId != null }
-                            .maxByOrNull { it.codec.preference() }
-                        val displayCodec = preferred?.codec
-                            ?: cachedFormats.maxByOrNull { it.codec.preference() }?.codec
+                        val preferred = cachedFormats.maxByOrNull { it.format.preference() }
                         availabilityById[appleId] = CachedTrackAvailability(
-                            formats = cachedFormats.map(CachedFormat::codec),
-                            preferredCodec = displayCodec,
-                            playbackTrackId = preferred?.playbackTrackId,
+                            variants = cachedFormats,
+                            preferredCodec = preferred?.format,
+                            playbackTrackId = preferred?.backendTrackId,
                         )
                     }
                 }
             }
             availabilityById
         }
-
-    private data class CachedFormat(val codec: String, val playbackTrackId: Int?)
 
     override suspend fun resolvePlaybackUrl(track: HomeTrack): String? =
         resolvePlayback(track)?.streamUrl

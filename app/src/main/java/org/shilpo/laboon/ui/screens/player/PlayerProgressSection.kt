@@ -24,6 +24,7 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.playback.AudioQualityInfo
 import org.shilpo.laboon.ui.design.AudioQualityBadge
 
@@ -31,15 +32,20 @@ import org.shilpo.laboon.ui.design.AudioQualityBadge
 internal fun PlayerSeekBar(
     track: HomeTrack,
     isPlaying: Boolean,
+    isBuffering: Boolean = false,
     currentPositionMs: Long,
     durationMs: Long,
     audioQuality: AudioQualityInfo?,
+    switchingQualityFormat: String? = null,
+    onQualityVariantSelected: ((TrackFormatVariant) -> Unit)? = null,
     onSeek: (Float) -> Unit,
     modifier: Modifier = Modifier,
     onAudioQualityClick: () -> Unit = {},
     onAudioQualityPositioned: ((Rect) -> Unit)? = null,
     audioBadgeAlpha: Float = 1f,
     isDark: Boolean,
+    showTrackInfo: Boolean = true,
+    showAudioQuality: Boolean = true,
 ) {
     var isSeeking by remember { mutableStateOf(false) }
     var seekPosition by remember { mutableFloatStateOf(0f) }
@@ -98,22 +104,28 @@ internal fun PlayerSeekBar(
                 color = if (isDark) Color.White.copy(alpha = 0.6f) else Color.Black.copy(alpha = 0.6f),
             )
 
-            AudioQualityBadge(
-                quality = audioQuality,
-                fallbackCodec = track.codec,
-                track = track,
-                isDark = isDark,
-                modifier = Modifier
-                    .graphicsLayer { alpha = audioBadgeAlpha.coerceIn(0f, 1f) }
-                    .then(
-                        if (onAudioQualityPositioned != null) {
-                            Modifier.onGloballyPositioned { coords ->
-                                onAudioQualityPositioned(coords.boundsInRoot())
-                            }
-                        } else Modifier
-                    ),
-                onClick = onAudioQualityClick,
-            )
+            if (showAudioQuality) {
+                AudioQualityBadge(
+                    quality = audioQuality,
+                    fallbackCodec = track.codec,
+                    track = track,
+                    availableVariants = track.availableVariants,
+                    switchingFormat = switchingQualityFormat,
+                    onVariantSelected = onQualityVariantSelected,
+                    isLoading = isBuffering || switchingQualityFormat != null,
+                    showTrackInfo = showTrackInfo,
+                    modifier = Modifier
+                        .graphicsLayer { alpha = audioBadgeAlpha.coerceIn(0f, 1f) }
+                        .then(
+                            if (onAudioQualityPositioned != null) {
+                                Modifier.onGloballyPositioned { coords ->
+                                    onAudioQualityPositioned(coords.boundsInRoot())
+                                }
+                            } else Modifier
+                        ),
+                    onClick = onAudioQualityClick,
+                )
+            }
 
             Text(
                 text = formatDurationMs(safeDuration),
