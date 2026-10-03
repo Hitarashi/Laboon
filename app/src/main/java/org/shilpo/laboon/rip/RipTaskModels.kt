@@ -16,6 +16,7 @@ data class RipTaskDownloadLane(
     val codec: String? = null,
     val trackIndex: Int? = null,
     val totalTracks: Int? = null,
+    val artworkUrl: String? = null,
 ) {
     companion object {
         fun fromJson(
@@ -36,6 +37,7 @@ data class RipTaskDownloadLane(
                     .toFloat() else null
 
             val codec = json.stringOrNull("codec")
+            val artworkUrl = json.stringOrNull("artwork_url")
             val trackIndex =
                 if (json.has("track_index") && !json.isNull("track_index")) json.optInt("track_index") else null
             val totalTracks =
@@ -85,6 +87,7 @@ data class RipTaskDownloadLane(
                 codec = codec,
                 trackIndex = trackIndex,
                 totalTracks = totalTracks,
+                artworkUrl = artworkUrl,
             )
         }
     }
@@ -102,6 +105,7 @@ data class RipTaskUploadLane(
     val codec: String? = null,
     val trackIndex: Int? = null,
     val totalTracks: Int? = null,
+    val artworkUrl: String? = null,
 ) {
     companion object {
         fun fromJson(
@@ -121,6 +125,7 @@ data class RipTaskUploadLane(
                 if (json.has("percent") && !json.isNull("percent")) json.optDouble("percent")
                     .toFloat() else null
             val codec = json.stringOrNull("codec")
+            val artworkUrl = json.stringOrNull("artwork_url")
             val trackIndex =
                 if (json.has("track_index") && !json.isNull("track_index")) json.optInt("track_index") else null
             val totalTracks =
@@ -170,6 +175,7 @@ data class RipTaskUploadLane(
                 codec = codec,
                 trackIndex = trackIndex,
                 totalTracks = totalTracks,
+                artworkUrl = artworkUrl,
             )
         }
     }
@@ -201,6 +207,7 @@ data class RipTaskSnapshot(
     val completedTracks: Int? = null,
     val failedTracks: Int? = null,
     val lastUpdatedMs: Long = System.currentTimeMillis(),
+    val artworkUrl: String? = null,
 ) {
     companion object {
         fun fromJson(json: JSONObject, previous: RipTaskSnapshot? = null): RipTaskSnapshot {
@@ -212,14 +219,25 @@ data class RipTaskSnapshot(
             val uploadLane = json.objOrNull("upload")?.let {
                 RipTaskUploadLane.fromJson(it, previous?.upload, now)
             }
+            val title = json.stringOrNull("title") ?: previous?.title
+            val artist = json.stringOrNull("artist") ?: previous?.artist
+            val album = json.stringOrNull("album") ?: previous?.album
+            val artworkUrl = json.stringOrNull("artwork_url")
+                ?: json.stringOrNull("current_track_artwork_url")
+                ?: downloadLane?.artworkUrl
+                ?: uploadLane?.artworkUrl
+                ?: previous?.takeIf {
+                    it.title.equals(title, ignoreCase = true) &&
+                            it.artist.equals(artist, ignoreCase = true)
+                }?.artworkUrl
 
             return RipTaskSnapshot(
                 taskId = json.optString("task_id"),
                 provider = json.optString("provider", "apple"),
                 sourceTrackId = json.optString("source_track_id"),
-                title = json.stringOrNull("title"),
-                artist = json.stringOrNull("artist"),
-                album = json.stringOrNull("album"),
+                title = title,
+                artist = artist,
+                album = album,
                 duration = if (json.has("duration") && !json.isNull("duration")) json.optInt("duration") else null,
                 jobStage = json.stringOrNull("job_stage"),
                 download = downloadLane,
@@ -234,6 +252,7 @@ data class RipTaskSnapshot(
                 error = json.stringOrNull("error"),
                 ownerId = if (json.has("owner_id") && !json.isNull("owner_id")) json.optLong("owner_id") else null,
                 isOwner = json.optBoolean("is_owner", false),
+                artworkUrl = artworkUrl,
                 isAlbum = json.optBoolean("is_album", false),
                 currentTrackTitle = json.stringOrNull("current_track_title"),
                 currentTrackArtist = json.stringOrNull("current_track_artist"),
@@ -265,6 +284,5 @@ enum class RipWsStatus {
 data class RipVisualizerState(
     val wsStatus: RipWsStatus = RipWsStatus.DISCONNECTED,
     val activeTasks: List<RipTaskSnapshot> = emptyList(),
-    val serverUrl: String = "",
     val errorMessage: String? = null,
 )

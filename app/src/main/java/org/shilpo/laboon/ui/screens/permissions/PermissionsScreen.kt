@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -36,10 +35,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -80,7 +82,8 @@ internal fun PermissionsScreen(
     val canLeave = missingRequired.isEmpty()
 
     val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val bottomBarHeightPx = remember { mutableIntStateOf(0) }
+    val bottomBarHeight = with(LocalDensity.current) { bottomBarHeightPx.intValue.toDp() }
 
     ScreenScaffold(
         modifier = modifier,
@@ -89,6 +92,7 @@ internal fun PermissionsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
+                    .onSizeChanged { bottomBarHeightPx.intValue = it.height }
                     .navigationBarsPadding()
                     .padding(horizontal = 16.dp, vertical = 12.dp),
             ) {
@@ -124,10 +128,12 @@ internal fun PermissionsScreen(
         },
     ) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(bottom = bottomBarHeight),
             contentPadding = PaddingValues(
                 top = topInset + 16.dp,
-                bottom = bottomInset + 88.dp,
+                bottom = 16.dp,
                 start = 16.dp,
                 end = 16.dp,
             ),

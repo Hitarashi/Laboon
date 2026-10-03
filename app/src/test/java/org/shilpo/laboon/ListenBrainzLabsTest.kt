@@ -3,7 +3,6 @@ package org.shilpo.laboon.home
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -147,16 +146,6 @@ class ListenBrainzLabsTest {
         assertEquals(
             emptyList<String>(),
             ListenBrainzLabs.parseCfRecordingMbids(JSONObject().put("payload", JSONObject())),
-        )
-    }
-
-    @Test
-    fun `coverArtUrl is null without a release to key on`() {
-        assertNull(ListenBrainzLabs.coverArtUrl(null))
-        assertNull(ListenBrainzLabs.coverArtUrl("  "))
-        assertEquals(
-            "https://coverartarchive.org/release/$seedA/front-500.jpg",
-            ListenBrainzLabs.coverArtUrl(seedA),
         )
     }
 

@@ -50,6 +50,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -61,6 +62,7 @@ import org.shilpo.laboon.lyrics.LyricsDiskCache
 import org.shilpo.laboon.lyrics.LyricsLookup
 import org.shilpo.laboon.lyrics.LyricsRepository
 import org.shilpo.laboon.lyrics.LyricsRepositoryImpl
+import org.shilpo.laboon.lyricsporn.LyricspornClient
 import org.shilpo.laboon.search.SearchRepository
 import org.shilpo.laboon.search.SearchRepositoryImpl
 import kotlin.math.roundToInt
@@ -121,6 +123,7 @@ class PlaybackManagerImpl(
         SharedPreferencesKeyValueStore(context),
     ),
     private val lyricsRepository: LyricsRepository = LyricsRepositoryImpl(
+        lyricspornApiUrlProvider = { sessionStore.getSession()?.lyricspornApiUrl },
         diskCache = LyricsDiskCache(context),
     ),
 ) : PlaybackManager {
@@ -165,6 +168,7 @@ class PlaybackManagerImpl(
     private var cacheDataSourceFactory: CacheDataSource.Factory? = null
     private var discoveryJob: Job? = null
     private var discoveryGeneration: Long = 0L
+    private var currentArtworkLookupKey: String? = null
     private var fadeJob: Job? = null
     private var pendingFadeIn: Boolean = false
     private var retryJob: Job? = null
@@ -195,10 +199,12 @@ class PlaybackManagerImpl(
         _state.value.currentTrack?.let { track ->
             _state.value = _state.value.copy(lyricsLoading = true)
             requestLyrics(track, _state.value.durationMs)
+            requestTrackArtwork(track)
         }
         scope.launch {
             queueManager.state.collect { qState ->
                 syncPlayerModes(qState)
+                qState.currentTrack?.let(::requestTrackArtwork)
                 _state.value = _state.value.copy(
                     canSkipNext = qState.hasNext,
                     canSkipPrevious = qState.hasPrevious,
@@ -220,6 +226,55 @@ class PlaybackManagerImpl(
         }
         if (exo.shuffleModeEnabled != qState.isShuffle) {
             exo.shuffleModeEnabled = qState.isShuffle
+        }
+    }
+
+    private fun requestTrackArtwork(track: HomeTrack) {
+        if (!track.artworkUrl.isNullOrBlank()) {
+            currentArtworkLookupKey = null
+            return
+        }
+        val lyricspornApiUrl = sessionStore.getSession()?.lyricspornApiUrl
+        if (lyricspornApiUrl.isNullOrBlank()) return
+        val lookupKey = LyricspornClient.normalizedArtworkKey(
+            track.title,
+            track.artist,
+            lyricspornApiUrl,
+        )
+        if (currentArtworkLookupKey == lookupKey) return
+        currentArtworkLookupKey = lookupKey
+
+        scope.launch {
+            val artworkUrl = LyricspornClient.resolveTrackArtwork(
+                apiBaseUrl = lyricspornApiUrl,
+                title = track.title,
+                artist = track.artist,
+                album = track.album,
+            ) ?: return@launch
+            if (currentArtworkLookupKey != lookupKey) return@launch
+
+            _state.update { current ->
+                val currentTrack = current.currentTrack ?: return@update current
+                if (LyricspornClient.normalizedArtworkKey(
+                        currentTrack.title,
+                        currentTrack.artist,
+                        sessionStore.getSession()?.lyricspornApiUrl,
+                    ) != lookupKey
+                ) {
+                    return@update current
+                }
+                current.copy(currentTrack = currentTrack.copy(artworkUrl = artworkUrl))
+            }
+            _state.value.currentTrack
+                ?.takeIf {
+                    LyricspornClient.normalizedArtworkKey(
+                        it.title,
+                        it.artist,
+                        sessionStore.getSession()?.lyricspornApiUrl,
+                    ) == lookupKey &&
+                            it.artworkUrl == artworkUrl
+                }
+                ?.let(playbackPersistence::saveLastTrack)
         }
     }
 
@@ -741,9 +796,7 @@ class PlaybackManagerImpl(
                         artists = listOf(track.artist),
                         album = track.album,
                         durationSeconds = durationMs.takeIf { it > 0L }?.div(1_000L),
-                        appleTrackId = track.providerTrackId.takeIf {
-                            track.source.orEmpty().contains("apple", ignoreCase = true)
-                        },
+                        appleTrackId = track.providerTrackId,
                     )
                 )
             } catch (cancelled: CancellationException) {

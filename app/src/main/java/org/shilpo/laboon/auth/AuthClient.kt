@@ -147,6 +147,8 @@ class AuthClient(
                     refreshToken = refreshToken,
                     expiresAtUnix = expiresAtUnix,
                     user = user,
+                    lyricspornApiUrl = responseJson.optString("lyricsporn_api_url")
+                        .normalizedText(),
                 ).normalized()
 
                 sessionStore.saveSession(session)
@@ -416,7 +418,7 @@ class AuthClient(
         try {
             okHttp.newCall(request).execute().use { response ->
                 HttpOutcome.Success(
-                    JsonResponse(response.code, response.body?.string().orEmpty())
+                    JsonResponse(response.code, response.body.string().orEmpty())
                 )
             }
         } catch (e: Throwable) {

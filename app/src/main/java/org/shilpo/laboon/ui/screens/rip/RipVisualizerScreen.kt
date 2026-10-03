@@ -60,7 +60,6 @@ import org.shilpo.laboon.rip.RipTaskSnapshot
 import org.shilpo.laboon.rip.RipTaskUploadLane
 import org.shilpo.laboon.rip.RipWebSocketClient
 import org.shilpo.laboon.ui.design.CodecIcon
-import org.shilpo.laboon.ui.design.ProviderIcon
 import org.shilpo.laboon.ui.design.UserAvatar
 import java.util.Locale
 
@@ -170,7 +169,6 @@ fun RipVisualizerScreen(
                     ) { index, task ->
                         RipTaskSegmentedItem(
                             task = task,
-                            serverUrl = state.serverUrl,
                             onCancel = { client.cancelTask(task.taskId) },
                             index = index,
                             count = orderedTasks.size,
@@ -185,7 +183,6 @@ fun RipVisualizerScreen(
 @Composable
 private fun RipTaskSegmentedItem(
     task: RipTaskSnapshot,
-    serverUrl: String,
     onCancel: () -> Unit,
     index: Int,
     count: Int,
@@ -210,16 +207,9 @@ private fun RipTaskSegmentedItem(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    val artUrl =
-                        if (task.resultTrackId != null && task.resultTrackId > 0 && serverUrl.isNotEmpty()) {
-                            "$serverUrl/api/v1/assets/tracks/${task.resultTrackId}/artwork"
-                        } else if (serverUrl.isNotEmpty() && task.sourceTrackId.isNotEmpty()) {
-                            "$serverUrl/api/v1/assets/providers/${task.provider}/tracks/${task.sourceTrackId}/artwork"
-                        } else null
-
                     AsyncImage(
                         model = ImageRequest.Builder(LocalContext.current)
-                            .data(artUrl?.let { ArtworkUrlHelper.toLowQuality(it) })
+                            .data(ArtworkUrlHelper.toLowQuality(task.artworkUrl))
                             .crossfade(true)
                             .build(),
                         placeholder = painterResource(R.drawable.app_icon_small),
@@ -369,7 +359,6 @@ private fun LaneGauge(
         speedBytesPerSec = lane.speedBytesPerSec,
         trackTitle = trackTitle,
         trackPosition = trackPosition,
-        provider = task.provider,
         codec = lane.codec,
         modifier = modifier,
     )
@@ -421,7 +410,6 @@ private fun UploadLaneGauge(
         speedBytesPerSec = lane.speedBytesPerSec,
         trackTitle = trackTitle,
         trackPosition = trackPosition,
-        provider = task.provider,
         codec = lane.codec,
         modifier = modifier,
     )
@@ -437,7 +425,6 @@ private fun LaneProgressIndicator(
     speedBytesPerSec: Long,
     trackTitle: String? = null,
     trackPosition: String? = null,
-    provider: String? = null,
     codec: String? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -530,7 +517,7 @@ private fun LaneProgressIndicator(
         }
 
         val hasTrackInfo =
-            !trackTitle.isNullOrBlank() || !trackPosition.isNullOrBlank() || !provider.isNullOrBlank() || !codec.isNullOrBlank()
+            !trackTitle.isNullOrBlank() || !trackPosition.isNullOrBlank() || !codec.isNullOrBlank()
         if (hasTrackInfo) {
             Spacer(modifier = Modifier.height(4.dp))
             Row(
@@ -569,19 +556,12 @@ private fun LaneProgressIndicator(
                         modifier = Modifier.weight(1f, fill = false),
                     )
                 }
-                val hasIcons = !provider.isNullOrBlank() || !codec.isNullOrBlank()
+                val hasIcons = !codec.isNullOrBlank()
                 if ((!trackPosition.isNullOrBlank() || !trackTitle.isNullOrBlank()) && hasIcons) {
                     Text(
                         text = "•",
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                    )
-                }
-                if (!provider.isNullOrBlank()) {
-                    ProviderIcon(
-                        provider = provider,
-                        height = 10.dp,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                     )
                 }
                 if (!codec.isNullOrBlank()) {
@@ -590,7 +570,10 @@ private fun LaneProgressIndicator(
                         height = 10.dp,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                     )
-                    if (!isLosslessOrDolby(codec)) {
+                    if (!isLosslessOrDolby(codec) &&
+                        !codec.equals("aac", ignoreCase = true) &&
+                        !codec.startsWith("mp4a", ignoreCase = true)
+                    ) {
                         val displayCodec = when (codec.lowercase(Locale.getDefault())) {
                             "mp4a.40.2", "mp4a.40.5" -> "AAC"
                             else -> codec.uppercase(Locale.getDefault())

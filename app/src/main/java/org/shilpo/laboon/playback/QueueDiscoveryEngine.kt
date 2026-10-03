@@ -12,10 +12,10 @@ import org.json.JSONObject
 import org.shilpo.laboon.auth.LastFmCredentials
 import org.shilpo.laboon.auth.ListenBrainzCredentials
 import org.shilpo.laboon.auth.SessionStore
-import org.shilpo.laboon.home.BackendArtworkResolver
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.home.ListenBrainzLabs
 import org.shilpo.laboon.home.TrackIdentity
+import org.shilpo.laboon.lyricsporn.LyricspornClient
 import org.shilpo.laboon.net.HttpError
 import org.shilpo.laboon.net.HttpErrorKind
 import org.shilpo.laboon.net.HttpJsonClient
@@ -32,7 +32,7 @@ import java.nio.charset.StandardCharsets
 
 class QueueDiscoveryEngine(
     private val sessionStore: SessionStore,
-    private val artworkResolver: BackendArtworkResolver = BackendArtworkResolver,
+    private val artworkResolver: LyricspornClient = LyricspornClient,
     private val searchRepository: SearchRepository = SearchRepositoryImpl(sessionStore),
 ) {
 
@@ -78,7 +78,12 @@ class QueueDiscoveryEngine(
                 excludedKeys = stageExcluded,
                 limit = minOf(MAX_CANDIDATES_PER_PHASE, remaining * CANDIDATE_MULTIPLIER),
             )
-            val playable = resolveCandidates(candidates, stageExcluded, remaining)
+            val playable = resolveCandidates(
+                candidates,
+                stageExcluded,
+                remaining,
+                session?.lyricspornApiUrl,
+            )
             if (playable.isNotEmpty()) {
                 selected.addAll(playable)
                 onPlayableBatch(playable)
@@ -122,23 +127,36 @@ class QueueDiscoveryEngine(
         candidates: List<HomeTrack>,
         excluded: Set<String>,
         limit: Int,
+        lyricspornApiUrl: String?,
     ): List<HomeTrack> {
         if (candidates.isEmpty() || limit <= 0) return emptyList()
         val playable = mutableListOf<HomeTrack>()
         for (batch in candidates.chunked(RESOLUTION_BATCH_SIZE)) {
             if (playable.size >= limit) break
             val resolved = searchRepository.resolvePlaybackBatch(batch)
-            for (track in resolved) {
+            val withArtwork = coroutineScope {
+                resolved.map { track ->
+                    async {
+                        if (!track.artworkUrl.isNullOrBlank()) {
+                            track
+                        } else {
+                            track.copy(
+                                artworkUrl = artworkResolver.resolveTrackArtwork(
+                                    apiBaseUrl = lyricspornApiUrl,
+                                    title = track.title,
+                                    artist = track.artist,
+                                    album = track.album,
+                                ) ?: track.artworkUrl,
+                            )
+                        }
+                    }
+                }.awaitAll()
+            }
+            for (track in withArtwork) {
                 if (track.streamUrl.isNullOrBlank()) continue
                 val key = TrackIdentity.keyOf(track)
                 if (key in excluded || playable.any { TrackIdentity.keyOf(it) == key }) continue
-                val withArtwork = if (!track.artworkUrl.isNullOrBlank()) {
-                    track
-                } else {
-                    val artworkKey = artworkResolver.normalizedKey(track.title, track.artist)
-                    track.copy(artworkUrl = artworkResolver.getCached(artworkKey))
-                }
-                playable.add(withArtwork)
+                playable.add(track)
                 if (playable.size >= limit) break
             }
         }
@@ -250,10 +268,7 @@ class QueueDiscoveryEngine(
                             artist = artist,
                             album = release?.stringOrNull("title")
                                 ?: release?.stringOrNull("release_name"),
-                            artworkUrl = ListenBrainzLabs.coverArtUrl(
-                                release?.stringOrNull("mbid")
-                                    ?: release?.stringOrNull("release_mbid")
-                            ),
+                            artworkUrl = null,
                             source = "ListenBrainz",
                             mbid = mbid,
                         )

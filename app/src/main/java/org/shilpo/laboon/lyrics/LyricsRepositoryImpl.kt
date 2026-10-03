@@ -1,82 +1,22 @@
 package org.shilpo.laboon.lyrics
 
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import org.shilpo.laboon.lyricsporn.LyricspornClient
 import org.shilpo.laboon.net.HttpJsonClient
 import org.shilpo.laboon.net.HttpOutcome
-import java.net.URLEncoder
-import java.nio.charset.StandardCharsets
-
-internal data class LyricsCandidate(
-    val text: String?,
-    val provider: String,
-    val sourceId: String,
-    val sourceUrl: String? = null,
-    val weight: Int,
-    val metadataScore: Int = 0,
-    val ttmlRaw: String? = null,
-    val structuredLines: List<LyricsLine>? = null,
-    val attribution: String? = null,
-) {
-    fun score(): Int {
-        val parsed = LyricsParser.fromText(text.orEmpty(), 0L, ttmlRaw, structuredLines)
-        val tierScore = when (parsed.syncLevel) {
-            LyricsSyncLevel.Word -> 1_000
-            LyricsSyncLevel.Line -> 500
-            LyricsSyncLevel.Plain -> 100
-        }
-        val backgroundVocalBonus =
-            if (parsed.lines.any { it.backgroundWords.isNotEmpty() }) 200 else 0
-        return if (parsed.plainText.trim().length < 10 || parsed.lines.size < 2) 0
-        else tierScore + weight + metadataScore + backgroundVocalBonus
-    }
-
-    fun toResult(durationMs: Long, mainArtist: String? = null): LyricsResult {
-        val parsed =
-            LyricsParser.fromText(text.orEmpty(), durationMs, ttmlRaw, structuredLines, mainArtist)
-        return LyricsResult(
-            provider = provider,
-            attribution = attribution,
-            format = parsed.format,
-            syncLevel = parsed.syncLevel,
-            plainText = parsed.plainText,
-            lines = parsed.lines,
-        )
-    }
-}
-
-internal interface LyricsSource {
-    suspend fun lookup(http: LyricsHttp, input: LyricsLookup): List<LyricsCandidate>
-}
-
-internal class LyricsHttp(private val client: HttpJsonClient = HttpJsonClient()) {
-    suspend fun get(url: String, headers: Map<String, String> = emptyMap()): String? =
-        when (val response = client.get(url, DEFAULT_HEADERS + headers)) {
-            is HttpOutcome.Success -> response.value
-            is HttpOutcome.Failure -> null
-        }
-
-    suspend fun postJson(
-        url: String,
-        body: String,
-        headers: Map<String, String> = emptyMap()
-    ): String? =
-        when (val response = client.postJson(url, body, DEFAULT_HEADERS + headers)) {
-            is HttpOutcome.Success -> response.value
-            is HttpOutcome.Failure -> null
-        }
-
-    private companion object {
-        val DEFAULT_HEADERS = mapOf("User-Agent" to "AlacBot/1.0", "Accept" to "*/*")
-    }
-}
+import org.shilpo.laboon.net.arrOrNull
+import org.shilpo.laboon.net.objAtOrNull
+import org.shilpo.laboon.net.objOrNull
+import org.shilpo.laboon.net.stringOrNull
+import java.util.Locale
+import kotlin.math.roundToLong
 
 internal class LyricsRepositoryImpl(
-    private val http: LyricsHttp = LyricsHttp(),
-    private val sources: List<LyricsSource> = defaultLyricsSources(),
+    private val lyricspornApiUrlProvider: () -> String?,
+    private val client: HttpJsonClient = HttpJsonClient(),
     private val nowMs: () -> Long = System::currentTimeMillis,
     private val diskCache: LyricsDiskCache? = null,
 ) : LyricsRepository {
@@ -85,60 +25,58 @@ internal class LyricsRepositoryImpl(
 
     private val cache = LinkedHashMap<String, Cached>(16, 0.75f, true)
 
-    override suspend fun lookup(track: LyricsLookup): LyricsResult {
+    override suspend fun lookup(track: LyricsLookup): LyricsResult = withContext(Dispatchers.IO) {
         val durationMs = track.durationSeconds?.coerceAtLeast(0L)?.times(1_000L) ?: 0L
         if (track.title.isBlank() || track.artistString.isBlank()) {
-            return fallbackLyrics(track, durationMs)
+            return@withContext fallbackLyrics(track, durationMs)
         }
+        val apiBaseUrl = LyricspornClient.normalizeApiBaseUrl(lyricspornApiUrlProvider())
+            ?: return@withContext fallbackLyrics(track, durationMs)
+
         val key = listOf(
-            track.title.trim().lowercase(),
-            track.artistString.trim().lowercase(),
-            track.album.orEmpty().trim().lowercase(),
-            track.durationSeconds?.toString().orEmpty(),
+            apiBaseUrl,
             track.appleTrackId.orEmpty(),
-            track.youtubeVideoId.orEmpty(),
+            track.title.trim().lowercase(Locale.ROOT),
+            track.artistString.trim().lowercase(Locale.ROOT),
+            track.album.orEmpty().trim().lowercase(Locale.ROOT),
         ).joinToString("\u0000")
         val cached = synchronized(cache) {
             cache[key]?.also { if (it.expiresAt <= nowMs()) cache.remove(key) }
         }
-        cached?.takeIf { it.expiresAt > nowMs() }?.let { return it.value }
+        cached?.takeIf { it.expiresAt > nowMs() }?.let { return@withContext it.value }
 
         diskCache?.get(key)?.takeIf { it.expiresAt > nowMs() }?.let { persisted ->
             remember(key, persisted.value, persisted.expiresAt)
-            return persisted.value
+            return@withContext persisted.value
         }
 
-        val candidates = coroutineScope {
-            sources.map { source ->
-                async {
-                    try {
-                        withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
-                            source.lookup(
-                                http,
-                                track
-                            )
-                        }.orEmpty()
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (_: Exception) {
-                        emptyList()
-                    }
-                }
-            }.awaitAll().flatten()
+        val appleId = track.appleTrackId?.takeIf { it.isNumericId() }
+            ?: LyricspornClient.searchSongs(
+                apiBaseUrl = apiBaseUrl,
+                term = listOf(track.title.trim(), track.artistString.trim()).joinToString(" "),
+                limit = 1,
+            ).firstOrNull()?.id
+        if (appleId.isNullOrBlank()) return@withContext fallbackLyrics(track, durationMs)
+
+        val url = "$apiBaseUrl/tracks/$appleId?include=lyrics&formats=json"
+        val response = when (val outcome = client.getJson(url)) {
+            is HttpOutcome.Success -> outcome.value
+            is HttpOutcome.Failure -> null
         }
-        val best = candidates
-            .mapIndexed { index, candidate -> index to candidate }
-            .filter { it.second.score() > 0 }
-            .maxWithOrNull(compareBy<Pair<Int, LyricsCandidate>> { it.second.score() }.thenBy { -it.first })
-            ?.second
-            ?.toResult(durationMs, track.artistString)
+        val result = response?.objOrNull("lyrics")
+            ?.objOrNull("formats")
+            ?.objOrNull("json")
+            ?.takeIf { it.optString("status") == "available" }
+            ?.objOrNull("content")
+            ?.toLyricsResult()
             ?: fallbackLyrics(track, durationMs)
-        if (best.provider != null) {
+
+        if (result.provider != null) {
             val expiresAt = nowMs() + CACHE_TTL_MS
-            remember(key, best, expiresAt)
-            diskCache?.put(key, best, expiresAt)
+            remember(key, result, expiresAt)
+            diskCache?.put(key, result, expiresAt)
         }
-        return best
+        result
     }
 
     private fun remember(key: String, value: LyricsResult, expiresAt: Long) {
@@ -159,80 +97,87 @@ internal class LyricsRepositoryImpl(
         )
     }
 
+    private fun JSONObject.toLyricsResult(): LyricsResult? {
+        val lines = arrOrNull("lines")?.toLyricsLines().orEmpty()
+        val plainText = stringOrNull("plainText")
+            ?: lines.joinToString("\n") { it.text }
+        if (plainText.isBlank() && lines.isEmpty()) return null
+
+        return LyricsResult(
+            provider = stringOrNull("provider"),
+            attribution = stringOrNull("attribution"),
+            format = when (stringOrNull("format")?.lowercase(Locale.ROOT)) {
+                "elrc" -> LyricsFormat.Elrc
+                "lrc" -> LyricsFormat.Lrc
+                else -> LyricsFormat.Plain
+            },
+            syncLevel = when (stringOrNull("syncLevel")?.lowercase(Locale.ROOT)) {
+                "word" -> LyricsSyncLevel.Word
+                "line" -> LyricsSyncLevel.Line
+                else -> LyricsSyncLevel.Plain
+            },
+            plainText = plainText,
+            lines = lines,
+        )
+    }
+
+    private fun JSONArray.toLyricsLines(): List<LyricsLine> = buildList {
+        for (index in 0 until length()) {
+            val line = objAtOrNull(index) ?: continue
+            add(
+                LyricsLine(
+                    text = line.stringOrNull("text").orEmpty(),
+                    startMs = line.millis("startMs"),
+                    endMs = line.millis("endMs"),
+                    words = line.objArray("words") { word ->
+                        LyricsWord(
+                            text = word.stringOrNull("text").orEmpty(),
+                            startMs = word.millis("startMs"),
+                            endMs = word.millisOrNull("endMs"),
+                        )
+                    },
+                    backgroundWords = line.objArray("backgroundWords") { word ->
+                        LyricsWord(
+                            text = word.stringOrNull("text").orEmpty(),
+                            startMs = word.millis("startMs"),
+                            endMs = word.millisOrNull("endMs"),
+                        )
+                    },
+                    alignment = line.stringOrNull("alignment"),
+                    agent = line.stringOrNull("agent"),
+                    singer = line.stringOrNull("singer"),
+                    translations = line.objArray("translations") { translation ->
+                        LyricsTranslation(
+                            language = translation.stringOrNull("language").orEmpty(),
+                            text = translation.stringOrNull("text").orEmpty(),
+                        )
+                    },
+                    romanization = line.stringOrNull("romanization"),
+                    isInstrumental = line.optBoolean("isInstrumental", false),
+                ),
+            )
+        }
+    }
+
+    private inline fun <T> JSONObject.objArray(key: String, map: (JSONObject) -> T): List<T> =
+        arrOrNull(key)?.let { values ->
+            buildList {
+                for (index in 0 until values.length()) {
+                    values.objAtOrNull(index)?.let { add(map(it)) }
+                }
+            }
+        }.orEmpty()
+
+    private fun JSONObject.millis(key: String): Long = millisOrNull(key) ?: 0L
+
+    private fun JSONObject.millisOrNull(key: String): Long? =
+        if (!has(key) || isNull(key)) null else optDouble(key).takeIf(Double::isFinite)
+            ?.roundToLong()
+
+    private fun String.isNumericId(): Boolean = isNotBlank() && all(Char::isDigit)
+
     private companion object {
-        const val PROVIDER_TIMEOUT_MS = 12_000L
         const val CACHE_TTL_MS = 12 * 60 * 60 * 1_000L
         const val MAX_CACHE_ENTRIES = 256
     }
 }
-
-internal fun formEncode(value: String): String =
-    URLEncoder.encode(value, StandardCharsets.UTF_8.name())
-
-internal fun uriComponent(value: String): String = formEncode(value)
-    .replace("+", "%20")
-    .replace("%21", "!")
-    .replace("%27", "'")
-    .replace("%28", "(")
-    .replace("%29", ")")
-    .replace("%7E", "~")
-
-internal fun jsonObject(body: String?): org.json.JSONObject? =
-    body?.let { runCatching { org.json.JSONObject(it) }.getOrNull() }
-
-internal fun org.json.JSONObject.text(key: String): String? =
-    optString(key).trim().takeIf { it.isNotEmpty() && it != "null" }
-
-internal fun org.json.JSONObject.number(key: String): Long? =
-    if (!has(key) || isNull(key)) null else optLong(key).takeIf { it > 0L }
-
-internal fun candidateForRecording(
-    text: String?,
-    provider: String,
-    sourceId: String,
-    url: String,
-    weight: Int,
-    input: LyricsLookup? = null,
-    recordingTitle: String? = null,
-    recordingArtist: String? = null,
-    recordingAlbum: String? = null,
-    recordingDuration: Long? = null,
-    ttml: String? = null,
-    attribution: String? = null,
-): LyricsCandidate? {
-    val lyrics = text?.trim()?.takeIf(String::isNotEmpty) ?: return null
-    val matchScore = if (input != null && recordingTitle != null && recordingArtist != null) {
-        LyricsParser.metadataScore(
-            input,
-            recordingTitle,
-            recordingArtist,
-            recordingAlbum,
-            recordingDuration
-        )
-            ?: return null
-    } else 0
-    return LyricsCandidate(
-        text = lyrics,
-        provider = provider,
-        sourceId = sourceId,
-        sourceUrl = url,
-        weight = weight,
-        metadataScore = matchScore,
-        ttmlRaw = ttml,
-        attribution = attribution,
-    )
-}
-
-private fun defaultLyricsSources(): List<LyricsSource> = listOf(
-    PaxsenixLyricsSource,
-    BetterLyricsSource,
-    UnisonLyricsSource,
-    BinimumLyricsSource,
-    AmllTtmlDbSource,
-    KugouLyricsSource,
-    NetEaseLyricsSource,
-    MusixmatchLyricsSource,
-    QqMusicLyricsSource,
-    YouTubeMusicLyricsSource,
-    LrclibLyricsSource,
-)

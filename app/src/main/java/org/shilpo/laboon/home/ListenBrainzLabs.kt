@@ -89,7 +89,7 @@ object ListenBrainzLabs {
                     title = title,
                     artist = artist,
                     album = obj.stringOrNull("release_name"),
-                    artworkUrl = coverArtUrl(obj.stringOrNull("release_mbid")),
+                    artworkUrl = null,
                     source = "ListenBrainz",
                     mbid = mbid,
                 )
@@ -122,7 +122,4 @@ object ListenBrainzLabs {
     fun emptyArray(): JSONArray = JSONArray()
 
 
-    fun coverArtUrl(releaseMbid: String?): String? =
-        releaseMbid?.takeIf { it.isNotBlank() }
-            ?.let { "https://coverartarchive.org/release/$it/front-500.jpg" }
 }

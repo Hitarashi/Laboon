@@ -15,6 +15,8 @@ data class HomeTrack(
     val mbid: String? = null,
     val isrc: String? = null,
     val providerTrackId: String? = null,
+    val availableFormats: List<String> = emptyList(),
+    val durationMs: Long? = null,
 )
 
 data class HomeArtist(

@@ -69,7 +69,6 @@ import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.ui.design.CodecIcon
-import org.shilpo.laboon.ui.design.ProviderIcon
 import kotlin.math.roundToInt
 
 @Composable
@@ -428,11 +427,6 @@ private fun QueueItemRow(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f, fill = false),
-                            )
-                            ProviderIcon(
-                                provider = track.source,
-                                height = 9.dp,
-                                tint = Color.White.copy(alpha = 0.60f),
                             )
                             CodecIcon(
                                 codec = track.codec,

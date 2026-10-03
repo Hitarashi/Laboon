@@ -8,6 +8,7 @@ class SessionStore(private val store: KeyValueStore) {
         store.putString(KEY_TOKEN, normalized.token)
         store.putString(KEY_REFRESH_TOKEN, normalized.refreshToken)
         store.putLong(KEY_EXPIRES_AT, normalized.expiresAtUnix)
+        putStringOrRemove(KEY_LYRICSPORN_API_URL, normalized.lyricspornApiUrl)
         store.putLong(KEY_TG_ID, normalized.user.telegramId)
         putStringOrRemove(KEY_USER_NAME, normalized.user.name)
         putStringOrRemove(KEY_USERNAME, normalized.user.username)
@@ -34,6 +35,7 @@ class SessionStore(private val store: KeyValueStore) {
             refreshToken = refreshToken,
             expiresAtUnix = store.getLong(KEY_EXPIRES_AT),
             user = user,
+            lyricspornApiUrl = store.getString(KEY_LYRICSPORN_API_URL).normalizedText(),
         ).normalized()
     }
 
@@ -88,6 +90,7 @@ class SessionStore(private val store: KeyValueStore) {
         const val KEY_TOKEN = "token"
         const val KEY_REFRESH_TOKEN = "refresh_token"
         const val KEY_EXPIRES_AT = "expires_at"
+        const val KEY_LYRICSPORN_API_URL = "lyricsporn_api_url"
         const val KEY_TG_ID = "tg_id"
         const val KEY_USER_NAME = "user_name"
         const val KEY_USERNAME = "username"
@@ -109,6 +112,7 @@ class SessionStore(private val store: KeyValueStore) {
             KEY_TOKEN,
             KEY_REFRESH_TOKEN,
             KEY_EXPIRES_AT,
+            KEY_LYRICSPORN_API_URL,
             KEY_TG_ID,
             KEY_USER_NAME,
             KEY_USERNAME,

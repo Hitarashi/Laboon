@@ -32,8 +32,12 @@ data class AuthSession(
     val refreshToken: String,
     val expiresAtUnix: Long,
     val user: AuthUser,
+    val lyricspornApiUrl: String? = null,
 ) {
-    fun normalized(): AuthSession = copy(user = user.normalized())
+    fun normalized(): AuthSession = copy(
+        user = user.normalized(),
+        lyricspornApiUrl = lyricspornApiUrl.normalizedText()?.trimEnd('/'),
+    )
 }
 
 data class LastFmCredentials(

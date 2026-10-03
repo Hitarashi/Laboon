@@ -24,10 +24,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberBottomSheetState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -50,7 +52,6 @@ import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.playback.RepeatMode
 import org.shilpo.laboon.ui.design.CodecIcon
-import org.shilpo.laboon.ui.design.ProviderIcon
 
 @Composable
 fun QueueBottomSheet(
@@ -341,11 +342,6 @@ private fun NowPlayingQueueCard(track: HomeTrack) {
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
-                ProviderIcon(
-                    provider = track.source,
-                    height = 9.dp,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                )
                 CodecIcon(
                     codec = track.codec,
                     height = 9.dp,
@@ -428,11 +424,6 @@ private fun QueueTrackRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
-                )
-                ProviderIcon(
-                    provider = track.source,
-                    height = 8.dp,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                 )
                 CodecIcon(
                     codec = track.codec,

@@ -83,7 +83,6 @@ class RipWebSocketClient(
         _state.update {
             it.copy(
                 wsStatus = RipWsStatus.CONNECTING,
-                serverUrl = baseServerUrl,
                 errorMessage = null,
             )
         }
@@ -171,9 +170,9 @@ class RipWebSocketClient(
                     val taskId = taskObj.optString("task_id")
                     if (taskId.isEmpty()) return
 
+                    val previous = _state.value.activeTasks.find { it.taskId == taskId }
+                    val updated = RipTaskSnapshot.fromJson(taskObj, previous)
                     _state.update { current ->
-                        val prev = current.activeTasks.find { it.taskId == taskId }
-                        val updated = RipTaskSnapshot.fromJson(taskObj, prev)
                         val existingIndex = current.activeTasks.indexOfFirst { it.taskId == taskId }
                         val newActive = if (existingIndex >= 0) {
                             current.activeTasks.toMutableList()
@@ -188,7 +187,6 @@ class RipWebSocketClient(
                 "rip_task_dismissed" -> {
                     val taskId = payload.optString("task_id")
                     if (taskId.isEmpty()) return
-
                     _state.update { current ->
                         current.copy(
                             activeTasks = current.activeTasks.filter { it.taskId != taskId },

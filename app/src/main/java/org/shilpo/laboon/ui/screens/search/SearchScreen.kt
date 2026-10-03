@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -57,6 +58,7 @@ import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import coil3.request.crossfade
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import org.shilpo.laboon.R
 import org.shilpo.laboon.auth.SessionStore
@@ -65,7 +67,6 @@ import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.search.SearchRepository
 import org.shilpo.laboon.search.SearchRepositoryImpl
 import org.shilpo.laboon.ui.design.CodecIcon
-import org.shilpo.laboon.ui.design.ProviderIcon
 
 @Composable
 fun SearchScreen(
@@ -84,21 +85,61 @@ fun SearchScreen(
     }
 
     var query by remember { mutableStateOf("") }
+    var searchRequest by remember { mutableStateOf<String?>(null) }
+    var isSuggesting by remember { mutableStateOf(false) }
     var isSearching by remember { mutableStateOf(false) }
+    var hints by remember { mutableStateOf<List<String>>(emptyList()) }
+    var suggestions by remember { mutableStateOf<List<HomeTrack>>(emptyList()) }
     var results by remember { mutableStateOf<List<HomeTrack>>(emptyList()) }
 
-    LaunchedEffect(query) {
-        val trimmed = query.trim()
-        if (trimmed.isEmpty()) {
-            results = emptyList()
-            isSearching = false
+    fun submitSearch(term: String = query.trim()) {
+        if (term.isBlank()) return
+        if (term == searchRequest) {
+            focusManager.clearFocus()
+            return
+        }
+        query = term
+        searchRequest = term
+        isSearching = true
+        hints = emptyList()
+        suggestions = emptyList()
+        results = emptyList()
+        focusManager.clearFocus()
+    }
+
+    val normalizedQuery = query.trim()
+    LaunchedEffect(normalizedQuery, searchRequest) {
+        val term = normalizedQuery
+        if (term.length < MIN_SUGGESTION_QUERY_LENGTH || term == searchRequest) {
+            hints = emptyList()
+            suggestions = emptyList()
+            isSuggesting = false
             return@LaunchedEffect
         }
-        isSearching = true
-        delay(300)
-        results = repository.search(trimmed)
-        isSearching = false
+
+        isSuggesting = true
+        delay(SUGGESTION_DEBOUNCE_MS)
+        val hintRequest =
+            async { runCatching { repository.searchHints(term) }.getOrDefault(emptyList()) }
+        val songRequest = async {
+            runCatching { repository.searchSuggestions(term) }.getOrDefault(emptyList())
+        }
+        hints = hintRequest.await().distinct().take(MAX_HINTS)
+        suggestions = songRequest.await().distinctBy(HomeTrack::id).take(MAX_TOP_RESULTS)
+        isSuggesting = false
     }
+
+    LaunchedEffect(searchRequest) {
+        val term = searchRequest ?: return@LaunchedEffect
+        isSearching = true
+        val found = runCatching { repository.search(term) }.getOrDefault(emptyList())
+        if (searchRequest == term) {
+            results = found.distinctBy(HomeTrack::id)
+            isSearching = false
+        }
+    }
+
+    val showingSearchResults = searchRequest != null && searchRequest == query.trim()
 
     Column(
         modifier = modifier
@@ -110,7 +151,17 @@ fun SearchScreen(
 
         TextField(
             value = query,
-            onValueChange = { query = it },
+            onValueChange = {
+                query = it
+                isSearching = false
+                isSuggesting = false
+                hints = emptyList()
+                suggestions = emptyList()
+                if (it.trim() != searchRequest) {
+                    searchRequest = null
+                    results = emptyList()
+                }
+            },
             placeholder = {
                 Text(
                     text = stringResource(R.string.search_placeholder_subtitle),
@@ -128,7 +179,17 @@ fun SearchScreen(
             },
             trailingIcon = {
                 if (query.isNotEmpty()) {
-                    IconButton(onClick = { query = "" }) {
+                    IconButton(
+                        onClick = {
+                            query = ""
+                            searchRequest = null
+                            isSearching = false
+                            isSuggesting = false
+                            hints = emptyList()
+                            suggestions = emptyList()
+                            results = emptyList()
+                        },
+                    ) {
                         Icon(
                             painter = painterResource(R.drawable.ic_clear),
                             contentDescription = "Clear",
@@ -149,7 +210,7 @@ fun SearchScreen(
                 disabledIndicatorColor = Color.Transparent,
             ),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { focusManager.clearFocus() }),
+            keyboardActions = KeyboardActions(onSearch = { submitSearch() }),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(56.dp),
@@ -163,201 +224,57 @@ fun SearchScreen(
                 .weight(1f),
         ) {
             when {
-                isSearching -> {
-                    Box(
+                isSearching -> SearchLoading()
+                query.isBlank() -> SearchPlaceholder()
+                showingSearchResults && results.isEmpty() -> SearchEmptyResults(query)
+                showingSearchResults -> {
+                    LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 160.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(36.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                            strokeWidth = 3.dp,
-                        )
+                        items(results, key = HomeTrack::id) { track ->
+                            SearchTrackRow(
+                                track = track,
+                                contextTracks = results,
+                                onTrackClick = onTrackClick,
+                                onPlayWithContext = onPlayWithContext,
+                                onPlayNext = onPlayNext,
+                                onAddToQueue = onAddToQueue,
+                            )
+                        }
                     }
                 }
 
-                query.isBlank() -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_nav_search),
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
-                            modifier = Modifier.size(56.dp),
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text(
-                            text = stringResource(R.string.search_placeholder_title),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            textAlign = TextAlign.Center,
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = stringResource(R.string.search_placeholder_subtitle),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                        )
-                    }
-                }
-
-                results.isEmpty() -> {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(24.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = "No results found for \"$query\"",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                        )
-                    }
-                }
-
+                isSuggesting && hints.isEmpty() && suggestions.isEmpty() -> SearchLoading()
+                hints.isEmpty() && suggestions.isEmpty() -> SearchNoSuggestions()
                 else -> {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(top = 8.dp, bottom = 160.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        items(results, key = { it.id }) { track ->
-                            var menuExpanded by remember { mutableStateOf(false) }
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .clickable {
-                                        if (onPlayWithContext != null) {
-                                            onPlayWithContext(track, results)
-                                        } else {
-                                            onTrackClick(track)
-                                        }
-                                    }
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(48.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceContainerHighest),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    if (!track.artworkUrl.isNullOrBlank()) {
-                                        AsyncImage(
-                                            model = ImageRequest.Builder(LocalPlatformContext.current)
-                                                .data(track.artworkUrl)
-                                                .crossfade(true)
-                                                .build(),
-                                            contentDescription = track.title,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize(),
-                                        )
-                                    } else {
-                                        Icon(
-                                            painter = painterResource(R.drawable.app_icon_small),
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                                                alpha = 0.5f
-                                            ),
-                                            modifier = Modifier.size(24.dp),
-                                        )
-                                    }
-                                }
-
-                                Column(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .padding(start = 14.dp, end = 8.dp),
-                                    verticalArrangement = Arrangement.Center,
-                                ) {
-                                    Text(
-                                        text = track.title,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    ) {
-                                        Text(
-                                            text = track.artist,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f, fill = false),
-                                        )
-                                        ProviderIcon(
-                                            provider = track.source,
-                                            height = 10.dp,
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                                                alpha = 0.8f
-                                            ),
-                                        )
-                                        CodecIcon(
-                                            codec = track.codec,
-                                            height = 10.dp,
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                                                alpha = 0.8f
-                                            ),
-                                        )
-                                    }
-                                }
-
-                                if (onPlayNext != null || onAddToQueue != null) {
-                                    Box {
-                                        IconButton(
-                                            onClick = { menuExpanded = true },
-                                            modifier = Modifier.size(36.dp),
-                                        ) {
-                                            Icon(
-                                                painter = painterResource(R.drawable.ic_more_vert),
-                                                contentDescription = "Options",
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                                                    alpha = 0.7f
-                                                ),
-                                                modifier = Modifier.size(20.dp),
-                                            )
-                                        }
-                                        DropdownMenu(
-                                            expanded = menuExpanded,
-                                            onDismissRequest = { menuExpanded = false },
-                                        ) {
-                                            if (onPlayNext != null) {
-                                                DropdownMenuItem(
-                                                    text = { Text("Play Next") },
-                                                    onClick = {
-                                                        menuExpanded = false
-                                                        onPlayNext(track)
-                                                    },
-                                                )
-                                            }
-                                            if (onAddToQueue != null) {
-                                                DropdownMenuItem(
-                                                    text = { Text("Add to Queue") },
-                                                    onClick = {
-                                                        menuExpanded = false
-                                                        onAddToQueue(track)
-                                                    },
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
+                        if (hints.isNotEmpty()) {
+                            item(key = "hints_heading") {
+                                SuggestionHeading(text = "Search suggestions")
+                            }
+                            items(hints, key = { "hint:$it" }) { hint ->
+                                SearchHintRow(text = hint, onClick = { submitSearch(hint) })
+                            }
+                        }
+                        if (suggestions.isNotEmpty()) {
+                            item(key = "top_results_heading") {
+                                SuggestionHeading(text = "Top results")
+                            }
+                            items(suggestions, key = HomeTrack::id) { track ->
+                                SearchTrackRow(
+                                    track = track,
+                                    contextTracks = suggestions,
+                                    onTrackClick = onTrackClick,
+                                    onPlayWithContext = onPlayWithContext,
+                                    onPlayNext = onPlayNext,
+                                    onAddToQueue = onAddToQueue,
+                                )
                             }
                         }
                     }
@@ -366,3 +283,251 @@ fun SearchScreen(
         }
     }
 }
+
+@Composable
+private fun SearchTrackRow(
+    track: HomeTrack,
+    contextTracks: List<HomeTrack>,
+    onTrackClick: (HomeTrack) -> Unit,
+    onPlayWithContext: ((HomeTrack, List<HomeTrack>) -> Unit)?,
+    onPlayNext: ((HomeTrack) -> Unit)?,
+    onAddToQueue: ((HomeTrack) -> Unit)?,
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable {
+                if (onPlayWithContext != null) {
+                    onPlayWithContext(track, contextTracks)
+                } else {
+                    onTrackClick(track)
+                }
+            }
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (!track.artworkUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalPlatformContext.current)
+                        .data(track.artworkUrl)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = track.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Icon(
+                    painter = painterResource(R.drawable.app_icon_small),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 14.dp, end = 8.dp),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = track.title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = track.artist,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                track.availableFormats.forEach { format ->
+                    CodecIcon(
+                        codec = format,
+                        height = 10.dp,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    )
+                }
+            }
+        }
+
+        if (onPlayNext != null || onAddToQueue != null) {
+            Box {
+                IconButton(
+                    onClick = { menuExpanded = true },
+                    modifier = Modifier.size(36.dp),
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_more_vert),
+                        contentDescription = "Options",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+                DropdownMenu(
+                    expanded = menuExpanded,
+                    onDismissRequest = { menuExpanded = false },
+                ) {
+                    if (onPlayNext != null) {
+                        DropdownMenuItem(
+                            text = { Text("Play Next") },
+                            onClick = {
+                                menuExpanded = false
+                                onPlayNext(track)
+                            },
+                        )
+                    }
+                    if (onAddToQueue != null) {
+                        DropdownMenuItem(
+                            text = { Text("Add to Queue") },
+                            onClick = {
+                                menuExpanded = false
+                                onAddToQueue(track)
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchHintRow(text: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.ic_nav_search),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(20.dp),
+        )
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun SuggestionHeading(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 12.dp, top = 12.dp, bottom = 4.dp),
+    )
+}
+
+@Composable
+private fun SearchLoading() {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(36.dp),
+            color = MaterialTheme.colorScheme.primary,
+            strokeWidth = 3.dp,
+        )
+    }
+}
+
+@Composable
+private fun SearchPlaceholder() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.ic_nav_search),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+            modifier = Modifier.size(56.dp),
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = stringResource(R.string.search_placeholder_title),
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = stringResource(R.string.search_placeholder_subtitle),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
+private fun SearchEmptyResults(query: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "No results found for \"$query\"",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
+private fun SearchNoSuggestions() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "No suggestions",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+private const val SUGGESTION_DEBOUNCE_MS = 300L
+private const val MIN_SUGGESTION_QUERY_LENGTH = 2
+private const val MAX_HINTS = 5
+private const val MAX_TOP_RESULTS = 5
