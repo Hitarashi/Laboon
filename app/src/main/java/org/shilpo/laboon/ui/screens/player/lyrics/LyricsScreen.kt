@@ -1843,7 +1843,11 @@ internal fun LyricsControlsRow(
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                     interactionSource = romanizationSource,
                 ) {
-                    Text("Rom", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_lyrics_romanization),
+                        contentDescription = "Romanization",
+                        modifier = Modifier.size(18.dp),
+                    )
                 }
             },
             menuContent = { menuState ->
@@ -1877,7 +1881,11 @@ internal fun LyricsControlsRow(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                     }
-                    Text("Trans", style = MaterialTheme.typography.labelMedium, maxLines = 1)
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_lyrics_translation),
+                        contentDescription = "Translation",
+                        modifier = Modifier.size(18.dp),
+                    )
                 }
             },
             menuContent = { menuState ->
