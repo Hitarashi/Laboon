@@ -64,7 +64,7 @@ android {
         }
         release {
             optimization {
-                enable = false
+                enable = true
             }
             if (releaseSigningConfigured) {
                 signingConfig = signingConfigs.getByName("release")

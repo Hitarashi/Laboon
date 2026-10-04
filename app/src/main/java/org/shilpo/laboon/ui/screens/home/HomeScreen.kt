@@ -429,6 +429,7 @@ fun HomeScreen(
                         onTrackClick = { track ->
                             playbackManager.play(track)
                         },
+                        onDownloadTrack = { track -> ripWsClient.startRip(track) },
                         lazyListState = homeScrollState,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -737,6 +738,7 @@ private fun HomeContent(
     onLoadTrending: () -> Unit = {},
     onLoadWeeklyPicks: () -> Unit = {},
     onTrackClick: (HomeTrack) -> Unit = {},
+    onDownloadTrack: (HomeTrack) -> Unit = {},
     onArtistClick: (HomeArtist) -> Unit = {},
     onAlbumClick: (HomeAlbum) -> Unit = {},
 ) {
@@ -859,6 +861,7 @@ private fun HomeContent(
                             subtitle = stringResource(R.string.home_your_rotation_subtitle),
                             tracks = feedState.rotation.items,
                             onTrackClick = onTrackClick,
+                            onDownloadTrack = onDownloadTrack,
                         )
                     }
                 }
@@ -878,6 +881,7 @@ private fun HomeContent(
                             subtitle = stringResource(R.string.home_recommended_subtitle),
                             tracks = feedState.recommended.items,
                             onTrackClick = onTrackClick,
+                            onDownloadTrack = onDownloadTrack,
                         )
                     }
                 }
@@ -940,6 +944,7 @@ private fun HomeContent(
                                     subtitle = stringResource(R.string.home_top_tracks_subtitle),
                                     tracks = feedState.topTracks.items,
                                     onTrackClick = onTrackClick,
+                                    onDownloadTrack = onDownloadTrack,
                                 )
                             }
                         }
@@ -1097,12 +1102,32 @@ private fun HomeContent(
                                                 },
                                                 trailingContent = {
                                                     FilledTonalIconButton(
-                                                        onClick = { onTrackClick(track) },
+                                                        onClick = {
+                                                            if (track.isPlayable) {
+                                                                onTrackClick(track)
+                                                            } else if (!track.providerTrackId.isNullOrBlank()) {
+                                                                onDownloadTrack(track)
+                                                            }
+                                                        },
+                                                        enabled = track.isPlayable ||
+                                                                !track.providerTrackId.isNullOrBlank(),
                                                         modifier = Modifier.size(36.dp),
                                                     ) {
                                                         Icon(
-                                                            painter = painterResource(R.drawable.ic_play),
-                                                            contentDescription = "Play",
+                                                            painter = painterResource(
+                                                                if (track.isPlayable) {
+                                                                    R.drawable.ic_play
+                                                                } else {
+                                                                    R.drawable.ic_cloud_download
+                                                                },
+                                                            ),
+                                                            contentDescription = if (track.isPlayable) {
+                                                                "Play"
+                                                            } else if (!track.providerTrackId.isNullOrBlank()) {
+                                                                "Add to rip"
+                                                            } else {
+                                                                "Track unavailable"
+                                                            },
                                                             modifier = Modifier.size(18.dp),
                                                         )
                                                     }
@@ -1136,6 +1161,7 @@ private fun HomeContent(
                                     subtitle = stringResource(R.string.home_weekly_picks_subtitle),
                                     tracks = feedState.weeklyPicks.items,
                                     onTrackClick = onTrackClick,
+                                    onDownloadTrack = onDownloadTrack,
                                 )
                             }
                         }

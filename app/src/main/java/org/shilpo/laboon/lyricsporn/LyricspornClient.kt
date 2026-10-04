@@ -26,6 +26,11 @@ data class LyricspornCatalogItem(
     val isrc: String? = null,
 )
 
+data class LyricspornCatalogMatch(
+    val item: LyricspornCatalogItem,
+    val isExactIdentity: Boolean,
+)
+
 data class LyricspornMotionArtwork(
     val url: String,
     val format: String? = null,
@@ -36,7 +41,7 @@ object LyricspornClient {
     private const val DEFAULT_STOREFRONT = "us"
 
     private val http = HttpJsonClient()
-    private val artworkCache = ConcurrentHashMap<String, String>()
+    private val catalogItemCache = ConcurrentHashMap<String, LyricspornCatalogMatch>()
     private val motionArtworkCache = ConcurrentHashMap<String, LyricspornMotionArtwork>()
     private val artworkPermits = Semaphore(MAX_ARTWORK_LOOKUPS)
 
@@ -128,6 +133,22 @@ object LyricspornClient {
             album = album,
         )
 
+    suspend fun resolveTrackCatalogItem(
+        apiBaseUrl: String?,
+        title: String,
+        artist: String,
+        album: String? = null,
+        durationMs: Long? = null,
+    ): LyricspornCatalogMatch? =
+        resolveCatalogItem(
+            apiBaseUrl = apiBaseUrl,
+            type = "songs",
+            title = title,
+            artist = artist,
+            album = album,
+            durationMs = durationMs,
+        )
+
     suspend fun resolveTrackMotionArtwork(
         apiBaseUrl: String?,
         appleTrackId: String?,
@@ -199,7 +220,19 @@ object LyricspornClient {
         title: String,
         artist: String?,
         album: String? = null,
-    ): String? {
+    ): String? = resolveCatalogItem(apiBaseUrl, type, title, artist, album)
+        ?.takeIf { type != "songs" || it.isExactIdentity }
+        ?.item
+        ?.artworkUrl
+
+    private suspend fun resolveCatalogItem(
+        apiBaseUrl: String?,
+        type: String,
+        title: String,
+        artist: String?,
+        album: String? = null,
+        durationMs: Long? = null,
+    ): LyricspornCatalogMatch? {
         if (title.isBlank()) return null
         val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return null
         val normalizedTitle = title.normalized()
@@ -207,11 +240,11 @@ object LyricspornClient {
         val normalizedAlbum = album.orEmpty().normalized()
         if (normalizedTitle.isBlank()) return null
         val key =
-            "$baseUrl:${currentStorefront()}:$type:$normalizedTitle:$normalizedArtist:$normalizedAlbum"
-        artworkCache[key]?.let { return it }
+            "$baseUrl:${currentStorefront()}:$type:$normalizedTitle:$normalizedArtist:$normalizedAlbum:$durationMs"
+        catalogItemCache[key]?.let { return it }
 
         return artworkPermits.withPermit {
-            artworkCache[key]?.let { return@withPermit it }
+            catalogItemCache[key]?.let { return@withPermit it }
             val query = listOfNotNull(
                 title.trim(),
                 artist?.trim()?.takeIf(String::isNotEmpty),
@@ -219,12 +252,36 @@ object LyricspornClient {
             )
                 .joinToString(" ")
             val items = searchCatalogItems(baseUrl, query, type, limit = 5, artworkSize = 300)
+                .let { results ->
+                    if (type == "songs") {
+                        results.filter { it.type == "song" && it.id.isNumericAppleId() }
+                    } else {
+                        results
+                    }
+                }
+            val exactIdentity = items.firstOrNull { item ->
+                item.name.normalized() == normalizedTitle &&
+                        !normalizedArtist.isBlank() &&
+                        item.artistName.orEmpty().normalized() == normalizedArtist &&
+                        (normalizedAlbum.isBlank() || item.albumName.orEmpty()
+                            .normalized().let { itemAlbum ->
+                                itemAlbum.isBlank() || itemAlbum == normalizedAlbum
+                            }) &&
+                        (durationMs == null || item.durationMs == null ||
+                                item.durationMs == durationMs)
+            }
             val exact = items.firstOrNull { item ->
                 item.name.normalized() == normalizedTitle &&
                         (artist == null || item.artistName.orEmpty()
-                            .normalized() == normalizedArtist)
+                            .normalized() == normalizedArtist) &&
+                        (normalizedAlbum.isBlank() || item.albumName.orEmpty()
+                            .normalized().let { itemAlbum ->
+                                itemAlbum.isBlank() || itemAlbum == normalizedAlbum
+                            }) &&
+                        (durationMs == null || item.durationMs == null ||
+                                item.durationMs == durationMs)
             }
-            val selected = exact ?: items.firstOrNull { item ->
+            val selected = exactIdentity ?: exact ?: items.firstOrNull { item ->
                 val itemTitle = item.name.normalized()
                 val titleMatches =
                     itemTitle.contains(normalizedTitle) || normalizedTitle.contains(itemTitle)
@@ -238,7 +295,14 @@ object LyricspornClient {
                         }
                 titleMatches && artistMatches && itemTitle.isNotEmpty()
             }
-            selected?.artworkUrl?.also { artworkCache[key] = it }
+            selected?.let { item ->
+                LyricspornCatalogMatch(
+                    item = item,
+                    isExactIdentity = exactIdentity?.id == item.id,
+                ).also {
+                    catalogItemCache[key] = it
+                }
+            }
         }
     }
 

@@ -10,14 +10,28 @@ class HomeFeedCache(private val store: KeyValueStore) {
         val raw = store.getString(KEY_FEED_CACHE) ?: return null
         return runCatching {
             val json = JSONObject(raw)
-            val rotation = decodeTracks(json.optJSONArray("rotation"))
-            val recommended = decodeTracks(json.optJSONArray("recommended"))
+            val hasCurrentTrackMapping =
+                json.optInt("trackMappingVersion", 0) >= TRACK_MAPPING_VERSION
+            val rotation = if (hasCurrentTrackMapping) {
+                decodeTracks(json.optJSONArray("rotation"))
+            } else emptyList()
+            val recommended = if (hasCurrentTrackMapping) {
+                decodeTracks(json.optJSONArray("recommended"))
+            } else emptyList()
             val topArtists = decodeArtists(json.optJSONArray("topArtists"))
             val topAlbums = decodeAlbums(json.optJSONArray("topAlbums"))
-            val topTracks = decodeTracks(json.optJSONArray("topTracks"))
-            val regionalTrending = decodeTracks(json.optJSONArray("regionalTrending"))
-            val globalTrending = decodeTracks(json.optJSONArray("globalTrending"))
-            val weeklyPicks = decodeTracks(json.optJSONArray("weeklyPicks"))
+            val topTracks = if (hasCurrentTrackMapping) {
+                decodeTracks(json.optJSONArray("topTracks"))
+            } else emptyList()
+            val regionalTrending = if (hasCurrentTrackMapping) {
+                decodeTracks(json.optJSONArray("regionalTrending"))
+            } else emptyList()
+            val globalTrending = if (hasCurrentTrackMapping) {
+                decodeTracks(json.optJSONArray("globalTrending"))
+            } else emptyList()
+            val weeklyPicks = if (hasCurrentTrackMapping) {
+                decodeTracks(json.optJSONArray("weeklyPicks"))
+            } else emptyList()
             val regionName = json.optString("regionName", "Regional").ifEmpty { "Regional" }
 
             val hasAnyData = rotation.isNotEmpty() ||
@@ -74,6 +88,7 @@ class HomeFeedCache(private val store: KeyValueStore) {
     fun save(state: HomeFeedState) {
         runCatching {
             val json = JSONObject().apply {
+                put("trackMappingVersion", TRACK_MAPPING_VERSION)
                 put("rotation", encodeTracks(state.rotation.items))
                 put("recommended", encodeTracks(state.recommended.items))
                 put("topArtists", encodeArtists(state.topArtists.items))
@@ -110,6 +125,7 @@ class HomeFeedCache(private val store: KeyValueStore) {
                 track.mbid?.let { put("mbid", it) }
                 track.isrc?.let { put("isrc", it) }
                 track.providerTrackId?.let { put("providerTrackId", it) }
+                track.durationMs?.let { put("durationMs", it) }
                 if (track.availableVariants.isNotEmpty()) {
                     put("availableVariants", JSONArray().apply {
                         track.availableVariants.forEach { variant ->
@@ -173,6 +189,8 @@ class HomeFeedCache(private val store: KeyValueStore) {
                     providerTrackId = obj.optString("providerTrackId").takeIf { it.isNotBlank() },
                     availableFormats = variants.map(TrackFormatVariant::format),
                     availableVariants = variants,
+                    durationMs = obj.optLong("durationMs")
+                        .takeIf { obj.has("durationMs") && it > 0L },
                 )
             )
         }
@@ -250,5 +268,6 @@ class HomeFeedCache(private val store: KeyValueStore) {
 
     private companion object {
         const val KEY_FEED_CACHE = "home_feed_cache_v1"
+        const val TRACK_MAPPING_VERSION = 1
     }
 }

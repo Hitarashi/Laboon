@@ -58,6 +58,7 @@ fun HomeTrackCarousel(
     modifier: Modifier = Modifier,
     subtitle: String? = null,
     onPlayTrack: ((HomeTrack) -> Unit)? = null,
+    onDownloadTrack: ((HomeTrack) -> Unit)? = null,
     onLongClickTrack: ((HomeTrack) -> Unit)? = null,
 ) {
     if (tracks.isEmpty()) return
@@ -98,15 +99,31 @@ fun HomeTrackCarousel(
                 .height(206.dp),
         ) { index ->
             val track = tracks[index]
+            val isPlayable = track.isPlayable
+            val canDownload = !isPlayable &&
+                    !track.providerTrackId.isNullOrBlank() &&
+                    onDownloadTrack != null
+            val onAction = when {
+                isPlayable -> ({
+                    if (onPlayTrack != null) onPlayTrack(track) else onTrackClick(track)
+                })
+
+                canDownload -> ({
+                    onDownloadTrack(track)
+                })
+
+                else -> ({})
+            }
             HomeTrackCard(
                 track = track,
-                onClick = { onTrackClick(track) },
-                onPlayClick = {
-                    if (onPlayTrack != null) {
-                        onPlayTrack(track)
-                    } else {
-                        onTrackClick(track)
-                    }
+                onClick = onAction,
+                onPlayClick = onAction,
+                actionIconRes = if (isPlayable) R.drawable.ic_play else R.drawable.ic_cloud_download,
+                actionEnabled = isPlayable || canDownload,
+                actionDescription = when {
+                    isPlayable -> "Play"
+                    canDownload -> "Add to rip"
+                    else -> "Track unavailable"
                 },
                 onLongClick = if (onLongClickTrack != null) {
                     { onLongClickTrack(track) }
@@ -123,6 +140,9 @@ fun CarouselItemScope.HomeTrackCard(
     onClick: () -> Unit,
     onPlayClick: () -> Unit,
     modifier: Modifier = Modifier,
+    actionIconRes: Int = R.drawable.ic_play,
+    actionEnabled: Boolean = true,
+    actionDescription: String = "Play",
     onLongClick: (() -> Unit)? = null,
 ) {
     val cardBackdropState = rememberLiquidGlassBackdropState()
@@ -228,6 +248,9 @@ fun CarouselItemScope.HomeTrackCard(
                 LiquidGlassPlayButton(
                     onClick = onPlayClick,
                     backdropState = cardBackdropState,
+                    iconRes = actionIconRes,
+                    enabled = actionEnabled,
+                    contentDescription = actionDescription,
                     size = 38.dp,
                     iconSize = 19.dp,
                 )

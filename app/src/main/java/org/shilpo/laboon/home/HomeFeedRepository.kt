@@ -12,6 +12,7 @@ import org.json.JSONObject
 import org.shilpo.laboon.auth.LastFmCredentials
 import org.shilpo.laboon.auth.ListenBrainzCredentials
 import org.shilpo.laboon.auth.SessionStore
+import org.shilpo.laboon.lyricsporn.LyricspornCatalogMatch
 import org.shilpo.laboon.lyricsporn.LyricspornClient
 import org.shilpo.laboon.net.HttpError
 import org.shilpo.laboon.net.HttpErrorKind
@@ -21,86 +22,85 @@ import org.shilpo.laboon.net.fold
 import org.shilpo.laboon.net.objAtOrNull
 import org.shilpo.laboon.net.objOrNull
 import org.shilpo.laboon.net.stringOrNull
+import org.shilpo.laboon.search.SearchRepository
+import org.shilpo.laboon.search.SearchRepositoryImpl
 import java.nio.charset.StandardCharsets
 import java.util.Locale
 
 class HomeFeedRepository(
     private val sessionStore: SessionStore,
     private val artworkResolver: LyricspornClient = LyricspornClient,
+    private val availabilityResolver: SearchRepository = SearchRepositoryImpl(sessionStore),
 ) {
-    private val cacheMutex = Mutex()
+    private val recentTracksMutex = Mutex()
+    private val topTracksMutex = Mutex()
+    private val topArtistsMutex = Mutex()
+    private val listenBrainzTrendingMutex = Mutex()
     private var cachedRecentTracks: List<HomeTrack>? = null
     private var cachedTopTracks: List<HomeTrack>? = null
     private var cachedTopArtists: List<HomeArtist>? = null
     private var cachedListenBrainzTrending: List<HomeTrack>? = null
 
     suspend fun clearCache() {
-        cacheMutex.withLock {
-            cachedRecentTracks = null
-            cachedTopTracks = null
-            cachedTopArtists = null
-            cachedListenBrainzTrending = null
-        }
+        recentTracksMutex.withLock { cachedRecentTracks = null }
+        topTracksMutex.withLock { cachedTopTracks = null }
+        topArtistsMutex.withLock { cachedTopArtists = null }
+        listenBrainzTrendingMutex.withLock { cachedListenBrainzTrending = null }
     }
 
-    private suspend fun getRawRecentTracks(): List<HomeTrack> {
-        cacheMutex.withLock {
-            cachedRecentTracks?.let { return it }
-        }
+    private suspend fun getRawRecentTracks(): List<HomeTrack> = recentTracksMutex.withLock {
+        cachedRecentTracks?.let { return@withLock it }
         val lastFmCreds = sessionStore.getLastFmCredentials()
         val listenBrainzCreds = sessionStore.getListenBrainzCredentials()
-        val lastFmTracks = fetchLastFmRecentTracks(lastFmCreds)
-        val listenBrainzTracks = fetchListenBrainzRecentListens(listenBrainzCreds)
+        val (lastFmTracks, listenBrainzTracks) = coroutineScope {
+            val lastFm = async { fetchLastFmRecentTracks(lastFmCreds) }
+            val listenBrainz = async { fetchListenBrainzRecentListens(listenBrainzCreds) }
+            lastFm.await() to listenBrainz.await()
+        }
         val combinedRecent = (lastFmTracks + listenBrainzTracks)
             .distinctBy { TrackIdentity.keyOf(it) }
-        cacheMutex.withLock {
-            cachedRecentTracks = combinedRecent
-        }
-        return combinedRecent
+            .take(MAX_RECENT_TRACKS)
+        cachedRecentTracks = combinedRecent
+        combinedRecent
     }
 
-    private suspend fun getRawTopTracks(): List<HomeTrack> {
-        cacheMutex.withLock {
-            cachedTopTracks?.let { return it }
-        }
+    private suspend fun getRawTopTracks(): List<HomeTrack> = topTracksMutex.withLock {
+        cachedTopTracks?.let { return@withLock it }
         val lastFmCreds = sessionStore.getLastFmCredentials()
         val listenBrainzCreds = sessionStore.getListenBrainzCredentials()
-        val lastFmTopTracks = fetchLastFmTopTracks(lastFmCreds)
-        val listenBrainzTopRecordings = fetchListenBrainzTopRecordings(listenBrainzCreds)
+        val (lastFmTopTracks, listenBrainzTopRecordings) = coroutineScope {
+            val lastFm = async { fetchLastFmTopTracks(lastFmCreds) }
+            val listenBrainz = async { fetchListenBrainzTopRecordings(listenBrainzCreds) }
+            lastFm.await() to listenBrainz.await()
+        }
         val combinedTopTracks = (lastFmTopTracks + listenBrainzTopRecordings)
             .distinctBy { TrackIdentity.keyOf(it) }
-        cacheMutex.withLock {
-            cachedTopTracks = combinedTopTracks
-        }
-        return combinedTopTracks
+        cachedTopTracks = combinedTopTracks
+        combinedTopTracks
     }
 
-    private suspend fun getRawTopArtists(): List<HomeArtist> {
-        cacheMutex.withLock {
-            cachedTopArtists?.let { return it }
-        }
+    private suspend fun getRawTopArtists(): List<HomeArtist> = topArtistsMutex.withLock {
+        cachedTopArtists?.let { return@withLock it }
         val lastFmCreds = sessionStore.getLastFmCredentials()
         val listenBrainzCreds = sessionStore.getListenBrainzCredentials()
-        val lastFmTopArtists = fetchLastFmTopArtists(lastFmCreds)
-        val listenBrainzTopArtists = fetchListenBrainzTopArtists(listenBrainzCreds)
+        val (lastFmTopArtists, listenBrainzTopArtists) = coroutineScope {
+            val lastFm = async { fetchLastFmTopArtists(lastFmCreds) }
+            val listenBrainz = async { fetchListenBrainzTopArtists(listenBrainzCreds) }
+            lastFm.await() to listenBrainz.await()
+        }
         val combinedTopArtists = (lastFmTopArtists + listenBrainzTopArtists)
             .distinctBy { it.name.lowercase().trim() }
-        cacheMutex.withLock {
-            cachedTopArtists = combinedTopArtists
-        }
-        return combinedTopArtists
+        cachedTopArtists = combinedTopArtists
+        combinedTopArtists
     }
 
-    private suspend fun getRawListenBrainzTrending(): List<HomeTrack> {
-        cacheMutex.withLock {
-            cachedListenBrainzTrending?.let { return it }
-        }
-        val listenBrainzTrending = fetchListenBrainzTrendingRecordings()
-        cacheMutex.withLock {
+    private suspend fun getRawListenBrainzTrending(): List<HomeTrack> =
+        listenBrainzTrendingMutex.withLock {
+            cachedListenBrainzTrending?.let { return@withLock it }
+            val listenBrainzTrending = fetchListenBrainzTrendingRecordings()
             cachedListenBrainzTrending = listenBrainzTrending
+            listenBrainzTrending
         }
-        return listenBrainzTrending
-    }
 
     fun getDisplayRegion(): String? {
         val defaultLocale = Locale.getDefault()
@@ -126,20 +126,32 @@ class HomeFeedRepository(
 
     suspend fun fetchRecommended(): List<HomeTrack> = withContext(Dispatchers.IO) {
         val recent = getRawRecentTracks()
-        val topTracks = getRawTopTracks()
+        val topTracks = if (recent.size < MAX_RECOMMENDATION_SEEDS) {
+            getRawTopTracks()
+        } else {
+            emptyList()
+        }
         val topArtists = getRawTopArtists()
-        val candidateSeeds = (recent + topTracks).take(5)
+        val candidateSeeds = (recent + topTracks).take(MAX_RECOMMENDATION_SEEDS)
         val lastFmCreds = sessionStore.getLastFmCredentials()
         val listenBrainzCreds = sessionStore.getListenBrainzCredentials()
-        val lastFmRecs =
-            fetchLastFmSimilarTracks(lastFmCreds, candidateSeeds, topArtists.firstOrNull()?.name)
-        val listenBrainzRecs = fetchListenBrainzRecommendations(listenBrainzCreds)
+        val (lastFmRecs, listenBrainzRecs) = coroutineScope {
+            val lastFm = async {
+                fetchLastFmSimilarTracks(
+                    lastFmCreds,
+                    candidateSeeds,
+                    topArtists.firstOrNull()?.name
+                )
+            }
+            val listenBrainz = async { fetchListenBrainzRecommendations(listenBrainzCreds) }
+            lastFm.await() to listenBrainz.await()
+        }
         val rotationKeys = recent.map { TrackIdentity.keyOf(it) }.toSet()
         val rawRecommended = (lastFmRecs + listenBrainzRecs)
             .distinctBy { TrackIdentity.keyOf(it) }
             .filterNot { rotationKeys.contains(TrackIdentity.keyOf(it)) }
-            .take(10)
-        resolveTracks(rawRecommended)
+            .take(MAX_RECOMMENDATION_CANDIDATES)
+        resolveTracks(rawRecommended).take(10)
     }
 
     suspend fun fetchTopArtists(): List<HomeArtist> = withContext(Dispatchers.IO) {
@@ -151,8 +163,11 @@ class HomeFeedRepository(
     suspend fun fetchTopAlbums(): List<HomeAlbum> = withContext(Dispatchers.IO) {
         val lastFmCreds = sessionStore.getLastFmCredentials()
         val listenBrainzCreds = sessionStore.getListenBrainzCredentials()
-        val lastFmTopAlbums = fetchLastFmTopAlbums(lastFmCreds)
-        val listenBrainzTopReleases = fetchListenBrainzTopReleases(listenBrainzCreds)
+        val (lastFmTopAlbums, listenBrainzTopReleases) = coroutineScope {
+            val lastFm = async { fetchLastFmTopAlbums(lastFmCreds) }
+            val listenBrainz = async { fetchListenBrainzTopReleases(listenBrainzCreds) }
+            lastFm.await() to listenBrainz.await()
+        }
         val combinedTopAlbums = (lastFmTopAlbums + listenBrainzTopReleases)
             .distinctBy { TrackIdentity.keyOf(null, it.title, it.artist) }
             .take(10)
@@ -161,8 +176,8 @@ class HomeFeedRepository(
 
     suspend fun fetchTopTracks(): List<HomeTrack> = withContext(Dispatchers.IO) {
         val topTracks = getRawTopTracks()
-        val rawTopTracks = topTracks.take(10)
-        resolveTracks(rawTopTracks)
+        val rawTopTracks = topTracks.take(MAX_TOP_TRACK_CANDIDATES)
+        resolveTracks(rawTopTracks).take(10)
     }
 
     suspend fun fetchRegionalTrending(region: String? = null): List<HomeTrack> =
@@ -171,18 +186,21 @@ class HomeFeedRepository(
             ?: return@withContext emptyList()
             val lastFmCreds = sessionStore.getLastFmCredentials()
             val regionalTrending =
-                fetchLastFmRegionalTrendingTracks(lastFmCreds, targetRegion).take(6)
-            resolveTracks(regionalTrending)
+                fetchLastFmRegionalTrendingTracks(lastFmCreds, targetRegion)
+            resolveTracks(regionalTrending).take(6)
         }
 
     suspend fun fetchGlobalTrending(): List<HomeTrack> = withContext(Dispatchers.IO) {
         val lastFmCreds = sessionStore.getLastFmCredentials()
-        val lastFmTrending = fetchLastFmTrendingTracks(lastFmCreds)
-        val listenBrainzTrending = getRawListenBrainzTrending()
+        val (lastFmTrending, listenBrainzTrending) = coroutineScope {
+            val lastFm = async { fetchLastFmTrendingTracks(lastFmCreds) }
+            val listenBrainz = async { getRawListenBrainzTrending() }
+            lastFm.await() to listenBrainz.await()
+        }
         val globalTrending = (lastFmTrending + listenBrainzTrending)
             .distinctBy { TrackIdentity.keyOf(it) }
-            .take(6)
-        resolveTracks(globalTrending)
+            .take(MAX_TRENDING_CANDIDATES)
+        resolveTracks(globalTrending).take(6)
     }
 
     suspend fun fetchWeeklyPicks(): List<HomeTrack> = withContext(Dispatchers.IO) {
@@ -194,24 +212,34 @@ class HomeFeedRepository(
         val rawWeekly = fetchWeeklyDiscoveries(lastFmCreds, weeklyCandidateArtists)
             .distinctBy { TrackIdentity.keyOf(it) }
             .filterNot { rotationKeys.contains(TrackIdentity.keyOf(it)) }
-            .take(8)
-        resolveTracks(rawWeekly)
+            .take(MAX_WEEKLY_CANDIDATES)
+        resolveTracks(rawWeekly).take(8)
     }
 
     private suspend fun resolveTracks(tracks: List<HomeTrack>): List<HomeTrack> = coroutineScope {
         val lyricspornApiUrl = sessionStore.getSession()?.lyricspornApiUrl
-        tracks.map { track ->
+        val catalogResolved = tracks.map { track ->
             async {
-                if (!track.artworkUrl.isNullOrBlank()) return@async track
-                val resolved = artworkResolver.resolveTrackArtwork(
+                val catalogMatch = artworkResolver.resolveTrackCatalogItem(
                     apiBaseUrl = lyricspornApiUrl,
                     title = track.title,
                     artist = track.artist,
                     album = track.album,
+                    durationMs = track.durationMs,
                 )
-                track.copy(artworkUrl = resolved)
+                val exactItem = catalogMatch
+                    ?.takeIf(LyricspornCatalogMatch::isExactIdentity)
+                    ?.item
+                    ?: return@async null
+                track.copy(
+                    artworkUrl = track.artworkUrl ?: exactItem.artworkUrl,
+                    isrc = track.isrc ?: exactItem.isrc,
+                    providerTrackId = exactItem.id,
+                    durationMs = track.durationMs ?: exactItem.durationMs,
+                )
             }
-        }.awaitAll()
+        }.awaitAll().filterNotNull()
+        availabilityResolver.enrichAvailability(catalogResolved)
     }
 
     private suspend fun resolveAlbums(albums: List<HomeAlbum>): List<HomeAlbum> = coroutineScope {
@@ -295,12 +323,18 @@ class HomeFeedRepository(
             if (name.isEmpty() || artist.isEmpty()) continue
 
             val playCount = obj.optString("playcount").toLongOrNull() ?: 0L
+            val album = obj.objOrNull("album")?.let { albumObj ->
+                albumObj.optString("#text").trim()
+                    .ifEmpty { albumObj.optString("name").trim() }
+                    .takeIf(String::isNotEmpty)
+            }
 
             result.add(
                 HomeTrack(
                     id = "lfm-top-trk-$i",
                     title = name,
                     artist = artist,
+                    album = album,
                     playCount = playCount,
                     artworkUrl = null,
                     mbid = obj.stringOrNull("mbid"),
@@ -381,7 +415,8 @@ class HomeFeedRepository(
         if (username.isEmpty()) return emptyList()
 
 
-        val endpoint = "https://api.listenbrainz.org/1/user/$username/listens?count=100"
+        val endpoint =
+            "https://api.listenbrainz.org/1/user/$username/listens?count=$MAX_RECENT_TRACKS"
 
         val root = fetchJson(endpoint, creds?.token) ?: return emptyList()
         val listensArray = root.objOrNull("payload")?.arrOrNull("listens") ?: return emptyList()
@@ -578,12 +613,18 @@ class HomeFeedRepository(
             val name = obj.optString("name").trim()
             val artistObj = obj.objOrNull("artist")
             val artist = (artistObj?.optString("name") ?: obj.optString("artist")).trim()
+            val album = obj.objOrNull("album")?.let { albumObj ->
+                albumObj.optString("#text").trim()
+                    .ifEmpty { albumObj.optString("name").trim() }
+                    .takeIf(String::isNotEmpty)
+            }
             if (name.isNotEmpty() && artist.isNotEmpty()) {
                 result.add(
                     HomeTrack(
                         id = "lfm-rec-$name-$artist",
                         title = name,
                         artist = artist,
+                        album = album,
                         artworkUrl = null,
                         mbid = obj.stringOrNull("mbid"),
                     )
@@ -739,9 +780,9 @@ class HomeFeedRepository(
                         result.add(t)
                     }
                 }
-                if (result.size >= 8) break
+                if (result.size >= MAX_WEEKLY_CANDIDATES) break
             }
-            if (result.size >= 8) break
+            if (result.size >= MAX_WEEKLY_CANDIDATES) break
         }
 
         return result
@@ -792,5 +833,11 @@ class HomeFeedRepository(
         private val http = HttpJsonClient()
         private val API_KEY_QUERY = Regex("api_key=[^&]*", RegexOption.IGNORE_CASE)
         private const val TAG = "HomeFeed"
+        private const val MAX_RECENT_TRACKS = 25
+        private const val MAX_RECOMMENDATION_SEEDS = 5
+        private const val MAX_RECOMMENDATION_CANDIDATES = 20
+        private const val MAX_TOP_TRACK_CANDIDATES = 20
+        private const val MAX_TRENDING_CANDIDATES = 20
+        private const val MAX_WEEKLY_CANDIDATES = 16
     }
 }

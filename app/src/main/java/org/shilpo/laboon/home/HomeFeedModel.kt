@@ -24,7 +24,10 @@ data class HomeTrack(
     val availableFormats: List<String> = emptyList(),
     val availableVariants: List<TrackFormatVariant> = emptyList(),
     val durationMs: Long? = null,
-)
+) {
+    val isPlayable: Boolean
+        get() = backendTrackId != null || !streamUrl.isNullOrBlank()
+}
 
 data class HomeArtist(
     val id: String,

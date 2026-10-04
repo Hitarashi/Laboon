@@ -27,6 +27,7 @@ data class PlaybackResolution(
 
 interface SearchRepository {
     suspend fun search(query: String): List<HomeTrack>
+    suspend fun enrichAvailability(tracks: List<HomeTrack>): List<HomeTrack>
     suspend fun searchHints(query: String): List<String> = emptyList()
     suspend fun searchSuggestions(query: String): List<HomeTrack> = emptyList()
     suspend fun resolvePlaybackUrl(track: HomeTrack): String?
@@ -71,9 +72,7 @@ class SearchRepositoryImpl(
 
     private suspend fun withAvailability(items: List<LyricspornCatalogItem>): List<HomeTrack> {
         if (items.isEmpty()) return emptyList()
-        val availabilityByAppleId = lookupAvailableFormats(items.map(LyricspornCatalogItem::id))
-        return items.map { item ->
-            val availability = availabilityByAppleId[item.id]
+        return enrichAvailability(items.map { item ->
             HomeTrack(
                 id = "apple_${item.id}",
                 title = item.name,
@@ -81,14 +80,26 @@ class SearchRepositoryImpl(
                 album = item.albumName,
                 artworkUrl = item.artworkUrl,
                 source = null,
+                isrc = item.isrc,
+                providerTrackId = item.id,
+                durationMs = item.durationMs,
+            )
+        })
+    }
+
+    override suspend fun enrichAvailability(tracks: List<HomeTrack>): List<HomeTrack> {
+        if (tracks.isEmpty()) return emptyList()
+        val availabilityByAppleId =
+            lookupAvailableFormats(tracks.mapNotNull(HomeTrack::providerTrackId))
+        return tracks.map { track ->
+            val availability = track.providerTrackId?.let(availabilityByAppleId::get)
+            track.copy(
                 backendTrackId = availability?.playbackTrackId,
                 isCached = availability?.variants?.isNotEmpty() == true,
                 codec = availability?.preferredCodec,
-                isrc = item.isrc,
-                providerTrackId = item.id,
-                availableFormats = availability?.variants.orEmpty().map(TrackFormatVariant::format),
+                availableFormats = availability?.variants.orEmpty()
+                    .map(TrackFormatVariant::format),
                 availableVariants = availability?.variants.orEmpty(),
-                durationMs = item.durationMs,
             )
         }
     }

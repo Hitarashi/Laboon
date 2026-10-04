@@ -36,6 +36,8 @@ fun LiquidGlassPlayButton(
     modifier: Modifier = Modifier,
     backdropState: LiquidGlassBackdropState? = null,
     isPlaying: Boolean = false,
+    iconRes: Int? = null,
+    enabled: Boolean = true,
     contentDescription: String? = if (isPlaying) "Pause" else "Play",
     size: Dp = 38.dp,
     iconSize: Dp = 19.dp,
@@ -123,6 +125,7 @@ fun LiquidGlassPlayButton(
                 )
                 .clip(CircleShape)
                 .clickable(
+                    enabled = enabled,
                     interactionSource = interactionSource,
                     indication = ripple(color = contentColor),
                     onClick = onClick,
@@ -131,7 +134,7 @@ fun LiquidGlassPlayButton(
         ) {
             Icon(
                 painter = painterResource(
-                    id = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play,
+                    id = iconRes ?: if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play,
                 ),
                 contentDescription = contentDescription,
                 tint = contentColor,
