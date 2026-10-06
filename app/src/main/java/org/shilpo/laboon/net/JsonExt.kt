@@ -3,12 +3,9 @@ package org.shilpo.laboon.net
 import org.json.JSONArray
 import org.json.JSONObject
 
-
 fun JSONObject.objOrNull(key: String): JSONObject? = optJSONObject(key)
 
-
 fun JSONObject.arrOrNull(key: String): JSONArray? = optJSONArray(key)
-
 
 fun JSONObject.stringOrNull(key: String): String? {
     if (isNull(key)) return null
@@ -22,9 +19,7 @@ fun JSONObject.stringOrNull(key: String): String? {
     return text?.trim()?.ifEmpty { null }
 }
 
-
 fun JSONArray.objAtOrNull(i: Int): JSONObject? = optJSONObject(i)
-
 
 fun Any?.asJsonArrayOrNull(): JSONArray? = when (this) {
     is JSONArray -> this
@@ -37,7 +32,6 @@ fun Any?.asJsonArrayOrNull(): JSONArray? = when (this) {
 
     else -> null
 }
-
 
 fun Any?.asJsonObjectOrNull(): JSONObject? = when (this) {
     is JSONObject -> this

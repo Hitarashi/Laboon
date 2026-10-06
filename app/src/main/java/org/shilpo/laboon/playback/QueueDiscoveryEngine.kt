@@ -29,7 +29,6 @@ import org.shilpo.laboon.search.SearchRepositoryImpl
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-
 class QueueDiscoveryEngine(
     private val sessionStore: SessionStore,
     private val artworkResolver: LyricspornClient = LyricspornClient,
@@ -122,7 +121,6 @@ class QueueDiscoveryEngine(
         selected
     }
 
-
     private suspend fun resolveCandidates(
         candidates: List<HomeTrack>,
         excluded: Set<String>,
@@ -178,7 +176,6 @@ class QueueDiscoveryEngine(
         return out
     }
 
-
     private suspend fun labsSimilarArtistTracks(
         seedMbids: List<String>,
         lastFm: LastFmCredentials?,
@@ -204,7 +201,6 @@ class QueueDiscoveryEngine(
         return out
     }
 
-
     private suspend fun lastFmSimilar(seed: HomeTrack, creds: LastFmCredentials?): List<HomeTrack> {
         val apiKey = creds?.apiKey?.trim()?.ifEmpty { null } ?: return emptyList()
         val mbid = seed.mbid?.trim()?.ifEmpty { null }
@@ -218,7 +214,6 @@ class QueueDiscoveryEngine(
         }
         return parseLastFmTracks(getText(url), source = "Last.fm").orEmpty()
     }
-
 
     private suspend fun cfRecommendations(creds: ListenBrainzCredentials?): List<HomeTrack> {
         val username = creds?.username?.trim()?.ifEmpty { null } ?: return emptyList()
@@ -235,7 +230,6 @@ class QueueDiscoveryEngine(
         if (mbids.isEmpty()) return emptyList()
         return expandRecordingMbids(mbids.take(20), creds)
     }
-
 
     private suspend fun expandRecordingMbids(
         mbids: List<String>,
@@ -290,7 +284,6 @@ class QueueDiscoveryEngine(
         return null
     }
 
-
     private fun parseLastFmTracks(body: String?, source: String): List<HomeTrack>? {
         if (body == null) return null
         return try {
@@ -322,7 +315,6 @@ class QueueDiscoveryEngine(
             null
         }
     }
-
 
     private fun interleave(branches: List<List<HomeTrack>>): List<HomeTrack> {
         val out = mutableListOf<HomeTrack>()

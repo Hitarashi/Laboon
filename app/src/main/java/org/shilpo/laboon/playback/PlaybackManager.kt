@@ -222,7 +222,6 @@ class PlaybackManagerImpl(
         }
     }
 
-
     private fun syncPlayerModes(qState: QueueState) {
         val exo = player ?: return
         val targetRepeatMode = when (qState.repeatMode) {
@@ -374,7 +373,7 @@ class PlaybackManagerImpl(
                         presentationTimeUs: Long,
                         encodedAccessUnitCount: Int,
                     ): Boolean {
-                        // The custom chain skips float PCM, and a rejected sink buffer is retried.
+
                         if (inputIsPcm && visualizedBuffer !== buffer) {
                             spectrumVisualizer.sink.handleBuffer(buffer)
                             visualizedBuffer = buffer
@@ -562,13 +561,11 @@ class PlaybackManagerImpl(
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 when (reason) {
 
-
                     Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
                     Player.MEDIA_ITEM_TRANSITION_REASON_SEEK,
                         -> if (mediaItem != null) {
                         followPlayerTransition(exo, mediaItem.mediaId)
                     }
-
 
                     Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT -> {
                         if (mediaItem != null && mediaItem.mediaId != _state.value.currentTrack?.id) {
@@ -759,7 +756,6 @@ class PlaybackManagerImpl(
         }
     }
 
-
     private fun resetPipelineForTrack() {
         currentAudioFormat = null
         sinkInputFormat = null
@@ -832,7 +828,6 @@ class PlaybackManagerImpl(
         schedulePreloadNext()
         scheduleDiscoveryRefillIfNeeded()
     }
-
 
     private fun playQueuedNextTrack() {
         val nextTrack = queueManager.advanceToNext()
@@ -1119,7 +1114,6 @@ class PlaybackManagerImpl(
             runCatching { writer.cancel() }
         }
     }
-
 
     private fun scheduleDiscoveryRefillIfNeeded() {
         discoveryJob?.cancel()

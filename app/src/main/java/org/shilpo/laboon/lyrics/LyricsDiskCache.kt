@@ -75,7 +75,7 @@ internal class LyricsDiskCache(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                // Cache failures must not prevent lyrics from being returned.
+
             }
         }
 

@@ -65,11 +65,14 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import org.shilpo.laboon.R
 import org.shilpo.laboon.auth.SessionStore
 import org.shilpo.laboon.auth.SharedPreferencesKeyValueStore
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.home.TrackAvailability
 import org.shilpo.laboon.rip.RipTaskSnapshot
+import org.shilpo.laboon.search.CachedTrackAvailability
 import org.shilpo.laboon.search.SearchHistoryStore
 import org.shilpo.laboon.search.SearchRepository
 import org.shilpo.laboon.search.SearchRepositoryImpl
@@ -87,6 +90,9 @@ fun SearchScreen(
     onOpenRipVisualizer: () -> Unit = {},
     modifier: Modifier = Modifier,
     searchRepository: SearchRepository? = null,
+    onObservedTracks: (List<HomeTrack>) -> Unit = {},
+    ripCompletions: Flow<String>? = null,
+    resolveAvailability: (suspend (String) -> Map<String, CachedTrackAvailability>)? = null,
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -164,6 +170,30 @@ fun SearchScreen(
         if (searchRequest == term) {
             results = found.distinctBy(HomeTrack::id)
             isSearching = false
+        }
+    }
+
+
+
+    LaunchedEffect(results, suggestions, trackHistory) {
+        onObservedTracks(
+            buildList {
+                addAll(results)
+                addAll(suggestions)
+                addAll(trackHistory)
+            }.distinctBy(HomeTrack::id)
+        )
+    }
+
+    LaunchedEffect(ripCompletions) {
+        val stream = ripCompletions ?: return@LaunchedEffect
+        val lookup = resolveAvailability ?: return@LaunchedEffect
+        stream.collect { providerTrackId ->
+            val availability = lookup(providerTrackId)
+            if (availability.isEmpty()) return@collect
+            results = TrackAvailability.apply(results, availability)
+            suggestions = TrackAvailability.apply(suggestions, availability)
+            trackHistory = TrackAvailability.apply(trackHistory, availability)
         }
     }
 

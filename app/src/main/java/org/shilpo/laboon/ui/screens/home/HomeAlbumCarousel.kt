@@ -168,7 +168,6 @@ fun CarouselItemScope.HomeAlbumCard(
                     }
                 }
 
-
                 Box(
                     modifier = Modifier
                         .fillMaxSize()

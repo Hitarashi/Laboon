@@ -25,6 +25,49 @@ data class PlaybackResolution(
     val backendTrackId: Int? = null,
 )
 
+/**
+ * Cached-server-side state for one provider track id, as reported by `POST /api/v1/lookup`.
+ * Only produced for tracks that actually have at least one usable format id.
+ */
+data class CachedTrackAvailability(
+    val variants: List<TrackFormatVariant>,
+    val preferredCodec: String?,
+    val playbackTrackId: Int?,
+) {
+    val formats: List<String> get() = variants.map(TrackFormatVariant::format)
+}
+
+/**
+ * Result of one batch availability lookup.
+ *
+ * Semantics, which must stay aligned with [SearchRepositoryImpl.enrichAvailability]:
+ * a successful response is a complete answer. The server only reports tracks it has
+ * formats for, so **absence from [cached] means "not ripped"** — exactly the condition
+ * that makes the UI show the download icon. [unresolvedIds] is the *only* signal that we
+ * failed to get an answer; those ids must be retried rather than ripped.
+ */
+data class BatchAvailabilityLookup(
+    val cached: Map<String, CachedTrackAvailability> = emptyMap(),
+    val unresolvedIds: Set<String> = emptySet(),
+) {
+    /** Ids we have no verdict for because the request failed. */
+    fun unresolvedIn(requested: Iterable<String>): List<String> =
+        requested.filter { it in unresolvedIds }
+
+    companion object {
+        /** A successful lookup that found nothing cached: every id needs a rip. */
+        val EMPTY = BatchAvailabilityLookup()
+
+        /** A lookup we could not perform: every requested id is unknown. */
+        fun unavailable(requestedIds: Iterable<String>): BatchAvailabilityLookup =
+            BatchAvailabilityLookup(unresolvedIds = requestedIds.toSet())
+    }
+}
+
+fun interface TrackAvailabilityLookup {
+    suspend fun lookupAvailableFormats(providerTrackIds: List<String>): BatchAvailabilityLookup
+}
+
 interface SearchRepository {
     suspend fun search(query: String): List<HomeTrack>
     suspend fun enrichAvailability(tracks: List<HomeTrack>): List<HomeTrack>
@@ -38,13 +81,7 @@ interface SearchRepository {
 class SearchRepositoryImpl(
     private val sessionStore: SessionStore,
     private val http: HttpJsonClient = HttpJsonClient(),
-) : SearchRepository {
-
-    private data class CachedTrackAvailability(
-        val variants: List<TrackFormatVariant>,
-        val preferredCodec: String?,
-        val playbackTrackId: Int?,
-    )
+) : SearchRepository, TrackAvailabilityLookup {
 
     override suspend fun search(query: String): List<HomeTrack> = withContext(Dispatchers.IO) {
         val apiBaseUrl = sessionStore.getSession()?.lyricspornApiUrl
@@ -90,7 +127,7 @@ class SearchRepositoryImpl(
     override suspend fun enrichAvailability(tracks: List<HomeTrack>): List<HomeTrack> {
         if (tracks.isEmpty()) return emptyList()
         val availabilityByAppleId =
-            lookupAvailableFormats(tracks.mapNotNull(HomeTrack::providerTrackId))
+            lookupAvailableFormats(tracks.mapNotNull(HomeTrack::providerTrackId)).cached
         return tracks.map { track ->
             val availability = track.providerTrackId?.let(availabilityByAppleId::get)
             track.copy(
@@ -104,21 +141,26 @@ class SearchRepositoryImpl(
         }
     }
 
-    private suspend fun lookupAvailableFormats(
-        appleIds: List<String>,
-    ): Map<String, CachedTrackAvailability> =
+    override suspend fun lookupAvailableFormats(
+        providerTrackIds: List<String>,
+    ): BatchAvailabilityLookup =
         withContext(Dispatchers.IO) {
-            val session = sessionStore.getSession() ?: return@withContext emptyMap()
+
+            val session = sessionStore.getSession()
+                ?: return@withContext BatchAvailabilityLookup.unavailable(providerTrackIds)
             val serverUrl = sanitizeServerUrl(session.serverUrl)
             val token = session.token.trim()
-            if (serverUrl.isEmpty() || token.isEmpty()) return@withContext emptyMap()
+            if (serverUrl.isEmpty() || token.isEmpty()) {
+                return@withContext BatchAvailabilityLookup.unavailable(providerTrackIds)
+            }
 
-            val validIds = appleIds
+            val validIds = providerTrackIds
+                .mapNotNull(::normalizeProviderTrackId)
                 .distinct()
-                .filter { id -> id.isNotBlank() && id.all(Char::isDigit) }
-            if (validIds.isEmpty()) return@withContext emptyMap()
+            if (validIds.isEmpty()) return@withContext BatchAvailabilityLookup.EMPTY
 
             val availabilityById = linkedMapOf<String, CachedTrackAvailability>()
+            val unresolved = linkedSetOf<String>()
             for (batch in validIds.chunked(LOOKUP_BATCH_SIZE)) {
                 val body = JSONObject().put("track_ids", JSONArray(batch)).toString()
                 val response = when (
@@ -130,12 +172,23 @@ class SearchRepositoryImpl(
                 ) {
                     is HttpOutcome.Success -> runCatching { JSONObject(outcome.value) }.getOrNull()
                     is HttpOutcome.Failure -> null
-                } ?: continue
+                }
 
-                val tracks = response.arrOrNull("tracks") ?: continue
+                if (response == null) {
+                    unresolved += batch
+                    continue
+                }
+
+                val tracks = response.arrOrNull("tracks")
+                if (tracks == null) {
+                    unresolved += batch
+                    continue
+                }
                 for (index in 0 until tracks.length()) {
                     val track = tracks.objAtOrNull(index) ?: continue
-                    val appleId = track.stringOrNull("apple_track_id") ?: continue
+                    val appleId = track.stringOrNull("apple_track_id")
+                        ?.let(::normalizeProviderTrackId)
+                        ?: continue
                     val cachedFormats = track.arrOrNull("formats")?.let { values ->
                         buildList<TrackFormatVariant> {
                             for (formatIndex in 0 until values.length()) {
@@ -171,8 +224,14 @@ class SearchRepositoryImpl(
                     }
                 }
             }
-            availabilityById
+            BatchAvailabilityLookup(
+                cached = availabilityById,
+                unresolvedIds = unresolved,
+            )
         }
+
+    private fun normalizeProviderTrackId(raw: String?): String? =
+        raw?.trim()?.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }
 
     override suspend fun resolvePlaybackUrl(track: HomeTrack): String? =
         resolvePlayback(track)?.streamUrl

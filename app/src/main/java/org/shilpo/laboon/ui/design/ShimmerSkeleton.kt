@@ -49,7 +49,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.shilpo.laboon.R
 
-
 @Composable
 fun frostedGlassBaseBrush(isDark: Boolean = isSystemInDarkTheme()): Brush {
     val surfaceContainerHigh = MaterialTheme.colorScheme.surfaceContainerHigh
@@ -72,7 +71,6 @@ fun frostedGlassBaseBrush(isDark: Boolean = isSystemInDarkTheme()): Brush {
         }
     }
 }
-
 
 @Composable
 fun frostedGlassBorderBrush(isDark: Boolean = isSystemInDarkTheme()): Brush {
@@ -97,7 +95,6 @@ fun frostedGlassBorderBrush(isDark: Boolean = isSystemInDarkTheme()): Brush {
     }
 }
 
-
 @Composable
 fun frostedGlassGlintColors(isDark: Boolean = isSystemInDarkTheme()): List<Color> {
     return remember(isDark) {
@@ -120,7 +117,6 @@ fun frostedGlassGlintColors(isDark: Boolean = isSystemInDarkTheme()): List<Color
         }
     }
 }
-
 
 @Composable
 fun Modifier.frostedGlassShimmer(
@@ -165,10 +161,8 @@ fun Modifier.frostedGlassShimmer(
     }
 }
 
-
 @Composable
 fun Modifier.shimmer(): Modifier = frostedGlassShimmer()
-
 
 @Composable
 fun SkeletonCard(
@@ -194,7 +188,6 @@ fun SkeletonCard(
     }
 }
 
-
 @Composable
 fun SkeletonTextLine(
     width: Dp,
@@ -213,7 +206,6 @@ fun SkeletonTextLine(
             .border(width = 0.5.dp, brush = borderBrush, shape = shape),
     )
 }
-
 
 @Composable
 fun SkeletonTrackCard(
@@ -239,7 +231,6 @@ fun SkeletonTrackCard(
                 .align(Alignment.Center)
                 .offset(y = (-18).dp),
         )
-
 
         Box(
             modifier = Modifier
@@ -301,7 +292,6 @@ fun SkeletonTrackCard(
     }
 }
 
-
 @Composable
 fun SkeletonArtistItem(
     modifier: Modifier = Modifier,
@@ -336,7 +326,6 @@ fun SkeletonArtistItem(
         )
     }
 }
-
 
 @Composable
 fun SkeletonTrackCarousel(
@@ -381,7 +370,6 @@ fun SkeletonTrackCarousel(
         }
     }
 }
-
 
 @Composable
 fun SkeletonSegmentedList(

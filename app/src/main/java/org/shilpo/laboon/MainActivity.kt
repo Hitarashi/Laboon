@@ -67,6 +67,7 @@ import org.shilpo.laboon.permissions.AndroidPermissionState
 import org.shilpo.laboon.permissions.PermissionCatalogue
 import org.shilpo.laboon.permissions.canLeaveOnboarding
 import org.shilpo.laboon.playback.PlaybackPersistence
+import org.shilpo.laboon.rip.RipConnectionHolderInstance
 import org.shilpo.laboon.splash.Overlay
 import org.shilpo.laboon.splash.Tuning
 import org.shilpo.laboon.splash.VectorLoader
@@ -127,6 +128,17 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         verifySessionIfPresent()
+        syncRipConnection()
+    }
+
+    /**
+     * Reconciles the app-scoped rip socket / auto-rip coordinator against the current session.
+     * Called on resume and after any session change (sign-in, sign-out, token refresh) so the
+     * connection follows the session rather than any screen's composition.
+     */
+    private fun syncRipConnection() {
+        if (!::sessionStore.isInitialized) return
+        RipConnectionHolderInstance.getInstance(applicationContext, sessionStore).syncWithSession()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -141,6 +153,7 @@ class MainActivity : ComponentActivity() {
         homeFeedRepository = HomeFeedRepository(sessionStore)
         playbackPersistence = PlaybackPersistence(keyValueStore)
         verifySessionIfPresent()
+        syncRipConnection()
 
         val restoredTokens = savedInstanceState?.getStringArrayList(ROUTE_STATE_KEY)
         routeState = restoredTokens?.let { routeStateFromTokens(it) }
@@ -429,6 +442,8 @@ class MainActivity : ComponentActivity() {
                                             onboardingProgress.reset()
                                             isPlayerDismissed = true
                                             activeArtworkUrl = null
+
+                                            syncRipConnection()
                                             dispatch(RouteEvent.SessionEnded)
                                         },
                                         modifier = Modifier.fillMaxSize(),
@@ -485,6 +500,8 @@ class MainActivity : ComponentActivity() {
                         authClient.fetchListenBrainzStatus(session.serverUrl, session.token)
                     val lbCreds = lbResult.getOrNull()
                     isExchangingCode = false
+
+                    syncRipConnection()
                     dispatch(
                         RouteEvent.SessionEstablished(
                             lastFmCredentials = creds,

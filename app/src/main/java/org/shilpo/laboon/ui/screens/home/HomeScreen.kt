@@ -52,7 +52,6 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -110,7 +109,9 @@ import org.shilpo.laboon.navigation.RouteState
 import org.shilpo.laboon.navigation.tabTransitionDirection
 import org.shilpo.laboon.playback.PlaybackManagerHolder
 import org.shilpo.laboon.playback.PlaybackPersistence
-import org.shilpo.laboon.rip.RipWebSocketClient
+import org.shilpo.laboon.rip.AutoRipSource
+import org.shilpo.laboon.rip.RipConnectionHolderInstance
+import org.shilpo.laboon.search.SearchRepositoryImpl
 import org.shilpo.laboon.ui.design.FloatingCombinedClearance
 import org.shilpo.laboon.ui.design.FloatingNavBar
 import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
@@ -170,8 +171,14 @@ fun HomeScreen(
     val albumDetailsRepository = remember(sessionStore, keyValueStore) {
         AlbumDetailsRepository(sessionStore, AlbumDetailsCache(keyValueStore))
     }
-    val ripWsClient = remember(sessionStore) { RipWebSocketClient(sessionStore) }
+
+    val ripConnection = remember(context, sessionStore) {
+        RipConnectionHolderInstance.getInstance(context, sessionStore)
+    }
+    val ripWsClient = ripConnection.ripClient
+    val autoRipCoordinator = ripConnection.autoRip
     val ripState by ripWsClient.state.collectAsState()
+    val searchRepository = remember(sessionStore) { SearchRepositoryImpl(sessionStore) }
     var showRipVisualizer by rememberSaveable { mutableStateOf(false) }
     var selectedAlbumId by remember { mutableStateOf<String?>(null) }
     var selectedAlbumDestination by remember {
@@ -218,13 +225,9 @@ fun HomeScreen(
             ?.let(openAlbum)
     }
 
-    DisposableEffect(ripWsClient, session?.serverUrl, session?.token) {
-        if (session != null) {
-            ripWsClient.start()
-        }
-        onDispose {
-            ripWsClient.stop()
-        }
+
+    LaunchedEffect(ripConnection) {
+        ripConnection.syncWithSession()
     }
 
     val playbackManager = remember(context, sessionStore) {
@@ -233,6 +236,42 @@ fun HomeScreen(
     val playbackState by playbackManager.state.collectAsState()
     val queueState by playbackManager.queueManager.state.collectAsState()
     val spectrumState by playbackManager.spectrumState.collectAsState()
+
+
+    val feedTracks = remember(feedState) {
+        listOf(
+            feedState.rotation.items,
+            feedState.recommended.items,
+            feedState.topTracks.items,
+            feedState.regionalTrending.items,
+            feedState.globalTrending.items,
+            feedState.weeklyPicks.items,
+        ).flatten()
+    }
+    LaunchedEffect(autoRipCoordinator, feedTracks) {
+        autoRipCoordinator.observe(AutoRipSource.HOME_FEED, feedTracks)
+    }
+    LaunchedEffect(autoRipCoordinator, queueState.items) {
+        autoRipCoordinator.observe(AutoRipSource.PLAYBACK_QUEUE, queueState.items)
+    }
+    val albumTracks = remember(albumDetailsState) {
+        (albumDetailsState as? AlbumDetailsUiState.Loaded)?.tracks.orEmpty()
+    }
+    LaunchedEffect(autoRipCoordinator, albumTracks) {
+        autoRipCoordinator.observe(AutoRipSource.ALBUM_DETAILS, albumTracks)
+    }
+
+    LaunchedEffect(ripConnection) {
+        ripConnection.completedRipTrackIds.collect { providerTrackId ->
+            val lookup = ripConnection.autoRip.refreshAvailabilityNow(providerTrackId)
+            val availability = lookup.cached
+            if (availability.isEmpty()) return@collect
+            feedState = feedState.withAvailability(availability)
+            homeFeedCache.save(feedState)
+            albumDetailsState = albumDetailsState.withAvailability(availability)
+            playbackManager.queueManager.applyAvailability(availability)
+        }
+    }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         playbackManager.syncWithCurrentPlayer()
@@ -287,6 +326,14 @@ fun HomeScreen(
             cached.copy(regionName = region)
         } else {
             HomeFeedDefaults.defaultFeed.copy(regionName = region)
+        }
+        if (cached != null) {
+            launch {
+                val availability = feedState.resolveAvailability(searchRepository)
+                if (availability.isEmpty()) return@launch
+                feedState = feedState.withAvailability(availability)
+                homeFeedCache.save(feedState)
+            }
         }
         launch {
             val rot = repository.fetchRotation()
@@ -488,7 +535,7 @@ fun HomeScreen(
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.background)
                     .then(
-                        // This layer is shared; a hidden tab must not overwrite the album capture.
+
                         if (!isAlbumOverlayVisible) {
                             Modifier.liquidGlassBackdropProducer(
                                 liquidGlassBackdropState,
@@ -550,6 +597,14 @@ fun HomeScreen(
                         pendingRipTrackIds = ripState.pendingTrackIds,
                         onRipTrack = { track -> ripWsClient.startRip(track) },
                         onOpenRipVisualizer = { showRipVisualizer = true },
+                        searchRepository = searchRepository,
+                        onObservedTracks = { tracks ->
+                            autoRipCoordinator.observe(AutoRipSource.SEARCH, tracks)
+                        },
+                        ripCompletions = ripConnection.completedRipTrackIds,
+                        resolveAvailability = { providerTrackId ->
+                            ripConnection.autoRip.refreshAvailabilityNow(providerTrackId).cached
+                        },
                         modifier = Modifier.fillMaxSize(),
                     )
 
@@ -601,6 +656,10 @@ fun HomeScreen(
                     onRefresh = {
                         val appleAlbumId = selectedAlbumId
                         if (appleAlbumId != null && !isRefreshingAlbum) {
+
+                            autoRipCoordinator.invalidate(
+                                albumTracks.mapNotNull(HomeTrack::providerTrackId)
+                            )
                             coroutineScope.launch {
                                 isRefreshingAlbum = true
                                 try {
@@ -613,6 +672,8 @@ fun HomeScreen(
                                     ) {
                                         albumDetailsState = refreshedState
                                     }
+
+                                    autoRipCoordinator.requestScan()
                                 } finally {
                                     if (selectedAlbumId == appleAlbumId) {
                                         isRefreshingAlbum = false

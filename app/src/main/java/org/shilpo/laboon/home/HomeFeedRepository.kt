@@ -420,7 +420,6 @@ class HomeFeedRepository(
         val username = creds?.username?.trim().orEmpty()
         if (username.isEmpty()) return emptyList()
 
-
         val endpoint =
             "https://api.listenbrainz.org/1/user/$username/listens?count=$MAX_RECENT_TRACKS"
 
@@ -794,7 +793,6 @@ class HomeFeedRepository(
         return result
     }
 
-
     private suspend fun fetchJson(url: String, token: String? = null): JSONObject? {
         val headers = buildMap {
             put("Accept", "application/json")
@@ -814,7 +812,6 @@ class HomeFeedRepository(
         )
     }
 
-
     private fun describe(error: HttpError): String = when {
         error.kind == HttpErrorKind.STATUS &&
                 error.message.contains("rate limited", ignoreCase = true) -> "rate limited"
@@ -827,9 +824,7 @@ class HomeFeedRepository(
         else -> "unexpected error"
     }
 
-
     private fun redactApiKey(url: String): String = url.replace(API_KEY_QUERY, "api_key=***")
-
 
     private fun logWarning(message: String) {
         runCatching { Log.w(TAG, message) }

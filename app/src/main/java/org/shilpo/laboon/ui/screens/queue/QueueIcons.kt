@@ -6,7 +6,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.unit.dp
 
-
 internal object QueueIcons {
 
     val Shuffle: ImageVector = icon("Shuffle", SHUFFLE_PATH)

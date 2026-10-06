@@ -402,7 +402,6 @@ class AuthClient(
         "Accept" to "application/json",
     )
 
-
     private suspend fun postJson(
         url: String,
         payload: JSONObject,
@@ -468,7 +467,6 @@ class AuthClient(
         cause = error,
     )
 
-
     private fun describe(error: HttpError): String = when {
         error.kind == HttpErrorKind.STATUS &&
                 error.message.contains("rate limited", ignoreCase = true) -> "rate limited"
@@ -495,12 +493,10 @@ class AuthClient(
         logWarning("$operation failed ($reason) for $url: HTTP $statusCode")
     }
 
-
     private fun logWarning(message: String) {
-        // android.util.Log is a throwing stub under JVM unit tests, so a log line must never be the thing that fails a request.
+
         runCatching { Log.w(TAG, message) }
     }
-
 
     private fun statusLabel(error: HttpError): String = when {
         error.statusCode != null -> error.statusCode.toString()
@@ -518,7 +514,6 @@ class AuthClient(
         "$fallback ($statusCode)"
     }
 
-
     private class JsonResponse(val statusCode: Int, val body: String)
 
     private companion object {
@@ -532,7 +527,6 @@ class AuthClient(
         const val TAG = "Auth"
 
         val JSON_MEDIA_TYPE = "application/json".toMediaType()
-
 
         val okHttp: OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)

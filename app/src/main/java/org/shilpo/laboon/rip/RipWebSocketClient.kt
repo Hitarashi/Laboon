@@ -7,8 +7,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -35,6 +38,18 @@ class RipWebSocketClient(
 ) {
     private val _state = MutableStateFlow(RipVisualizerState())
     val state: StateFlow<RipVisualizerState> = _state.asStateFlow()
+
+    private val _completedRipTrackIds = MutableSharedFlow<String>(
+        replay = 0,
+        extraBufferCapacity = COMPLETION_BUFFER,
+    )
+
+    /**
+     * Provider track ids whose rip completed successfully, emitted from the websocket thread.
+     * Consumers use it to refresh availability so the track becomes playable without a manual
+     * reload. Emission is best-effort and never blocks message handling.
+     */
+    val completedRipTrackIds: SharedFlow<String> = _completedRipTrackIds.asSharedFlow()
 
     private var webSocket: WebSocket? = null
     private val isRunning = AtomicBoolean(false)
@@ -166,6 +181,9 @@ class RipWebSocketClient(
             val type = root.optString("type")
             val payload = root.objOrNull("payload") ?: return
 
+            logIncomingRipEvent(type, payload)
+            emitRipCompletion(type, payload)
+
             when (type) {
                 "rip_tasks_snapshot" -> {
                     val tasksArr = payload.arrOrNull("tasks") ?: JSONArray()
@@ -273,6 +291,41 @@ class RipWebSocketClient(
             }
         } catch (e: Exception) {
             Log.w("RipWS", "Failed to parse message: ${e.message}")
+        }
+    }
+
+    /**
+     * Surfaces what the server actually sent for every rip event, with extra emphasis on
+     * completion. Answers "which data do we get when a rip is done?" without needing a
+     * debugger attached. Never throws: logging must not break message handling.
+     */
+    private fun logIncomingRipEvent(type: String, payload: JSONObject) {
+        runCatching {
+            val task = payload.objOrNull("task")
+            val isTerminal = type in TERMINAL_EVENT_TYPES || task?.optBoolean("completed") == true
+            if (!isTerminal) return@runCatching
+
+            if (RipCompletionDetector.isCompletion(type, task)) {
+                Log.i(TAG, "rip done: ${RipEventLog.describe(type, task ?: payload)}")
+            }
+            Log.d(TAG, RipEventLog.raw(type, task ?: payload))
+        }
+    }
+
+    private fun emitRipCompletion(type: String, payload: JSONObject) {
+        runCatching {
+            val providerTrackId =
+                RipCompletionDetector.completedProviderTrackId(type, payload.objOrNull("task"))
+                    ?: return@runCatching
+            val delivered = _completedRipTrackIds.tryEmit(providerTrackId)
+            Log.i(
+                TAG,
+                if (delivered) {
+                    "rip completed for provider track $providerTrackId; refreshing availability"
+                } else {
+                    "rip completed for provider track $providerTrackId but no listener accepted it"
+                }
+            )
         }
     }
 
@@ -388,5 +441,13 @@ class RipWebSocketClient(
             .removePrefix("ws://")
             .removePrefix("wss://")
         return "$wsScheme$hostPart/api/v1/ws/sync"
+    }
+
+    private companion object {
+        const val TAG = "RipWS"
+        const val COMPLETION_BUFFER = 32
+
+        /** Events that always mark the end of a rip task's life. */
+        val TERMINAL_EVENT_TYPES = setOf("rip_task_completed", "rip_task_finished", "rip_task_done")
     }
 }

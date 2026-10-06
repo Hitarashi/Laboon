@@ -1,6 +1,5 @@
 package org.shilpo.laboon.home
 
-
 object TrackIdentity {
 
     private const val MBID_PREFIX = "mbid:"
@@ -49,7 +48,6 @@ object TrackIdentity {
 
     fun normalizedArtist(raw: String): String = normalize(raw, stripQualifiers = false)
 
-
     private fun normalize(raw: String, stripQualifiers: Boolean): String {
         var value = raw.trim().lowercase().replace(WHITESPACE_RUN, " ")
 
@@ -66,10 +64,8 @@ object TrackIdentity {
 
     private val WHITESPACE_RUN = Regex("\\s+")
 
-
     private val TRAILING_NOISE = Regex("[\\s&+,]+$")
     private val TRAILING_NOISE_CHARS = charArrayOf('&', '+', ',')
-
 
     private fun removeTrailingDashQualifier(value: String): String {
         var result = value
@@ -82,7 +78,6 @@ object TrackIdentity {
         }
         return result
     }
-
 
     private fun removeEnclosedQualifierGroups(value: String): String {
         val out = StringBuilder(value.length)
@@ -119,7 +114,6 @@ object TrackIdentity {
         return out.toString().replace(WHITESPACE_RUN, " ").trim()
     }
 
-
     private fun isQualifierPhrase(phrase: String): Boolean {
         if (phrase.isBlank()) return false
         if (YEAR_TOKEN.containsMatchIn(phrase)) return true
@@ -132,7 +126,6 @@ object TrackIdentity {
     private val YEAR_TOKEN = Regex("(^|\\s)(19\\d\\d|20\\d\\d)($|\\s|[)\\]])")
     private val FEATURED_CLAUSE =
         Regex("(?<=[\\s(\\[])\\s*(feat|ft|featuring)\\.?\\s*[)\\]]?.*$", RegexOption.IGNORE_CASE)
-
 
     private val DANGLING_GROUP_OPENERS = charArrayOf('(', '[')
 

@@ -11,7 +11,6 @@ import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.home.TrackIdentity
 
-
 class QueuePersistence(private val store: KeyValueStore) {
 
     fun load(): QueueState = QueuePersistenceCodec.decode(store.getString(STORAGE_KEY))
@@ -28,7 +27,6 @@ class QueuePersistence(private val store: KeyValueStore) {
         const val STORAGE_KEY = "playback_queue_v1"
     }
 }
-
 
 class QueuePersistenceWriter(
     private val persistence: QueuePersistence,
@@ -48,7 +46,6 @@ class QueuePersistenceWriter(
         }
     }
 
-
     fun flush(state: QueueState) {
         synchronized(lock) {
             pending?.cancel()
@@ -63,7 +60,6 @@ class QueuePersistenceWriter(
 }
 
 private const val DEFAULT_FLUSH_DELAY_MS = 750L
-
 
 object QueuePersistenceCodec {
 
@@ -123,7 +119,6 @@ object QueuePersistenceCodec {
         )
     }
 
-
     private fun boundedItems(state: QueueState): List<HomeTrack> {
         if (state.items.size <= MAX_ITEMS) return state.items
         val head = (state.currentIndex + 1).coerceIn(0, MAX_ITEMS)
@@ -153,7 +148,6 @@ object QueuePersistenceCodec {
         if (fields.size != LEGACY_ITEM_FIELDS && fields.size != PREVIOUS_ITEM_FIELDS &&
             fields.size != ITEM_FIELDS
         ) return null
-
 
         val values = fields.map { unescape(it) ?: return null }
         val id = values[0].takeIf { it.isNotBlank() } ?: return null
@@ -253,7 +247,6 @@ object QueuePersistenceCodec {
         }
         return out.toString()
     }
-
 
     private fun unescape(value: String): String? {
         if (!value.contains('\\')) return value

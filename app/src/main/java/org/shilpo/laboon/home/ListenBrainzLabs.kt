@@ -8,19 +8,16 @@ import org.shilpo.laboon.net.stringOrNull
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
-
 data class SimilarArtist(
     val mbid: String,
     val name: String,
     val score: Int,
 )
 
-
 object ListenBrainzLabs {
 
     const val LABS_BASE = "https://labs.api.listenbrainz.org"
     const val LISTENBRAINZ_BASE = "https://api.listenbrainz.org"
-
 
     const val MAX_SEEDS_PER_REQUEST = 25
 
@@ -40,7 +37,6 @@ object ListenBrainzLabs {
     fun tagSimilarityUrl(tag: String): String =
         "$LABS_BASE/tag-similarity/json?tag=${tag.urlEncoded()}"
 
-
     fun cfRecommendationsUrl(
         username: String,
         count: Int = 50,
@@ -51,7 +47,6 @@ object ListenBrainzLabs {
 
     fun listenBrainzUrl(path: String): String = "$LISTENBRAINZ_BASE$path"
 
-
     fun chunkSeeds(
         mbids: List<String>,
         size: Int = MAX_SEEDS_PER_REQUEST,
@@ -61,7 +56,6 @@ object ListenBrainzLabs {
         return mbids.distinct().filter { it.isNotBlank() }.chunked(step)
     }
 
-    // Seeds are repeated query params; a comma joined list is rejected with a 400.
     private fun seedUrl(
         path: String,
         param: String,
@@ -109,7 +103,6 @@ object ListenBrainzLabs {
         return result
     }
 
-
     fun parseCfRecordingMbids(json: JSONObject): List<String> {
         val mbids = json.objOrNull("payload")?.arrOrNull("mbids") ?: return emptyList()
         val result = mutableListOf<String>()
@@ -120,6 +113,5 @@ object ListenBrainzLabs {
     }
 
     fun emptyArray(): JSONArray = JSONArray()
-
 
 }

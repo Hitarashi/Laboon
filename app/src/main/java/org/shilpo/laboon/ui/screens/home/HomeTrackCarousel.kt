@@ -189,7 +189,6 @@ fun CarouselItemScope.HomeTrackCard(
                     }
                 }
 
-
                 Box(
                     modifier = Modifier
                         .fillMaxSize()

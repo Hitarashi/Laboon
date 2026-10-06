@@ -638,7 +638,6 @@ private fun LaneProgressIndicator(
     }
 }
 
-
 @Composable
 private fun EmptyTasksState(
     modifier: Modifier = Modifier,

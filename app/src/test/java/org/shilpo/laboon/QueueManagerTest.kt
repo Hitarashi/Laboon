@@ -48,7 +48,6 @@ class QueueManagerTest {
         qm.playNext(next1)
         qm.playNext(next2)
 
-
         assertEquals(listOf(current, next2, next1), qm.state.value.items)
         assertEquals(next2, qm.peekNext())
     }

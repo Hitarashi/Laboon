@@ -10,16 +10,19 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.home.TrackAvailability
 import org.shilpo.laboon.home.TrackIdentity
+import org.shilpo.laboon.search.CachedTrackAvailability
 
 interface QueueManager {
     val state: StateFlow<QueueState>
     fun play(track: HomeTrack, contextTracks: List<HomeTrack>? = null)
     fun updateCurrentTrack(track: HomeTrack)
+
+    fun applyAvailability(availability: Map<String, CachedTrackAvailability>)
     fun selectCurrentById(trackId: String): HomeTrack?
     fun playNext(track: HomeTrack)
     fun addToQueue(track: HomeTrack)
-
 
     fun removeUpNext(index: Int)
     fun moveUpNext(fromIndex: Int, toIndex: Int)
@@ -35,7 +38,6 @@ interface QueueManager {
     fun release()
 }
 
-
 class QueueManagerImpl(
     persistence: QueuePersistence? = null,
     writeScope: CoroutineScope? = null,
@@ -49,7 +51,6 @@ class QueueManagerImpl(
         writeScope != null -> writeScope
         else -> CoroutineScope(Dispatchers.Default + SupervisorJob())
     }
-
 
     private val ownedFlushScope: CoroutineScope? = flushScope?.takeIf { writeScope == null }
 
@@ -65,7 +66,6 @@ class QueueManagerImpl(
             .takeIf { it >= 0 }
             ?: items.indexOfFirst { it.id == track.id }.takeIf { it >= 0 }
             ?: 0
-
 
         mutate { s ->
             s.copy(
@@ -87,6 +87,21 @@ class QueueManagerImpl(
                 if (TrackIdentity.isSameTrack(queuedTrack, track)) track else queuedTrack
             }
             state.copy(items = updatedItems, preShuffleOrder = updatedPreShuffleOrder)
+        }
+    }
+
+    override fun applyAvailability(availability: Map<String, CachedTrackAvailability>) {
+        if (availability.isEmpty()) return
+        mutate { state ->
+            val updated = TrackAvailability.apply(state.items, availability)
+            val updatedPreShuffleOrder = state.preShuffleOrder?.let { order ->
+                TrackAvailability.apply(order, availability)
+            }
+            if (updated === state.items && updatedPreShuffleOrder === state.preShuffleOrder) {
+                state
+            } else {
+                state.copy(items = updated, preShuffleOrder = updatedPreShuffleOrder)
+            }
         }
     }
 
@@ -147,7 +162,6 @@ class QueueManagerImpl(
         }
     }
 
-
     override fun toggleShuffle() {
         mutate { s ->
             if (!s.isShuffle) {
@@ -169,7 +183,6 @@ class QueueManagerImpl(
             ?: s.items.takeIf { s.repeatMode == RepeatMode.ALL }?.firstOrNull()
     }
 
-
     override fun advanceToNext(): HomeTrack? {
         val before = _state.value
         if (before.currentIndex < 0) return null
@@ -184,7 +197,6 @@ class QueueManagerImpl(
         return after.currentTrack
     }
 
-
     override fun advanceToPrevious(): HomeTrack? {
         val before = _state.value
         if (before.currentIndex <= 0) return before.currentTrack
@@ -192,7 +204,6 @@ class QueueManagerImpl(
         persist(after)
         return after.currentTrack
     }
-
 
     override fun appendDiscovery(tracks: List<HomeTrack>) {
         if (tracks.isEmpty()) return
@@ -203,7 +214,6 @@ class QueueManagerImpl(
             if (fresh.isEmpty()) s else s.copy(items = s.items + fresh)
         }
     }
-
 
     override fun getRecentHistoryKeys(): Set<String> {
         val s = _state.value
@@ -230,7 +240,6 @@ class QueueManagerImpl(
     private fun persist(state: QueueState) {
         writer?.schedule(state)
     }
-
 
     private fun QueueState.stagedNextTo(track: HomeTrack): QueueState {
         val key = TrackIdentity.keyOf(track)
@@ -264,7 +273,6 @@ class QueueManagerImpl(
         val absolute = currentIndex + 1 + index
         return absolute.takeIf { it in items.indices }
     }
-
 
     private fun QueueState.unshuffledOrder(): List<HomeTrack> {
         val saved = preShuffleOrder ?: return items

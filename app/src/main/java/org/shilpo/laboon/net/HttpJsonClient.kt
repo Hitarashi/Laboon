@@ -16,7 +16,6 @@ import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 
-
 class HttpJsonClient(
     private val connectTimeoutMs: Long = DEFAULT_TIMEOUT_MS,
     private val readTimeoutMs: Long = DEFAULT_TIMEOUT_MS,
@@ -70,7 +69,6 @@ class HttpJsonClient(
         is HttpOutcome.Failure -> outcome
         is HttpOutcome.Success -> parseJson(url, outcome.value)
     }
-
 
     private fun Request.Builder.withHeaders(headers: Map<String, String>): Request.Builder {
         header("Accept", JSON_MEDIA_TYPE)
@@ -171,7 +169,6 @@ class HttpJsonClient(
         private const val JSON_MEDIA_TYPE = "application/json"
         private val JSON_BODY_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         private const val MAX_BODY_SNIPPET = 200
-
 
         private val pooledClient: OkHttpClient = newClient(DEFAULT_TIMEOUT_MS, DEFAULT_TIMEOUT_MS)
 

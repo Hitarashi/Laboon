@@ -8,7 +8,6 @@ enum class RepeatMode {
     ONE,
 }
 
-
 data class QueueState(
     val items: List<HomeTrack> = emptyList(),
     val currentIndex: Int = -1,
@@ -20,12 +19,10 @@ data class QueueState(
 ) {
     val currentTrack: HomeTrack? get() = items.getOrNull(currentIndex)
 
-
     val upcoming: List<HomeTrack>
         get() = if (currentIndex < 0) emptyList() else items.drop(currentIndex + 1)
 
     val upNextCount: Int get() = (items.size - currentIndex - 1).coerceAtLeast(0)
-
 
     val hasNext: Boolean
         get() = repeatMode != RepeatMode.OFF || upNextCount > 0 || isAutoplayEnabled
