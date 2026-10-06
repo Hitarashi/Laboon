@@ -1,8 +1,12 @@
 package org.shilpo.laboon.lyricsporn
 
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import org.json.JSONObject
+import org.shilpo.laboon.net.HttpError
+import org.shilpo.laboon.net.HttpErrorKind
 import org.shilpo.laboon.net.HttpJsonClient
 import org.shilpo.laboon.net.HttpOutcome
 import org.shilpo.laboon.net.arrOrNull
@@ -36,6 +40,15 @@ data class LyricspornMotionArtwork(
     val format: String? = null,
 )
 
+internal fun preferredAlbumEditorialNotes(standard: String?, short: String?): String? =
+    standard?.trim()?.takeIf(String::isNotEmpty)
+        ?: short?.trim()?.takeIf(String::isNotEmpty)
+
+private data class LyricspornTrackDetails(
+    val albumId: String?,
+    val motionArtwork: LyricspornMotionArtwork?,
+)
+
 object LyricspornClient {
     private const val MAX_ARTWORK_LOOKUPS = 3
     private const val DEFAULT_STOREFRONT = "us"
@@ -43,6 +56,8 @@ object LyricspornClient {
     private val http = HttpJsonClient()
     private val catalogItemCache = ConcurrentHashMap<String, LyricspornCatalogMatch>()
     private val motionArtworkCache = ConcurrentHashMap<String, LyricspornMotionArtwork>()
+    private val trackDetailsCache = ConcurrentHashMap<String, LyricspornTrackDetails>()
+    private val trackDetailsLocks = ConcurrentHashMap<String, Mutex>()
     private val artworkPermits = Semaphore(MAX_ARTWORK_LOOKUPS)
 
     fun normalizeApiBaseUrl(value: String?): String? {
@@ -78,6 +93,45 @@ object LyricspornClient {
         val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return null
         val trackId = appleTrackId.takeIf { it.isNumericAppleId() } ?: return null
         return getJson("$baseUrl/tracks/$trackId?include=lyrics&formats=json")
+    }
+
+    suspend fun getTrackAlbumId(apiBaseUrl: String?, appleTrackId: String): String? {
+        val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return null
+        val trackId = appleTrackId.takeIf { it.isNumericAppleId() } ?: return null
+        return getTrackDetails(baseUrl, trackId)?.albumId
+    }
+
+    suspend fun getAlbumDetails(
+        apiBaseUrl: String?,
+        appleAlbumId: String,
+    ): HttpOutcome<LyricspornAlbum> {
+        val baseUrl = normalizeApiBaseUrl(apiBaseUrl)
+            ?: return HttpOutcome.Failure(
+                HttpError(HttpErrorKind.NETWORK, message = "Lyricsporn API is unavailable"),
+            )
+        val albumId = appleAlbumId.takeIf { it.matches(APPLE_CATALOG_ID_PATTERN) }
+            ?: return HttpOutcome.Failure(
+                HttpError(HttpErrorKind.MALFORMED, message = "Invalid Apple Music album ID"),
+            )
+        val url =
+            "$baseUrl/albums/$albumId?include=artwork,tracks,artists,genres,recordLabels,otherVersions,editorialNotes" +
+                    "&limit=100&artworkSize=1200"
+        return when (val response = http.getJson(url.withCurrentStorefront())) {
+            is HttpOutcome.Failure -> response
+            is HttpOutcome.Success -> {
+                val album = response.value.objOrNull("data")?.toLyricspornAlbum()
+                if (album != null) {
+                    HttpOutcome.Success(album)
+                } else {
+                    HttpOutcome.Failure(
+                        HttpError(
+                            HttpErrorKind.MALFORMED,
+                            message = "Lyricsporn returned an invalid album response",
+                        ),
+                    )
+                }
+            }
+        }
     }
 
     suspend fun searchHints(apiBaseUrl: String?, term: String, limit: Int = 5): List<String> {
@@ -175,12 +229,7 @@ object LyricspornClient {
         return artworkPermits.withPermit {
             motionArtworkCache[cacheKey]?.let { return@withPermit it }
             val artwork = if (trackId != null) {
-                getJson(
-                    "$baseUrl/tracks/$trackId?include=motionArtwork"
-                )
-                    ?.objOrNull("track")
-                    ?.objOrNull("motionArtwork")
-                    ?.toMotionArtwork()
+                getTrackDetails(baseUrl, trackId)?.motionArtwork
             } else {
                 val query = listOf(title.trim(), artist.trim(), album.orEmpty().trim())
                     .filter(String::isNotEmpty)
@@ -208,8 +257,42 @@ object LyricspornClient {
         }
     }
 
+    private suspend fun getTrackDetails(
+        apiBaseUrl: String,
+        appleTrackId: String,
+    ): LyricspornTrackDetails? {
+        val key = "$apiBaseUrl:${currentStorefront()}:track-details:$appleTrackId"
+        trackDetailsCache[key]?.let { return it }
+        val lock = trackDetailsLocks[key] ?: synchronized(trackDetailsLocks) {
+            trackDetailsLocks[key] ?: Mutex().also { trackDetailsLocks[key] = it }
+        }
+        return lock.withLock {
+            trackDetailsCache[key]?.let { return@withLock it }
+            val track = getJson(
+                "$apiBaseUrl/tracks/$appleTrackId?include=motionArtwork,album",
+            )?.objOrNull("track") ?: return@withLock null
+            LyricspornTrackDetails(
+                albumId = track.objOrNull("albumResource")
+                    ?.stringOrNull("id")
+                    ?.takeIf { it.matches(APPLE_CATALOG_ID_PATTERN) },
+                motionArtwork = track.objOrNull("motionArtwork")?.toMotionArtwork(),
+            ).also { trackDetailsCache[key] = it }
+        }
+    }
+
     suspend fun resolveAlbumArtwork(apiBaseUrl: String?, title: String, artist: String): String? =
         resolveArtwork(apiBaseUrl = apiBaseUrl, type = "albums", title = title, artist = artist)
+
+    suspend fun resolveAlbumCatalogItem(
+        apiBaseUrl: String?,
+        title: String,
+        artist: String,
+    ): LyricspornCatalogMatch? = resolveCatalogItem(
+        apiBaseUrl = apiBaseUrl,
+        type = "albums",
+        title = title,
+        artist = artist,
+    )?.takeIf { it.item.type == "album" }
 
     suspend fun resolveArtistArtwork(apiBaseUrl: String?, artist: String): String? =
         resolveArtwork(apiBaseUrl = apiBaseUrl, type = "artists", title = artist, artist = null)
@@ -388,11 +471,111 @@ object LyricspornClient {
         )
     }
 
+    private fun JSONObject.toLyricspornAlbum(): LyricspornAlbum? {
+        val id = stringOrNull("id")?.takeIf { it.matches(APPLE_CATALOG_ID_PATTERN) }
+            ?: return null
+        val name = stringOrNull("name") ?: return null
+        if (stringOrNull("type") != "album") return null
+
+        val collections = objOrNull("collections")
+        val tracks = collections?.objOrNull("tracks")?.arrOrNull("items")
+            ?.toAlbumTracks()
+            .orEmpty()
+        val otherVersions = collections?.objOrNull("otherVersions")?.arrOrNull("items")
+            ?.toAlbumVersions()
+            .orEmpty()
+        val notes = objOrNull("editorialNotes")
+
+        return LyricspornAlbum(
+            id = id,
+            name = name,
+            artistName = stringOrNull("artistName"),
+            artistUrl = stringOrNull("artistUrl"),
+            url = stringOrNull("url"),
+            artworkUrl = objOrNull("artwork")?.stringOrNull("url")?.albumArtworkUrl(1200),
+            genres = arrOrNull("genres")?.stringValues().orEmpty(),
+            releaseDate = stringOrNull("releaseDate"),
+            trackCount = intOrNull("trackCount"),
+            contentRating = stringOrNull("contentRating"),
+            copyright = stringOrNull("copyright"),
+            recordLabel = stringOrNull("recordLabel"),
+            editorialNotes = preferredAlbumEditorialNotes(
+                standard = notes?.stringOrNull("standard"),
+                short = notes?.stringOrNull("short"),
+            ),
+            tracks = tracks,
+            otherVersions = otherVersions,
+        )
+    }
+
+    private fun org.json.JSONArray.toAlbumTracks(): List<LyricspornAlbumTrack> = buildList {
+        for (index in 0 until length()) {
+            val track = objAtOrNull(index) ?: continue
+            val id = track.stringOrNull("id")
+                ?.takeIf { it.matches(APPLE_CATALOG_ID_PATTERN) }
+                ?: continue
+            val name = track.stringOrNull("name") ?: continue
+            add(
+                LyricspornAlbumTrack(
+                    id = id,
+                    name = name,
+                    artistName = track.stringOrNull("artistName"),
+                    albumName = track.stringOrNull("albumName"),
+                    artworkUrl = track.objOrNull("artwork")?.stringOrNull("url")
+                        ?.albumArtworkUrl(300),
+                    durationMs = track.longOrNull("durationMs"),
+                    isrc = track.stringOrNull("isrc"),
+                    contentRating = track.stringOrNull("contentRating"),
+                    url = track.stringOrNull("url"),
+                ),
+            )
+        }
+    }
+
+    private fun org.json.JSONArray.toAlbumVersions(): List<LyricspornAlbumVersion> = buildList {
+        for (index in 0 until length()) {
+            val version = objAtOrNull(index) ?: continue
+            val id = version.stringOrNull("id")
+                ?.takeIf { it.matches(APPLE_CATALOG_ID_PATTERN) }
+                ?: continue
+            val name = version.stringOrNull("name") ?: continue
+            add(
+                LyricspornAlbumVersion(
+                    id = id,
+                    name = name,
+                    artistName = version.stringOrNull("artistName"),
+                    artworkUrl = version.objOrNull("artwork")?.stringOrNull("url")
+                        ?.albumArtworkUrl(300),
+                    releaseDate = version.stringOrNull("releaseDate"),
+                    trackCount = version.intOrNull("trackCount"),
+                    contentRating = version.stringOrNull("contentRating"),
+                ),
+            )
+        }
+    }
+
+    private fun JSONObject.intOrNull(key: String): Int? =
+        optInt(key).takeIf { has(key) && !isNull(key) }
+
+    private fun JSONObject.longOrNull(key: String): Long? =
+        optLong(key).takeIf { has(key) && !isNull(key) }
+
+    private fun org.json.JSONArray.stringValues(): List<String> = buildList {
+        for (index in 0 until length()) {
+            optString(index).trim().takeIf(String::isNotEmpty)?.let(::add)
+        }
+    }
+
+    private fun String.albumArtworkUrl(size: Int): String =
+        replace("{w}", size.toString()).replace("{h}", size.toString())
+
     private fun String.normalized(): String = lowercase(Locale.ROOT)
         .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
         .trim()
 
     private fun String.isNumericAppleId(): Boolean = isNotBlank() && all(Char::isDigit)
+
+    private val APPLE_CATALOG_ID_PATTERN = Regex("[A-Za-z0-9._-]{1,128}")
 
     internal fun currentStorefront(): String = Locale.getDefault().country
         .takeIf { country ->

@@ -187,12 +187,14 @@ fun MorphingPlayerSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     backdropState: LiquidGlassBackdropState? = null,
+    albumDockProgress: Float = 0f,
     onMoreClick: () -> Unit = {},
     onExpansionProgressChange: ((Float) -> Unit)? = null,
     queueState: QueueState? = null,
     onRemoveUpNext: ((Int) -> Unit)? = null,
     onMoveUpNext: ((Int, Int) -> Unit)? = null,
     onTrackClick: ((HomeTrack) -> Unit)? = null,
+    onOpenAlbum: (suspend (HomeTrack) -> Boolean)? = null,
     lyricsLines: List<LyricsLine> = emptyList(),
     lyricsLoading: Boolean = false,
     motionArtwork: LyricspornMotionArtwork? = null,
@@ -344,8 +346,9 @@ fun MorphingPlayerSheet(
         val pillWidth = minOf(screenWidth - 32.dp, NavigationBarMaxWidth)
         val pillHeight = MiniPlayerHeight
         val pillX = (screenWidth - pillWidth) / 2
+        val floatingNavBarClearance = NavigationBarHeight * (1f - albumDockProgress)
         val pillBottomOffset =
-            navBarBottom + NavigationBarBottomPadding + NavigationBarHeight + MiniPlayerSpacing
+            navBarBottom + NavigationBarBottomPadding + MiniPlayerSpacing + floatingNavBarClearance
         val pillY = screenHeight - pillBottomOffset - pillHeight
 
         val sheetWidth = lerp(pillWidth, screenWidth, progress)
@@ -353,7 +356,7 @@ fun MorphingPlayerSheet(
         val sheetX = lerp(pillX, 0.dp, progress)
         val sheetY = lerp(pillY, 0.dp, progress)
         val sheetTopRadius = lerp(28.dp, 0.dp, progress)
-        val sheetBottomRadius = lerp(12.dp, 0.dp, progress)
+        val sheetBottomRadius = lerp(lerp(12.dp, 28.dp, albumDockProgress), 0.dp, progress)
         val sheetShape = RoundedCornerShape(
             topStart = sheetTopRadius,
             topEnd = sheetTopRadius,
@@ -1231,6 +1234,24 @@ fun MorphingPlayerSheet(
 
                         FullPlayerToolbar(
                             albumName = track.album,
+                            onOpenAlbum = if (
+                                onOpenAlbum != null &&
+                                !track.album.isNullOrBlank() &&
+                                track.providerTrackId?.let { id ->
+                                    id.isNotBlank() && id.all(Char::isDigit)
+                                } == true
+                            ) {
+                                {
+                                    val openAlbum = onOpenAlbum
+                                    coroutineScope.launch {
+                                        if (openAlbum(track)) {
+                                            progressAnimatable.animateTo(0f, settleSpec)
+                                        }
+                                    }
+                                }
+                            } else {
+                                null
+                            },
                             onCollapse = {
                                 coroutineScope.launch {
                                     progressAnimatable.animateTo(0f, settleSpec)
@@ -1511,6 +1532,7 @@ fun MorphingPlayerSheet(
 @Composable
 private fun FullPlayerToolbar(
     albumName: String?,
+    onOpenAlbum: (() -> Unit)?,
     onCollapse: () -> Unit,
     onMoreClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -1565,6 +1587,17 @@ private fun FullPlayerToolbar(
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = if (onOpenAlbum != null) {
+                        Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(
+                                onClickLabel = "Open album",
+                                onClick = onOpenAlbum,
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    } else {
+                        Modifier
+                    },
                 )
             }
         }

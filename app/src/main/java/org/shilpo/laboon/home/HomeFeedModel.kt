@@ -24,6 +24,7 @@ data class HomeTrack(
     val availableFormats: List<String> = emptyList(),
     val availableVariants: List<TrackFormatVariant> = emptyList(),
     val durationMs: Long? = null,
+    val contentRating: String? = null,
 ) {
     val isPlayable: Boolean
         get() = backendTrackId != null || !streamUrl.isNullOrBlank()
@@ -42,6 +43,7 @@ data class HomeAlbum(
     val artist: String,
     val artworkUrl: String? = null,
     val playCount: Long = 0,
+    val appleCatalogId: String? = null,
 )
 
 enum class SectionLoadState {
@@ -77,7 +79,7 @@ data class HomeFeedState(
         get() = rotation.items.isEmpty() &&
                 recommended.items.isEmpty() &&
                 topArtists.items.isEmpty() &&
-                topAlbums.items.isEmpty() &&
+                topAlbums.items.none { !it.appleCatalogId.isNullOrBlank() } &&
                 topTracks.items.isEmpty() &&
                 regionalTrending.items.isEmpty() &&
                 globalTrending.items.isEmpty() &&

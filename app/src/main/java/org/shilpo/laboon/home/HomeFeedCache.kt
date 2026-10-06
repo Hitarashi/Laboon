@@ -239,6 +239,7 @@ class HomeFeedCache(private val store: KeyValueStore) {
                 put("artist", album.artist)
                 album.artworkUrl?.let { put("artworkUrl", it) }
                 put("playCount", album.playCount)
+                album.appleCatalogId?.let { put("appleCatalogId", it) }
             }
             array.put(obj)
         }
@@ -260,6 +261,8 @@ class HomeFeedCache(private val store: KeyValueStore) {
                     artist = artist,
                     artworkUrl = obj.optString("artworkUrl").takeIf { it.isNotBlank() },
                     playCount = obj.optLong("playCount", 0L),
+                    appleCatalogId = obj.optString("appleCatalogId")
+                        .takeIf { it.isNotBlank() },
                 )
             )
         }

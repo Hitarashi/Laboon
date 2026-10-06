@@ -246,14 +246,20 @@ class HomeFeedRepository(
         val lyricspornApiUrl = sessionStore.getSession()?.lyricspornApiUrl
         albums.map { album ->
             async {
-                val resolved = artworkResolver.resolveAlbumArtwork(
+                val resolved = artworkResolver.resolveAlbumCatalogItem(
                     apiBaseUrl = lyricspornApiUrl,
                     title = album.title,
                     artist = album.artist,
                 )
-                album.copy(artworkUrl = resolved)
+                val exactAlbum = resolved
+                    ?.takeIf(LyricspornCatalogMatch::isExactIdentity)
+                    ?.item
+                album.copy(
+                    artworkUrl = album.artworkUrl ?: resolved?.item?.artworkUrl,
+                    appleCatalogId = exactAlbum?.id,
+                )
             }
-        }.awaitAll()
+        }.awaitAll().filter { !it.appleCatalogId.isNullOrBlank() }
     }
 
     private suspend fun resolveArtists(artists: List<HomeArtist>): List<HomeArtist> =

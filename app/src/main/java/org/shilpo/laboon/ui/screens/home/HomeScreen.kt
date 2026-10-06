@@ -4,11 +4,15 @@ package org.shilpo.laboon.ui.screens.home
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.updateTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -54,6 +58,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -87,6 +92,8 @@ import org.shilpo.laboon.R
 import org.shilpo.laboon.auth.AuthSession
 import org.shilpo.laboon.auth.SessionStore
 import org.shilpo.laboon.auth.SharedPreferencesKeyValueStore
+import org.shilpo.laboon.home.AlbumDetailsCache
+import org.shilpo.laboon.home.AlbumDetailsRepository
 import org.shilpo.laboon.home.HomeAlbum
 import org.shilpo.laboon.home.HomeArtist
 import org.shilpo.laboon.home.HomeFeedCache
@@ -108,7 +115,10 @@ import org.shilpo.laboon.ui.design.FloatingCombinedClearance
 import org.shilpo.laboon.ui.design.FloatingNavBar
 import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
 import org.shilpo.laboon.ui.design.LiquidGlassSurface
+import org.shilpo.laboon.ui.design.MiniPlayerHeight
+import org.shilpo.laboon.ui.design.MiniPlayerSpacing
 import org.shilpo.laboon.ui.design.NavigationBarBottomPadding
+import org.shilpo.laboon.ui.design.NavigationBarHeight
 import org.shilpo.laboon.ui.design.PredictiveBackSpec
 import org.shilpo.laboon.ui.design.PredictiveBackSurface
 import org.shilpo.laboon.ui.design.SkeletonSegmentedList
@@ -118,6 +128,13 @@ import org.shilpo.laboon.ui.design.liquidGlassBackdropProducer
 import org.shilpo.laboon.ui.design.rememberLiquidGlassBackdropState
 import org.shilpo.laboon.ui.design.rememberPredictiveBackState
 import org.shilpo.laboon.ui.design.userDisplayName
+import org.shilpo.laboon.ui.screens.album.AlbumDetailsScreen
+import org.shilpo.laboon.ui.screens.album.AlbumDetailsUiState
+import org.shilpo.laboon.ui.screens.album.AlbumRelatedDestination
+import org.shilpo.laboon.ui.screens.album.AlbumRelatedPlaceholderScreen
+import org.shilpo.laboon.ui.screens.album.albumArtistDestination
+import org.shilpo.laboon.ui.screens.album.albumRecordLabelDestination
+import org.shilpo.laboon.ui.screens.album.toUiState
 import org.shilpo.laboon.ui.screens.library.LibraryScreen
 import org.shilpo.laboon.ui.screens.player.MorphingPlayerSheet
 import org.shilpo.laboon.ui.screens.rip.RipVisualizerScreen
@@ -138,9 +155,10 @@ fun HomeScreen(
     val showSettings = state.settingsVisible
 
     val context = LocalContext.current
-    val homeFeedCache = remember(context) { HomeFeedCache(SharedPreferencesKeyValueStore(context)) }
+    val keyValueStore = remember(context) { SharedPreferencesKeyValueStore(context) }
+    val homeFeedCache = remember(keyValueStore) { HomeFeedCache(keyValueStore) }
     val playbackPersistence =
-        remember(context) { PlaybackPersistence(SharedPreferencesKeyValueStore(context)) }
+        remember(keyValueStore) { PlaybackPersistence(keyValueStore) }
 
     val initialCachedFeed = remember { homeFeedCache.load() }
     var feedState by remember { mutableStateOf(initialCachedFeed ?: HomeFeedDefaults.defaultFeed) }
@@ -148,10 +166,57 @@ fun HomeScreen(
     var isRefreshing by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
 
-    val sessionStore = remember(context) { SessionStore(SharedPreferencesKeyValueStore(context)) }
+    val sessionStore = remember(keyValueStore) { SessionStore(keyValueStore) }
+    val albumDetailsRepository = remember(sessionStore, keyValueStore) {
+        AlbumDetailsRepository(sessionStore, AlbumDetailsCache(keyValueStore))
+    }
     val ripWsClient = remember(sessionStore) { RipWebSocketClient(sessionStore) }
     val ripState by ripWsClient.state.collectAsState()
     var showRipVisualizer by rememberSaveable { mutableStateOf(false) }
+    var selectedAlbumId by remember { mutableStateOf<String?>(null) }
+    var selectedAlbumDestination by remember {
+        mutableStateOf<AlbumRelatedDestination?>(null)
+    }
+    var albumLoadAttempt by remember { mutableIntStateOf(0) }
+    var isRefreshingAlbum by remember { mutableStateOf(false) }
+    var albumDetailsState by remember {
+        mutableStateOf<AlbumDetailsUiState>(AlbumDetailsUiState.Loading)
+    }
+    val isAlbumOverlayVisible = selectedAlbumId != null || selectedAlbumDestination != null
+
+    LaunchedEffect(selectedAlbumId, albumLoadAttempt) {
+        val appleAlbumId = selectedAlbumId ?: return@LaunchedEffect
+        isRefreshingAlbum = false
+        val cachedAlbum = albumDetailsRepository.getCachedAlbum(appleAlbumId)
+        if (cachedAlbum != null) {
+            albumDetailsState = cachedAlbum.toUiState()
+        } else {
+            albumDetailsState = AlbumDetailsUiState.Loading
+            albumDetailsState = albumDetailsRepository.getAlbum(appleAlbumId).toUiState()
+        }
+    }
+
+    val openAlbum: (String) -> Unit = { appleAlbumId ->
+        selectedAlbumDestination = null
+        selectedAlbumId = appleAlbumId
+        albumLoadAttempt += 1
+    }
+    val closeAlbum: () -> Unit = {
+        selectedAlbumDestination = null
+        selectedAlbumId = null
+    }
+    val closeAlbumDestination: () -> Unit = { selectedAlbumDestination = null }
+    val openAlbumArtist: (String) -> Unit = { name ->
+        selectedAlbumDestination = albumArtistDestination(name)
+    }
+    val openAlbumRecordLabel: (String) -> Unit = { name ->
+        selectedAlbumDestination = albumRecordLabelDestination(name)
+    }
+    val onAlbumClick: (HomeAlbum) -> Unit = { album ->
+        album.appleCatalogId
+            ?.takeIf(String::isNotBlank)
+            ?.let(openAlbum)
+    }
 
     DisposableEffect(ripWsClient, session?.serverUrl, session?.token) {
         if (session != null) {
@@ -346,13 +411,23 @@ fun HomeScreen(
     }
 
     val homeBackState = rememberPredictiveBackState(
-        enabled = state.canGoBackWithinHome,
+        enabled = state.canGoBackWithinHome && selectedAlbumId == null,
         onBack = { onEvent(RouteEvent.BackPressed) },
     )
 
+    val albumBackState = rememberPredictiveBackState(
+        enabled = selectedAlbumId != null && selectedAlbumDestination == null,
+        onBack = closeAlbum,
+    )
+
     val ripVisualizerBackState = rememberPredictiveBackState(
-        enabled = showRipVisualizer,
+        enabled = showRipVisualizer && selectedAlbumDestination == null,
         onBack = { showRipVisualizer = false },
+    )
+
+    val albumRelatedBackState = rememberPredictiveBackState(
+        enabled = selectedAlbumDestination != null,
+        onBack = closeAlbumDestination,
     )
 
     val tabIsBackTarget = !showSettings && currentTab != MainTab.Home
@@ -360,6 +435,14 @@ fun HomeScreen(
     val visualizerProgress = ripVisualizerBackState.progressFor(showRipVisualizer)
 
     val motionScheme = MaterialTheme.motionScheme
+    val albumChromeTransition = updateTransition(
+        targetState = isAlbumOverlayVisible,
+        label = "albumBottomChrome",
+    )
+    val albumDockProgress by albumChromeTransition.animateFloat(
+        transitionSpec = { motionScheme.defaultSpatialSpec() },
+        label = "albumDockProgress",
+    ) { albumOpen -> if (albumOpen) 1f else 0f }
 
     val scrimAlpha by animateFloatAsState(
         targetValue = when {
@@ -373,6 +456,14 @@ fun HomeScreen(
 
     val liquidGlassBackdropState = rememberLiquidGlassBackdropState()
     val liquidGlassBackdropLayer = rememberGraphicsLayer()
+    val albumBottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val albumBottomChromeClearance = if (activeTrack != null) {
+        NavigationBarHeight * (1f - albumDockProgress) +
+                NavigationBarBottomPadding + MiniPlayerSpacing + MiniPlayerHeight
+    } else {
+        (NavigationBarHeight + NavigationBarBottomPadding) * (1f - albumDockProgress)
+    }
+    val albumBottomClearance = albumBottomInset + albumBottomChromeClearance
     val homeScrollState = rememberLazyListState()
     val isHomeScrolled by remember {
         derivedStateOf {
@@ -396,9 +487,16 @@ fun HomeScreen(
                 modifier = tabSurface
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.background)
-                    .liquidGlassBackdropProducer(
-                        liquidGlassBackdropState,
-                        liquidGlassBackdropLayer
+                    .then(
+                        // This layer is shared; a hidden tab must not overwrite the album capture.
+                        if (!isAlbumOverlayVisible) {
+                            Modifier.liquidGlassBackdropProducer(
+                                liquidGlassBackdropState,
+                                liquidGlassBackdropLayer,
+                            )
+                        } else {
+                            Modifier
+                        },
                     ),
                 transitionSpec = {
                     val forward =
@@ -430,6 +528,7 @@ fun HomeScreen(
                             playbackManager.play(track)
                         },
                         onDownloadTrack = { track -> ripWsClient.startRip(track) },
+                        onAlbumClick = onAlbumClick,
                         lazyListState = homeScrollState,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -464,7 +563,7 @@ fun HomeScreen(
         val density = LocalDensity.current
 
         AnimatedVisibility(
-            visible = currentTab == MainTab.Home,
+            visible = currentTab == MainTab.Home && selectedAlbumId == null,
             enter = fadeIn(animationSpec = motionScheme.defaultEffectsSpec()),
             exit = fadeOut(animationSpec = motionScheme.defaultEffectsSpec()),
             modifier = Modifier
@@ -485,19 +584,91 @@ fun HomeScreen(
             )
         }
 
-        FloatingNavBar(
-            selectedTab = currentTab,
-            onTabSelected = { onEvent(RouteEvent.TabSelected(it)) },
-            hasMiniPlayerAbove = activeTrack != null,
-            backdropState = liquidGlassBackdropState,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, bottom = NavigationBarBottomPadding)
-                .graphicsLayer {
-                    translationY = with(density) { (playerExpansionProgress * 120.dp.toPx()) }
+        selectedAlbumId?.let {
+            PredictiveBackSurface(
+                state = albumBackState,
+                spec = PredictiveBackSpec.HomeSettings,
+                active = true,
+            ) { albumSurface ->
+                AlbumDetailsScreen(
+                    state = albumDetailsState,
+                    bottomClearance = albumBottomClearance,
+                    isRefreshing = isRefreshingAlbum,
+                    currentTrackId = playbackState.currentTrack?.id,
+                    isPlaying = playbackState.isPlaying,
+                    onBack = closeAlbum,
+                    onRetry = { albumLoadAttempt += 1 },
+                    onRefresh = {
+                        val appleAlbumId = selectedAlbumId
+                        if (appleAlbumId != null && !isRefreshingAlbum) {
+                            coroutineScope.launch {
+                                isRefreshingAlbum = true
+                                try {
+                                    val refreshedState = albumDetailsRepository
+                                        .refreshAlbum(appleAlbumId)
+                                        .toUiState()
+                                    if (selectedAlbumId == appleAlbumId &&
+                                        (refreshedState is AlbumDetailsUiState.Loaded ||
+                                                albumDetailsState !is AlbumDetailsUiState.Loaded)
+                                    ) {
+                                        albumDetailsState = refreshedState
+                                    }
+                                } finally {
+                                    if (selectedAlbumId == appleAlbumId) {
+                                        isRefreshingAlbum = false
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    onStartPlayback = { track, contextTracks ->
+                        playbackManager.play(track, contextTracks = contextTracks)
+                    },
+                    onPlayNext = { track -> playbackManager.playNext(track) },
+                    onAddToQueue = { track -> playbackManager.addToQueue(track) },
+                    onDownloadTrack = { track -> ripWsClient.startRip(track) },
+                    isDownloadPending = { track -> ripState.pendingTrackIds.contains(track.id) },
+                    onOpenAlbumVersion = openAlbum,
+                    onOpenArtist = openAlbumArtist,
+                    onOpenRecordLabel = openAlbumRecordLabel,
+                    modifier = albumSurface
+                        .fillMaxSize()
+                        .liquidGlassBackdropProducer(
+                            liquidGlassBackdropState,
+                            liquidGlassBackdropLayer,
+                        ),
+                )
+            }
+        }
+
+        albumChromeTransition.AnimatedVisibility(
+            visible = { albumOpen -> !albumOpen },
+            enter = slideInVertically(
+                animationSpec = motionScheme.defaultSpatialSpec(),
+                initialOffsetY = { it },
+            ) + fadeIn(animationSpec = motionScheme.defaultEffectsSpec()),
+            exit = slideOutVertically(
+                animationSpec = motionScheme.defaultSpatialSpec(),
+                targetOffsetY = { it },
+            ) + fadeOut(animationSpec = motionScheme.defaultEffectsSpec()),
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
+            FloatingNavBar(
+                selectedTab = currentTab,
+                onTabSelected = {
+                    closeAlbum()
+                    onEvent(RouteEvent.TabSelected(it))
                 },
-        )
+                hasMiniPlayerAbove = activeTrack != null && !isAlbumOverlayVisible,
+                backdropState = liquidGlassBackdropState,
+                modifier = Modifier
+                    .navigationBarsPadding()
+                    .padding(start = 16.dp, end = 16.dp, bottom = NavigationBarBottomPadding)
+                    .graphicsLayer {
+                        translationY = with(density) { (playerExpansionProgress * 120.dp.toPx()) }
+                    },
+            )
+        }
 
         AnimatedVisibility(
             visible = activeTrack != null,
@@ -557,6 +728,7 @@ fun HomeScreen(
                         onActiveTrackChange?.invoke(null, true)
                     },
                     backdropState = liquidGlassBackdropState,
+                    albumDockProgress = albumDockProgress,
                     onExpansionProgressChange = { progress ->
                         playerExpansionProgress = progress
                     },
@@ -569,6 +741,17 @@ fun HomeScreen(
                     },
                     onTrackClick = { t ->
                         playbackManager.play(t, contextTracks = queueState.items)
+                    },
+                    onOpenAlbum = { albumTrack ->
+                        val albumId = albumDetailsRepository.getAlbumIdForTrack(
+                            albumTrack.providerTrackId,
+                        )
+                        if (albumId == null) {
+                            false
+                        } else {
+                            openAlbum(albumId)
+                            true
+                        }
                     },
                     modifier = Modifier.fillMaxSize(),
                 )
@@ -632,6 +815,20 @@ fun HomeScreen(
                     session = session,
                     onBack = { showRipVisualizer = false },
                     modifier = visualizerSurface.fillMaxSize(),
+                )
+            }
+        }
+
+        selectedAlbumDestination?.let { destination ->
+            PredictiveBackSurface(
+                state = albumRelatedBackState,
+                spec = PredictiveBackSpec.HomeSettings,
+                active = true,
+            ) { destinationSurface ->
+                AlbumRelatedPlaceholderScreen(
+                    destination = destination,
+                    onBack = closeAlbumDestination,
+                    modifier = destinationSurface.fillMaxSize(),
                 )
             }
         }
@@ -837,6 +1034,9 @@ private fun HomeContent(
                 }
             }
         } else {
+            val matchedTopAlbums = feedState.topAlbums.items
+                .filter { !it.appleCatalogId.isNullOrBlank() }
+
             LazyColumn(
                 state = lazyListState,
                 modifier = Modifier.fillMaxSize(),
@@ -913,12 +1113,12 @@ private fun HomeContent(
                             isArtist = false,
                         )
                     }
-                } else if (feedState.topAlbums.status == SectionLoadState.LOADED && feedState.topAlbums.items.isNotEmpty()) {
+                } else if (feedState.topAlbums.status == SectionLoadState.LOADED && matchedTopAlbums.isNotEmpty()) {
                     item(key = "top_albums_live") {
                         HomeAlbumCarousel(
                             title = stringResource(R.string.home_top_albums),
                             subtitle = stringResource(R.string.home_top_albums_subtitle),
-                            albums = feedState.topAlbums.items,
+                            albums = matchedTopAlbums,
                             onAlbumClick = onAlbumClick,
                         )
                     }
