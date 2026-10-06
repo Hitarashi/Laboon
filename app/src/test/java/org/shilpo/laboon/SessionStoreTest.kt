@@ -457,6 +457,7 @@ class SessionStoreTest {
         token = "token",
         refreshToken = "refresh-token",
         expiresAtUnix = 1_700_000_000L,
+        lyricspornApiUrl = "https://lyrics.example.com",
         user = AuthUser(
             telegramId = 42L,
             name = "Ada Lovelace",
@@ -472,6 +473,7 @@ class SessionStoreTest {
             "token",
             "refresh_token",
             "expires_at",
+            "lyricsporn_api_url",
             "tg_id",
             "user_name",
             "username",

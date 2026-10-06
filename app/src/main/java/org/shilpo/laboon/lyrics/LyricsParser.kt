@@ -932,7 +932,7 @@ internal object LyricsParser {
                     if (inheritedRole != "x-bg" && inheritedRole != "x-translation" && inheritedRole != "x-roman") {
                         pText.append(nodeText)
                     }
-                    if (!nodeText.contains('\n') && nodeText.contains(' ')) {
+                    if (node.parentNode == p && !nodeText.contains('\n') && nodeText.contains(' ')) {
                         val targetWords = if (inheritedRole == "x-bg") backgroundWords else words
                         val lastIdx = targetWords.lastIndex
                         if (lastIdx >= 0 && !targetWords[lastIdx].text.endsWith(" ")) {

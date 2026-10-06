@@ -10,6 +10,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import org.shilpo.laboon.BuildConfig
 import org.shilpo.laboon.net.HttpError
 import org.shilpo.laboon.net.HttpErrorKind
 import org.shilpo.laboon.net.HttpJsonClient
@@ -104,6 +105,8 @@ class AuthClient(
             val endpoint = "$cleanUrl/api/v1/auth/exchange"
             val requestJson = JSONObject().apply {
                 put("code", code)
+                put("client_name", "Laboon")
+                put("client_version", BuildConfig.VERSION_NAME)
                 put("device_name", deviceName())
                 put("platform", "android")
             }

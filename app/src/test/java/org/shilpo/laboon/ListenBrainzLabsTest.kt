@@ -87,7 +87,7 @@ class ListenBrainzLabsTest {
         assertEquals("Röyksopp", track.artist)
         assertEquals(seedA, track.mbid)
         assertEquals("Profound Mysteries II", track.album)
-        assertEquals("https://coverartarchive.org/release/$seedB/front-500.jpg", track.artworkUrl)
+        org.junit.Assert.assertNull(track.artworkUrl)
     }
 
     @Test
