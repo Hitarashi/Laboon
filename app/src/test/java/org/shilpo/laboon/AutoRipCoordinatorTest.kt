@@ -14,11 +14,14 @@ import org.junit.Test
 import org.shilpo.laboon.auth.AuthSession
 import org.shilpo.laboon.auth.AuthUser
 import org.shilpo.laboon.auth.SessionStore
+import org.shilpo.laboon.home.HomeAlbum
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.rip.AutoRipCache
 import org.shilpo.laboon.rip.AutoRipCoordinator
 import org.shilpo.laboon.rip.AutoRipSource
+import org.shilpo.laboon.search.AlbumAvailabilityLookup
+import org.shilpo.laboon.search.BatchAlbumAvailabilityLookup
 import org.shilpo.laboon.search.BatchAvailabilityLookup
 import org.shilpo.laboon.search.CachedTrackAvailability
 import org.shilpo.laboon.search.TrackAvailabilityLookup
@@ -30,6 +33,8 @@ class AutoRipCoordinatorTest {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val ripped = mutableListOf<String>()
     private val lookedUpBatches = mutableListOf<List<String>>()
+    private val rippedAlbums = mutableListOf<String>()
+    private val lookedUpAlbumBatches = mutableListOf<List<String>>()
 
     @After
     fun tearDown() {
@@ -65,6 +70,13 @@ class AutoRipCoordinatorTest {
         providerTrackId = id,
     )
 
+    private fun album(id: String?) = HomeAlbum(
+        id = "apple_${id.orEmpty()}",
+        title = "Album $id",
+        artist = "Artist",
+        appleCatalogId = id,
+    )
+
     private fun availability(vararg formats: String) = CachedTrackAvailability(
         variants = formats.mapIndexed { index, format ->
             TrackFormatVariant(format = format, backendTrackId = index + 1)
@@ -75,14 +87,20 @@ class AutoRipCoordinatorTest {
 
     private fun coordinator(
         lookup: TrackAvailabilityLookup,
+        albumLookup: AlbumAvailabilityLookup = recordingAlbumLookup { BatchAlbumAvailabilityLookup.EMPTY },
         withSession: Boolean = true,
         ripSuppressionMs: Long = 0L,
     ) = AutoRipCoordinator(
         sessionStore = sessionStore(withSession),
         availabilityLookup = lookup,
+        albumAvailabilityLookup = albumLookup,
         cache = cache,
         startRip = { track ->
             track.providerTrackId?.let(ripped::add) != null
+            true
+        },
+        startAlbumRip = { album ->
+            album.appleCatalogId?.let(rippedAlbums::add) != null
             true
         },
         scope = scope,
@@ -95,6 +113,13 @@ class AutoRipCoordinatorTest {
         result: (ids: List<String>) -> BatchAvailabilityLookup,
     ): TrackAvailabilityLookup = TrackAvailabilityLookup { ids ->
         synchronized(lookedUpBatches) { lookedUpBatches += ids }
+        result(ids)
+    }
+
+    private fun recordingAlbumLookup(
+        result: (ids: List<String>) -> BatchAlbumAvailabilityLookup,
+    ): AlbumAvailabilityLookup = AlbumAvailabilityLookup { ids ->
+        synchronized(lookedUpAlbumBatches) { lookedUpAlbumBatches += ids }
         result(ids)
     }
 
@@ -495,6 +520,82 @@ class AutoRipCoordinatorTest {
 
         assertEquals(listOf("2", "1"), ripped)
         assertFalse(cache.isCached("2"))
+    }
+
+    @Test
+    fun `an uncached album is looked up and sent to startAlbumRip`() {
+        val autoRip = coordinator(
+            lookup = recordingLookup { BatchAvailabilityLookup.EMPTY },
+            albumLookup = recordingAlbumLookup {
+                BatchAlbumAvailabilityLookup(uncachedAlbumIds = it.toSet())
+            },
+        )
+
+        autoRip.observeAlbums(AutoRipSource.HOME_FEED, listOf(album("100")))
+        settle()
+
+        assertEquals(listOf("100"), rippedAlbums)
+        assertFalse(cache.isAlbumCached("100"))
+    }
+
+    @Test
+    fun `a cached album is remembered in cache and not sent to startAlbumRip`() {
+        val autoRip = coordinator(
+            lookup = recordingLookup { BatchAvailabilityLookup.EMPTY },
+            albumLookup = recordingAlbumLookup {
+                BatchAlbumAvailabilityLookup(cachedAlbumIds = it.toSet())
+            },
+        )
+
+        autoRip.observeAlbums(AutoRipSource.HOME_FEED, listOf(album("200")))
+        settle()
+
+        assertTrue(rippedAlbums.isEmpty())
+        assertTrue(cache.isAlbumCached("200"))
+    }
+
+    @Test
+    fun `known cached albums are skipped and never looked up`() {
+        cache.rememberAlbumCached("300")
+        val autoRip = coordinator(
+            lookup = recordingLookup { BatchAvailabilityLookup.EMPTY },
+            albumLookup = recordingAlbumLookup {
+                BatchAlbumAvailabilityLookup(uncachedAlbumIds = it.toSet())
+            },
+        )
+
+        autoRip.observeAlbums(AutoRipSource.HOME_FEED, listOf(album("300")))
+        settle()
+
+        assertTrue(lookedUpAlbumBatches.isEmpty())
+        assertTrue(rippedAlbums.isEmpty())
+    }
+
+    @Test
+    fun `onAlbumRipCompleted caches verdict and triggers scan`() {
+        val autoRip = coordinator(
+            lookup = recordingLookup { BatchAvailabilityLookup.EMPTY },
+            albumLookup = recordingAlbumLookup { BatchAlbumAvailabilityLookup.EMPTY },
+        )
+
+        autoRip.onAlbumRipCompleted("400")
+        settle()
+
+        assertTrue(cache.isAlbumCached("400"))
+    }
+
+    @Test
+    fun `invalidateAlbums drops positive verdict`() {
+        cache.rememberAlbumCached("500")
+        val autoRip = coordinator(
+            lookup = recordingLookup { BatchAvailabilityLookup.EMPTY },
+            albumLookup = recordingAlbumLookup { BatchAlbumAvailabilityLookup.EMPTY },
+        )
+
+        autoRip.invalidateAlbums(listOf("500"))
+        settle()
+
+        assertFalse(cache.isAlbumCached("500"))
     }
 
     private companion object {

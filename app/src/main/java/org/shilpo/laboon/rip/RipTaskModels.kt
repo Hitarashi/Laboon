@@ -183,7 +183,6 @@ data class RipTaskUploadLane(
 
 data class RipTaskSnapshot(
     val taskId: String,
-    val provider: String,
     val sourceTrackId: String,
     val title: String? = null,
     val artist: String? = null,
@@ -233,7 +232,6 @@ data class RipTaskSnapshot(
 
             return RipTaskSnapshot(
                 taskId = json.optString("task_id"),
-                provider = json.optString("provider", "apple"),
                 sourceTrackId = json.optString("source_track_id"),
                 title = title,
                 artist = artist,

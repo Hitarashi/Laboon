@@ -17,6 +17,7 @@ class AutoRipCache(private val store: KeyValueStore) {
 
     private val lock = Any()
     private var entries: MutableMap<String, List<String>>? = null
+    private var albumEntries: MutableSet<String>? = null
 
     fun isCached(providerTrackId: String): Boolean =
         synchronized(lock) { load()[providerTrackId]?.isNotEmpty() == true }
@@ -28,6 +29,38 @@ class AutoRipCache(private val store: KeyValueStore) {
     fun knownCachedIds(candidates: Collection<String>): Set<String> = synchronized(lock) {
         val cached = load()
         candidates.filterTo(LinkedHashSet()) { cached[it]?.isNotEmpty() == true }
+    }
+
+    fun isAlbumCached(providerAlbumId: String): Boolean =
+        synchronized(lock) { loadAlbums().contains(providerAlbumId) }
+
+    fun knownCachedAlbumIds(candidates: Collection<String>): Set<String> = synchronized(lock) {
+        val cached = loadAlbums()
+        candidates.filterTo(LinkedHashSet()) { cached.contains(it) }
+    }
+
+    fun rememberAlbumCached(providerAlbumId: String) {
+        val id = providerAlbumId.trim().takeIf { it.isNotEmpty() && it.all(Char::isDigit) }
+            ?: return
+        synchronized(lock) {
+            val current = loadAlbums()
+            if (current.add(id)) {
+                saveAlbums(current)
+            }
+        }
+    }
+
+    fun rememberAlbumsCached(providerAlbumIds: Collection<String>) {
+        if (providerAlbumIds.isEmpty()) return
+        synchronized(lock) {
+            val current = loadAlbums()
+            var changed = false
+            for (id in providerAlbumIds) {
+                val key = id.trim().takeIf { it.isNotEmpty() && it.all(Char::isDigit) } ?: continue
+                if (current.add(key)) changed = true
+            }
+            if (changed) saveAlbums(current)
+        }
     }
 
     fun rememberCached(providerTrackId: String, formats: List<String>) {
@@ -69,10 +102,24 @@ class AutoRipCache(private val store: KeyValueStore) {
         }
     }
 
+    fun invalidateAlbums(providerAlbumIds: Collection<String>) {
+        if (providerAlbumIds.isEmpty()) return
+        synchronized(lock) {
+            val current = loadAlbums()
+            var changed = false
+            for (id in providerAlbumIds) {
+                if (current.remove(id.trim())) changed = true
+            }
+            if (changed) saveAlbums(current)
+        }
+    }
+
     fun clear() {
         synchronized(lock) {
             entries = mutableMapOf()
+            albumEntries = mutableSetOf()
             store.remove(KEY_CACHE)
+            store.remove(KEY_ALBUM_CACHE)
         }
     }
 
@@ -84,22 +131,24 @@ class AutoRipCache(private val store: KeyValueStore) {
             val root = runCatching { JSONObject(raw) }.getOrNull()
             if (root?.optInt("version") == CACHE_VERSION) {
                 val array = root.optJSONArray("entries")
-                for (index in 0 until (array?.length() ?: 0)) {
-                    val entry = array.optJSONObject(index) ?: continue
-                    val id = entry.optString("id").trim()
-                    if (id.isEmpty() || !id.all(Char::isDigit)) continue
-                    val formats = entry.optJSONArray("formats")?.let { values ->
-                        buildList {
-                            for (formatIndex in 0 until values.length()) {
-                                values.optString(formatIndex).trim()
-                                    .takeIf(String::isNotEmpty)
-                                    ?.let(::add)
+                if (array != null) {
+                    for (index in 0 until array.length()) {
+                        val entry = array.optJSONObject(index) ?: continue
+                        val id = entry.optString("id").trim()
+                        if (id.isEmpty() || !id.all(Char::isDigit)) continue
+                        val formats = entry.optJSONArray("formats")?.let { values ->
+                            buildList {
+                                for (formatIndex in 0 until values.length()) {
+                                    values.optString(formatIndex).trim()
+                                        .takeIf(String::isNotEmpty)
+                                        ?.let(::add)
+                                }
                             }
-                        }
-                    }.orEmpty()
-                    if (formats.isEmpty()) continue
-                    loaded[id] = formats
-                    if (loaded.size >= MAX_ENTRIES) break
+                        }.orEmpty()
+                        if (formats.isEmpty()) continue
+                        loaded[id] = formats
+                        if (loaded.size >= MAX_ENTRIES) break
+                    }
                 }
             }
         }
@@ -135,8 +184,56 @@ class AutoRipCache(private val store: KeyValueStore) {
         )
     }
 
+    private fun loadAlbums(): MutableSet<String> {
+        albumEntries?.let { return it }
+        val raw = store.getString(KEY_ALBUM_CACHE)
+        val loaded = mutableSetOf<String>()
+        if (raw != null) {
+            val root = runCatching { JSONObject(raw) }.getOrNull()
+            if (root?.optInt("version") == CACHE_VERSION) {
+                val array = root.optJSONArray("entries")
+                if (array != null) {
+                    for (index in 0 until array.length()) {
+                        val entry = array.optJSONObject(index)
+                        val id = (entry?.optString("id") ?: array.optString(index)).trim()
+                        if (id.isEmpty() || !id.all(Char::isDigit)) continue
+                        loaded += id
+                        if (loaded.size >= MAX_ENTRIES) break
+                    }
+                }
+            }
+        }
+        albumEntries = loaded
+        return loaded
+    }
+
+    private fun saveAlbums(current: MutableSet<String>) {
+        val trimmed = if (current.size > MAX_ENTRIES) {
+            current.toList().takeLast(MAX_ENTRIES).toSet()
+        } else {
+            current
+        }
+        albumEntries = LinkedHashSet(trimmed)
+        if (trimmed.isEmpty()) {
+            store.remove(KEY_ALBUM_CACHE)
+            return
+        }
+        store.putString(
+            KEY_ALBUM_CACHE,
+            JSONObject().apply {
+                put("version", CACHE_VERSION)
+                put("entries", JSONArray().apply {
+                    trimmed.forEach { id ->
+                        put(JSONObject().apply { put("id", id) })
+                    }
+                })
+            }.toString(),
+        )
+    }
+
     private companion object {
         const val KEY_CACHE = "auto_rip_cache_v1"
+        const val KEY_ALBUM_CACHE = "auto_rip_album_cache_v1"
         const val CACHE_VERSION = 1
         const val MAX_ENTRIES = 500
     }

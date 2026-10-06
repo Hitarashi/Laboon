@@ -392,7 +392,7 @@ private fun SearchTrackRow(
     val sourceTrackId = track.providerTrackId
     val ripTask = remember(ripTasks, sourceTrackId) {
         ripTasks.firstOrNull {
-            it.provider.equals("apple", ignoreCase = true) && it.sourceTrackId == sourceTrackId
+            it.sourceTrackId == sourceTrackId
         }
     }
     val isRipPending = sourceTrackId != null && sourceTrackId in pendingRipTrackIds

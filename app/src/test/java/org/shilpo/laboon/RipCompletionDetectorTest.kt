@@ -126,4 +126,57 @@ class RipCompletionDetectorTest {
             )
         )
     }
+
+    @Test
+    fun `isAlbum recognizes album tasks`() {
+        assertTrue(RipCompletionDetector.isAlbum(task("is_album" to true)))
+        assertTrue(!RipCompletionDetector.isAlbum(task("is_album" to false)))
+        assertTrue(!RipCompletionDetector.isAlbum(task()))
+        assertTrue(!RipCompletionDetector.isAlbum(null))
+    }
+
+    @Test
+    fun `completedProviderTrackId returns null when is_album is true`() {
+        val result = RipCompletionDetector.completedProviderTrackId(
+            "rip_task_completed",
+            task("source_track_id" to "123", "is_album" to true),
+        )
+        assertNull(result)
+    }
+
+    @Test
+    fun `completedProviderAlbumId yields provider album id on successful completion`() {
+        val result = RipCompletionDetector.completedProviderAlbumId(
+            "rip_task_completed",
+            task("source_track_id" to "456", "is_album" to true),
+        )
+        assertEquals("456", result)
+    }
+
+    @Test
+    fun `completedProviderAlbumId returns null when is_album is false or absent`() {
+        val result = RipCompletionDetector.completedProviderAlbumId(
+            "rip_task_completed",
+            task("source_track_id" to "456"),
+        )
+        assertNull(result)
+    }
+
+    @Test
+    fun `completedProviderAlbumId returns null on failed album task`() {
+        val result = RipCompletionDetector.completedProviderAlbumId(
+            "rip_task_completed",
+            task("source_track_id" to "456", "is_album" to true, "error" to "download failed"),
+        )
+        assertNull(result)
+    }
+
+    @Test
+    fun `completedProviderAlbumId returns null when album task is in progress`() {
+        val result = RipCompletionDetector.completedProviderAlbumId(
+            "rip_task_updated",
+            task("source_track_id" to "456", "is_album" to true, "job_stage" to "downloading"),
+        )
+        assertNull(result)
+    }
 }

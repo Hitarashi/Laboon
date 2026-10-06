@@ -41,9 +41,10 @@ class RipConnectionHolder internal constructor(
     val autoRip: AutoRipCoordinator = AutoRipCoordinator(
         sessionStore = sessionStore,
         availabilityLookup = searchRepository,
+        albumAvailabilityLookup = searchRepository,
         cache = AutoRipCache(SharedPreferencesKeyValueStore(appContext)),
         startRip = ripClient::startRip,
-
+        startAlbumRip = ripClient::startAlbumRip,
         scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     )
 
@@ -55,10 +56,17 @@ class RipConnectionHolder internal constructor(
      */
     val completedRipTrackIds: SharedFlow<String> = ripClient.completedRipTrackIds
 
+    val completedRipAlbumIds: SharedFlow<String> = ripClient.completedRipAlbumIds
+
     init {
         scope.launch {
             ripClient.completedRipTrackIds.collect { providerTrackId ->
                 autoRip.onRipCompleted(providerTrackId)
+            }
+        }
+        scope.launch {
+            ripClient.completedRipAlbumIds.collect { providerAlbumId ->
+                autoRip.onAlbumRipCompleted(providerAlbumId)
             }
         }
     }

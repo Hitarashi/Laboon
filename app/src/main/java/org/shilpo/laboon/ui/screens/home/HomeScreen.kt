@@ -251,6 +251,12 @@ fun HomeScreen(
     LaunchedEffect(autoRipCoordinator, feedTracks) {
         autoRipCoordinator.observe(AutoRipSource.HOME_FEED, feedTracks)
     }
+    val matchedTopAlbums = remember(feedState.topAlbums.items) {
+        feedState.topAlbums.items.filter { !it.appleCatalogId.isNullOrBlank() }
+    }
+    LaunchedEffect(autoRipCoordinator, matchedTopAlbums) {
+        autoRipCoordinator.observeAlbums(AutoRipSource.HOME_FEED, matchedTopAlbums)
+    }
     LaunchedEffect(autoRipCoordinator, queueState.items) {
         autoRipCoordinator.observe(AutoRipSource.PLAYBACK_QUEUE, queueState.items)
     }
@@ -260,16 +266,49 @@ fun HomeScreen(
     LaunchedEffect(autoRipCoordinator, albumTracks) {
         autoRipCoordinator.observe(AutoRipSource.ALBUM_DETAILS, albumTracks)
     }
+    val loadedAlbum = remember(albumDetailsState) {
+        (albumDetailsState as? AlbumDetailsUiState.Loaded)?.album?.let { album ->
+            listOf(
+                HomeAlbum(
+                    id = "apple_${album.id}",
+                    title = album.name,
+                    artist = album.artistName.orEmpty(),
+                    artworkUrl = album.artworkUrl,
+                    appleCatalogId = album.id,
+                )
+            )
+        }.orEmpty()
+    }
+    LaunchedEffect(autoRipCoordinator, loadedAlbum) {
+        autoRipCoordinator.observeAlbums(AutoRipSource.ALBUM_DETAILS, loadedAlbum)
+    }
 
     LaunchedEffect(ripConnection) {
-        ripConnection.completedRipTrackIds.collect { providerTrackId ->
-            val lookup = ripConnection.autoRip.refreshAvailabilityNow(providerTrackId)
-            val availability = lookup.cached
-            if (availability.isEmpty()) return@collect
-            feedState = feedState.withAvailability(availability)
-            homeFeedCache.save(feedState)
-            albumDetailsState = albumDetailsState.withAvailability(availability)
-            playbackManager.queueManager.applyAvailability(availability)
+        launch {
+            ripConnection.completedRipTrackIds.collect { providerTrackId ->
+                val lookup = ripConnection.autoRip.refreshAvailabilityNow(providerTrackId)
+                val availability = lookup.cached
+                if (availability.isEmpty()) return@collect
+                feedState = feedState.withAvailability(availability)
+                homeFeedCache.save(feedState)
+                albumDetailsState = albumDetailsState.withAvailability(availability)
+                playbackManager.queueManager.applyAvailability(availability)
+            }
+        }
+        launch {
+            ripConnection.completedRipAlbumIds.collect { completedAlbumId ->
+                val loadedState = albumDetailsState as? AlbumDetailsUiState.Loaded
+                val loadedAlbumId = loadedState?.album?.id ?: selectedAlbumId
+                if (loadedAlbumId == completedAlbumId) {
+                    val refreshedState =
+                        albumDetailsRepository.refreshAlbum(completedAlbumId).toUiState()
+                    if (refreshedState is AlbumDetailsUiState.Loaded ||
+                        albumDetailsState !is AlbumDetailsUiState.Loaded
+                    ) {
+                        albumDetailsState = refreshedState
+                    }
+                }
+            }
         }
     }
 

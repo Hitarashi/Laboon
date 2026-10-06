@@ -10,7 +10,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.shilpo.laboon.auth.SessionStore
+import org.shilpo.laboon.home.HomeAlbum
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.search.AlbumAvailabilityLookup
+import org.shilpo.laboon.search.BatchAlbumAvailabilityLookup
 import org.shilpo.laboon.search.BatchAvailabilityLookup
 import org.shilpo.laboon.search.SearchRepositoryImpl
 import org.shilpo.laboon.search.TrackAvailabilityLookup
@@ -51,8 +54,11 @@ class AutoRipCoordinator(
     private val sessionStore: SessionStore,
     private val availabilityLookup: TrackAvailabilityLookup =
         SearchRepositoryImpl(sessionStore),
+    private val albumAvailabilityLookup: AlbumAvailabilityLookup =
+        SearchRepositoryImpl(sessionStore),
     private val cache: AutoRipCache,
     private val startRip: (HomeTrack) -> Boolean,
+    private val startAlbumRip: (HomeAlbum) -> Boolean = { false },
     private val scope: CoroutineScope,
     private val debounceMs: Long = DEBOUNCE_MS,
     private val rescanIntervalMs: Long = RESCAN_INTERVAL_MS,
@@ -66,11 +72,13 @@ class AutoRipCoordinator(
     )
 
     private val observed = LinkedHashMap<AutoRipSource, List<HomeTrack>>()
+    private val observedAlbums = LinkedHashMap<AutoRipSource, List<HomeAlbum>>()
     private val observedLock = Any()
     private val scanMutex = Mutex()
 
     /** In-memory suppression so a single un-rippable track cannot re-rip-storm every scan. */
     private val ripRequestedAtMs = LinkedHashMap<String, Long>()
+    private val albumRipRequestedAtMs = LinkedHashMap<String, Long>()
 
     private val scanRequests = Channel<Unit>(Channel.CONFLATED)
     private var scanLoop: Job? = null
@@ -98,8 +106,12 @@ class AutoRipCoordinator(
     fun stop() {
         scanLoop?.cancel()
         scanLoop = null
-        synchronized(observedLock) { observed.clear() }
+        synchronized(observedLock) {
+            observed.clear()
+            observedAlbums.clear()
+        }
         synchronized(ripRequestedAtMs) { ripRequestedAtMs.clear() }
+        synchronized(albumRipRequestedAtMs) { albumRipRequestedAtMs.clear() }
         scanRequests.trySend(Unit)
     }
 
@@ -119,6 +131,18 @@ class AutoRipCoordinator(
         scanRequests.trySend(Unit)
     }
 
+    fun observeAlbums(source: AutoRipSource, albums: List<HomeAlbum>) {
+        if (!hasSession()) {
+            log("observeAlbums($source, ${albums.size}) ignored: no session")
+            return
+        }
+        synchronized(observedLock) {
+            if (albums.isEmpty()) observedAlbums.remove(source) else observedAlbums[source] = albums
+        }
+        log("observeAlbums($source, ${albums.size} albums)")
+        scanRequests.trySend(Unit)
+    }
+
     /**
      * Drops positive verdicts for these ids so the next scan re-checks the server. Used for
      * explicit refresh semantics (album reload) where the local cache may be out of date.
@@ -134,9 +158,29 @@ class AutoRipCoordinator(
         scanRequests.trySend(Unit)
     }
 
+    fun invalidateAlbums(providerAlbumIds: Collection<String>) {
+        if (providerAlbumIds.isEmpty()) return
+        val ids = providerAlbumIds.mapNotNull(AutoRipPlanner::normalizeProviderTrackId)
+        if (ids.isEmpty()) return
+        cache.invalidateAlbums(ids)
+        synchronized(albumRipRequestedAtMs) {
+            ids.forEach(albumRipRequestedAtMs::remove)
+        }
+        scanRequests.trySend(Unit)
+    }
+
     /** Requests a scan on the next tick without waiting for a state change. */
     fun requestScan() {
         scanRequests.trySend(Unit)
+    }
+
+    fun onAlbumRipCompleted(appleAlbumId: String) {
+        val id = AutoRipPlanner.normalizeProviderTrackId(appleAlbumId) ?: return
+        cache.rememberAlbumCached(id)
+        synchronized(albumRipRequestedAtMs) {
+            albumRipRequestedAtMs.remove(id)
+        }
+        requestScan()
     }
 
     /**
@@ -209,34 +253,8 @@ class AutoRipCoordinator(
             }
             scanMutex.withLock {
                 if (!hasSession()) return
-                val candidates = AutoRipPlanner.candidates(observedTracks())
-                if (candidates.isEmpty()) {
-                    log("scan: no candidates")
-                    return
-                }
-
-                val cacheableIds = candidates.map(AutoRipPlanner.Candidate::providerTrackId)
-                val plan = AutoRipPlanner.plan(
-                    candidates = candidates,
-                    knownCachedIds = cache.knownCachedIds(cacheableIds),
-                )
-                if (plan.needsLookup.isEmpty()) {
-                    log("scan: ${candidates.size} candidate(s) all known cached")
-                    return
-                }
-
-                val now = nowMs()
-                val toLookup = plan.needsLookup.filterNot { isRipRequestSuppressed(it, now) }
-                log(
-                    "scan: ${candidates.size} candidate(s), " +
-                            "${plan.knownCached.size} cached, ${plan.needsLookup.size} to look up, " +
-                            "${toLookup.size} after suppression"
-                )
-                if (toLookup.isEmpty()) return
-
-                for (batch in AutoRipPlanner.batches(toLookup)) {
-                    processBatch(batch)
-                }
+                scanTracks()
+                scanAlbums()
             }
         } catch (cancellation: CancellationException) {
             throw cancellation
@@ -244,6 +262,107 @@ class AutoRipCoordinator(
             runCatching { Log.w(TAG, "Auto rip scan failed: ${error.message}") }
         }
     }
+
+    private suspend fun scanTracks() {
+        val candidates = AutoRipPlanner.candidates(observedTracks())
+        if (candidates.isEmpty()) {
+            log("scan: no candidates")
+            return
+        }
+
+        val cacheableIds = candidates.map(AutoRipPlanner.Candidate::providerTrackId)
+        val plan = AutoRipPlanner.plan(
+            candidates = candidates,
+            knownCachedIds = cache.knownCachedIds(cacheableIds),
+        )
+        if (plan.needsLookup.isEmpty()) {
+            log("scan: ${candidates.size} candidate(s) all known cached")
+            return
+        }
+
+        val now = nowMs()
+        val toLookup = plan.needsLookup.filterNot { isRipRequestSuppressed(it, now) }
+        log(
+            "scan: ${candidates.size} candidate(s), " +
+                    "${plan.knownCached.size} cached, ${plan.needsLookup.size} to look up, " +
+                    "${toLookup.size} after suppression"
+        )
+        if (toLookup.isEmpty()) return
+
+        for (batch in AutoRipPlanner.batches(toLookup)) {
+            processBatch(batch)
+        }
+    }
+
+    private suspend fun scanAlbums() {
+        val candidateMap = LinkedHashMap<String, HomeAlbum>()
+        for (album in observedAlbums()) {
+            val id = AutoRipPlanner.normalizeProviderTrackId(album.appleCatalogId) ?: continue
+            candidateMap.putIfAbsent(id, album)
+        }
+        if (candidateMap.isEmpty()) {
+            log("scan albums: no candidates")
+            return
+        }
+
+        val candidateIds = candidateMap.keys.toList()
+        val knownCachedIds = cache.knownCachedAlbumIds(candidateIds)
+        val needsLookup = candidateMap.filterKeys { it !in knownCachedIds }
+        if (needsLookup.isEmpty()) {
+            log("scan albums: ${candidateMap.size} candidate(s) all known cached")
+            return
+        }
+
+        val now = nowMs()
+        val toLookup = needsLookup.filterKeys { !isAlbumRipRequestSuppressed(it, now) }
+        log(
+            "scan albums: ${candidateMap.size} candidate(s), " +
+                    "${knownCachedIds.size} cached, ${needsLookup.size} to look up, " +
+                    "${toLookup.size} after suppression"
+        )
+        if (toLookup.isEmpty()) return
+
+        for (batchIds in toLookup.keys.chunked(AutoRipPlanner.LOOKUP_BATCH_SIZE)) {
+            val lookupResult = runCatching {
+                albumAvailabilityLookup.lookupAvailableAlbums(batchIds)
+            }.getOrElse { error ->
+                log("album lookup failed for ${batchIds.size} id(s): ${error.message}")
+                BatchAlbumAvailabilityLookup.unavailable(batchIds)
+            }
+
+            if (lookupResult.cachedAlbumIds.isNotEmpty()) {
+                cache.rememberAlbumsCached(lookupResult.cachedAlbumIds)
+            }
+
+            val accepted = mutableListOf<String>()
+            for (uncachedId in lookupResult.uncachedAlbumIds) {
+                val album = toLookup[uncachedId] ?: continue
+                if (startAlbumRip(album)) {
+                    accepted += uncachedId
+                } else {
+                    log("startAlbumRip declined for $uncachedId; will retry next scan")
+                }
+            }
+            if (accepted.isNotEmpty()) {
+                val requestTime = nowMs()
+                synchronized(albumRipRequestedAtMs) {
+                    accepted.forEach { albumRipRequestedAtMs[it] = requestTime }
+                }
+            }
+        }
+    }
+
+    private fun isAlbumRipRequestSuppressed(candidateAlbumId: String, now: Long): Boolean =
+        synchronized(albumRipRequestedAtMs) {
+            val lastRequest = albumRipRequestedAtMs[candidateAlbumId] ?: return false
+            val age = now - lastRequest
+            if (age < ripSuppressionMs) return true
+            albumRipRequestedAtMs.remove(candidateAlbumId)
+            false
+        }
+
+    private fun observedAlbums(): List<HomeAlbum> =
+        synchronized(observedLock) { observedAlbums.values.flatten() }
 
     private fun isRipRequestSuppressed(candidate: AutoRipPlanner.Candidate, now: Long): Boolean =
         synchronized(ripRequestedAtMs) {

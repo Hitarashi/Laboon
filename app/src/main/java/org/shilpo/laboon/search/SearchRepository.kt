@@ -68,6 +68,23 @@ fun interface TrackAvailabilityLookup {
     suspend fun lookupAvailableFormats(providerTrackIds: List<String>): BatchAvailabilityLookup
 }
 
+data class BatchAlbumAvailabilityLookup(
+    val cachedAlbumIds: Set<String> = emptySet(),
+    val uncachedAlbumIds: Set<String> = emptySet(),
+    val unresolvedAlbumIds: Set<String> = emptySet(),
+) {
+    companion object {
+        val EMPTY = BatchAlbumAvailabilityLookup()
+
+        fun unavailable(requestedIds: Iterable<String>): BatchAlbumAvailabilityLookup =
+            BatchAlbumAvailabilityLookup(unresolvedAlbumIds = requestedIds.toSet())
+    }
+}
+
+fun interface AlbumAvailabilityLookup {
+    suspend fun lookupAvailableAlbums(providerAlbumIds: List<String>): BatchAlbumAvailabilityLookup
+}
+
 interface SearchRepository {
     suspend fun search(query: String): List<HomeTrack>
     suspend fun enrichAvailability(tracks: List<HomeTrack>): List<HomeTrack>
@@ -81,7 +98,7 @@ interface SearchRepository {
 class SearchRepositoryImpl(
     private val sessionStore: SessionStore,
     private val http: HttpJsonClient = HttpJsonClient(),
-) : SearchRepository, TrackAvailabilityLookup {
+) : SearchRepository, TrackAvailabilityLookup, AlbumAvailabilityLookup {
 
     override suspend fun search(query: String): List<HomeTrack> = withContext(Dispatchers.IO) {
         val apiBaseUrl = sessionStore.getSession()?.lyricspornApiUrl
@@ -229,6 +246,77 @@ class SearchRepositoryImpl(
                 unresolvedIds = unresolved,
             )
         }
+
+    override suspend fun lookupAvailableAlbums(
+        providerAlbumIds: List<String>,
+    ): BatchAlbumAvailabilityLookup = withContext(Dispatchers.IO) {
+        val session = sessionStore.getSession()
+            ?: return@withContext BatchAlbumAvailabilityLookup.unavailable(providerAlbumIds)
+        val serverUrl = sanitizeServerUrl(session.serverUrl)
+        val token = session.token.trim()
+        if (serverUrl.isEmpty() || token.isEmpty()) {
+            return@withContext BatchAlbumAvailabilityLookup.unavailable(providerAlbumIds)
+        }
+
+        val validIds = providerAlbumIds
+            .mapNotNull(::normalizeProviderTrackId)
+            .distinct()
+        if (validIds.isEmpty()) return@withContext BatchAlbumAvailabilityLookup.EMPTY
+
+        val cached = linkedSetOf<String>()
+        val uncached = linkedSetOf<String>()
+        val unresolved = linkedSetOf<String>()
+
+        for (batch in validIds.chunked(LOOKUP_BATCH_SIZE)) {
+            val body = JSONObject().put("album_ids", JSONArray(batch)).toString()
+            val response = when (
+                val outcome = http.postJson(
+                    "$serverUrl/api/v1/lookup",
+                    body,
+                    mapOf("Authorization" to "Bearer $token"),
+                )
+            ) {
+                is HttpOutcome.Success -> runCatching { JSONObject(outcome.value) }.getOrNull()
+                is HttpOutcome.Failure -> null
+            }
+
+            if (response == null) {
+                unresolved += batch
+                continue
+            }
+
+            val albums = response.arrOrNull("albums")
+            if (albums == null) {
+                unresolved += batch
+                continue
+            }
+
+            val foundIds = mutableSetOf<String>()
+            for (index in 0 until albums.length()) {
+                val albumObj = albums.objAtOrNull(index) ?: continue
+                val appleId = albumObj.stringOrNull("apple_album_id")
+                    ?.let(::normalizeProviderTrackId)
+                    ?: continue
+                foundIds += appleId
+                val zipAvailable = albumObj.optBoolean("zip_available", false)
+                if (zipAvailable) {
+                    cached += appleId
+                } else {
+                    uncached += appleId
+                }
+            }
+            for (id in batch) {
+                if (id !in foundIds) {
+                    uncached += id
+                }
+            }
+        }
+        BatchAlbumAvailabilityLookup(
+            cachedAlbumIds = cached,
+            uncachedAlbumIds = uncached,
+            unresolvedAlbumIds = unresolved,
+        )
+    }
 
     private fun normalizeProviderTrackId(raw: String?): String? =
         raw?.trim()?.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }

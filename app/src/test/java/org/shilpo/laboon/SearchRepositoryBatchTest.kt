@@ -59,4 +59,20 @@ class SearchRepositoryBatchTest {
     fun `a single unresolvable track still resolves to nothing`() = runBlocking {
         assertEquals(emptyList<HomeTrack>(), repository.resolvePlaybackBatch(listOf(track("only"))))
     }
+
+    @Test
+    fun `an empty candidate list for album lookup returns EMPTY`() = runBlocking {
+        assertEquals(
+            org.shilpo.laboon.search.BatchAlbumAvailabilityLookup.EMPTY,
+            repository.lookupAvailableAlbums(emptyList()),
+        )
+    }
+
+    @Test
+    fun `no session returns unavailable for album lookup`() = runBlocking {
+        val result = repository.lookupAvailableAlbums(listOf("123"))
+        assertEquals(setOf("123"), result.unresolvedAlbumIds)
+        assertEquals(emptySet<String>(), result.cachedAlbumIds)
+        assertEquals(emptySet<String>(), result.uncachedAlbumIds)
+    }
 }

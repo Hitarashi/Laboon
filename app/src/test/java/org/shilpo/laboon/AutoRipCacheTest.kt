@@ -112,4 +112,76 @@ class AutoRipCacheTest {
 
         assertFalse(AutoRipCache(store).isCached("111"))
     }
+
+    @Test
+    fun `an unseen album id is not cached`() {
+        assertFalse(AutoRipCache(store).isAlbumCached("111"))
+    }
+
+    @Test
+    fun `a positive album verdict survives a new cache instance`() {
+        AutoRipCache(store).rememberAlbumCached("111")
+
+        val reloaded = AutoRipCache(store)
+        assertTrue(reloaded.isAlbumCached("111"))
+    }
+
+    @Test
+    fun `non digit album ids are rejected`() {
+        val cache = AutoRipCache(store)
+        cache.rememberAlbumCached("abc")
+
+        assertFalse(cache.isAlbumCached("abc"))
+        assertTrue(cache.knownCachedAlbumIds(listOf("abc")).isEmpty())
+    }
+
+    @Test
+    fun `only previously cached album ids are reported as known`() {
+        val cache = AutoRipCache(store)
+        cache.rememberAlbumsCached(listOf("1", "2"))
+
+        val known = cache.knownCachedAlbumIds(listOf("1", "2", "3"))
+        assertEquals(setOf("1", "2"), known)
+    }
+
+    @Test
+    fun `invalidateAlbums drops the positive verdict so the next scan re-checks`() {
+        val cache = AutoRipCache(store)
+        cache.rememberAlbumsCached(listOf("1", "2"))
+
+        cache.invalidateAlbums(listOf("1"))
+
+        assertFalse(cache.isAlbumCached("1"))
+        assertTrue(cache.isAlbumCached("2"))
+    }
+
+    @Test
+    fun `clear forgets both tracks and albums`() {
+        val cache = AutoRipCache(store)
+        cache.rememberCached("111", listOf("alac"))
+        cache.rememberAlbumCached("222")
+
+        cache.clear()
+
+        assertFalse(cache.isCached("111"))
+        assertFalse(cache.isAlbumCached("222"))
+        assertTrue(store.stored.isEmpty())
+    }
+
+    @Test
+    fun `corrupt persisted album json is treated as an empty cache`() {
+        store.putString("auto_rip_album_cache_v1", "not json at all")
+
+        assertFalse(AutoRipCache(store).isAlbumCached("111"))
+    }
+
+    @Test
+    fun `a wrong album cache version is ignored`() {
+        store.putString(
+            "auto_rip_album_cache_v1",
+            """{"version":0,"entries":[{"id":"111"}]}""",
+        )
+
+        assertFalse(AutoRipCache(store).isAlbumCached("111"))
+    }
 }

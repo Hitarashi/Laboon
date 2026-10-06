@@ -37,14 +37,26 @@ object RipCompletionDetector {
         "revoke",
     )
 
+    fun isAlbum(task: JSONObject?): Boolean = task?.optBoolean("is_album") == true
+
     /**
      * Returns the provider track id whose rip completed successfully, or null when the event
      * is not a successful completion (in-progress updates, failures, unusable ids).
      */
     fun completedProviderTrackId(type: String, task: JSONObject?): String? {
         if (task == null) return null
+        if (isAlbum(task)) return null
         if (hasFailed(task)) return null
         if (!isCompletion(type, task)) return null
+        return normalizeId(task.optString("source_track_id"))
+    }
+
+    fun completedProviderAlbumId(type: String, task: JSONObject?): String? {
+        if (task == null || !isAlbum(task) || hasFailed(task) || !isCompletion(
+                type,
+                task
+            )
+        ) return null
         return normalizeId(task.optString("source_track_id"))
     }
 

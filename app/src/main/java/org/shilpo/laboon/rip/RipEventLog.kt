@@ -16,7 +16,6 @@ object RipEventLog {
     /** Scalar fields worth capturing, in a stable order. */
     private val SCALAR_KEYS = listOf(
         "task_id",
-        "provider",
         "source_track_id",
         "result_track_id",
         "track_id",

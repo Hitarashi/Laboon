@@ -23,6 +23,7 @@ import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
 import org.shilpo.laboon.auth.SessionStore
+import org.shilpo.laboon.home.HomeAlbum
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.net.arrOrNull
 import org.shilpo.laboon.net.objAtOrNull
@@ -51,6 +52,12 @@ class RipWebSocketClient(
      */
     val completedRipTrackIds: SharedFlow<String> = _completedRipTrackIds.asSharedFlow()
 
+    private val _completedRipAlbumIds = MutableSharedFlow<String>(
+        replay = 0,
+        extraBufferCapacity = COMPLETION_BUFFER,
+    )
+    val completedRipAlbumIds: SharedFlow<String> = _completedRipAlbumIds.asSharedFlow()
+
     private var webSocket: WebSocket? = null
     private val isRunning = AtomicBoolean(false)
     private var reconnectJob: Job? = null
@@ -58,10 +65,12 @@ class RipWebSocketClient(
     private data class PendingRipRequest(
         val sourceTrackId: String,
         val message: String,
+        val isAlbum: Boolean = false,
     )
 
     private val pendingRipRequests = ConcurrentHashMap<String, PendingRipRequest>()
     private val sentRipRequestIds = ConcurrentHashMap.newKeySet<String>()
+    private val pendingAlbumIds = ConcurrentHashMap.newKeySet<String>()
 
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -79,6 +88,7 @@ class RipWebSocketClient(
         reconnectJob?.cancel()
         reconnectJob = null
         sentRipRequestIds.clear()
+        pendingAlbumIds.clear()
         disconnectSocket()
         _state.update { it.copy(wsStatus = RipWsStatus.DISCONNECTED) }
     }
@@ -195,8 +205,14 @@ class RipWebSocketClient(
                         val prev = prevMap[taskId]
                         newTasks.add(RipTaskSnapshot.fromJson(taskObj, prev))
                     }
-                    val sourceTrackIds = newTasks.map(RipTaskSnapshot::sourceTrackId).toSet()
+                    val sourceTrackIds =
+                        newTasks.filterNot { it.isAlbum }.map(RipTaskSnapshot::sourceTrackId)
+                            .toSet()
+                    val sourceAlbumIds =
+                        newTasks.filter { it.isAlbum }.map(RipTaskSnapshot::sourceTrackId).toSet()
                     clearPendingRipRequestsForTracks(sourceTrackIds)
+                    clearPendingRipRequestsForAlbums(sourceAlbumIds)
+                    pendingAlbumIds.removeAll(sourceAlbumIds)
                     _state.update {
                         it.copy(
                             activeTasks = newTasks,
@@ -212,7 +228,12 @@ class RipWebSocketClient(
 
                     val previous = _state.value.activeTasks.find { it.taskId == taskId }
                     val updated = RipTaskSnapshot.fromJson(taskObj, previous)
-                    clearPendingRipRequestsForTracks(setOf(updated.sourceTrackId))
+                    if (updated.isAlbum) {
+                        clearPendingRipRequestsForAlbums(setOf(updated.sourceTrackId))
+                        pendingAlbumIds.remove(updated.sourceTrackId)
+                    } else {
+                        clearPendingRipRequestsForTracks(setOf(updated.sourceTrackId))
+                    }
                     _state.update { current ->
                         val existingIndex = current.activeTasks.indexOfFirst { it.taskId == taskId }
                         val newActive = if (existingIndex >= 0) {
@@ -222,7 +243,9 @@ class RipWebSocketClient(
                             listOf(updated) + current.activeTasks
                         }
                         current.copy(activeTasks = newActive)
-                            .copy(pendingTrackIds = current.pendingTrackIds - updated.sourceTrackId)
+                            .copy(
+                                pendingTrackIds = if (updated.isAlbum) current.pendingTrackIds else current.pendingTrackIds - updated.sourceTrackId
+                            )
                     }
                 }
 
@@ -231,7 +254,12 @@ class RipWebSocketClient(
                     val pendingRequest = pendingRipRequests.remove(requestId)
                     sentRipRequestIds.remove(requestId)
                     pendingRequest?.let {
-                        clearPendingRipRequestsForTracks(setOf(it.sourceTrackId))
+                        if (it.isAlbum) {
+                            clearPendingRipRequestsForAlbums(setOf(it.sourceTrackId))
+                            pendingAlbumIds.remove(it.sourceTrackId)
+                        } else {
+                            clearPendingRipRequestsForTracks(setOf(it.sourceTrackId))
+                        }
                     }
                     val taskObj = payload.objOrNull("task")
                     val task = taskObj?.let { taskJson ->
@@ -254,7 +282,7 @@ class RipWebSocketClient(
                         current.copy(
                             activeTasks = activeTasks,
                             pendingTrackIds = pendingRequest?.let {
-                                current.pendingTrackIds - it.sourceTrackId
+                                if (it.isAlbum) current.pendingTrackIds else current.pendingTrackIds - it.sourceTrackId
                             } ?: current.pendingTrackIds,
                             errorMessage = null,
                         )
@@ -279,10 +307,15 @@ class RipWebSocketClient(
                         sentRipRequestIds.remove(id)
                         pendingRipRequests.remove(id)
                     }
+                    failedRequest?.let {
+                        if (it.isAlbum) {
+                            pendingAlbumIds.remove(it.sourceTrackId)
+                        }
+                    }
                     _state.update { current ->
                         current.copy(
                             pendingTrackIds = failedRequest?.let {
-                                current.pendingTrackIds - it.sourceTrackId
+                                if (it.isAlbum) current.pendingTrackIds else current.pendingTrackIds - it.sourceTrackId
                             } ?: current.pendingTrackIds,
                             errorMessage = message,
                         )
@@ -314,18 +347,33 @@ class RipWebSocketClient(
 
     private fun emitRipCompletion(type: String, payload: JSONObject) {
         runCatching {
+            val task = payload.objOrNull("task")
+            val providerAlbumId =
+                RipCompletionDetector.completedProviderAlbumId(type, task)
+            if (providerAlbumId != null) {
+                val delivered = _completedRipAlbumIds.tryEmit(providerAlbumId)
+                Log.i(
+                    TAG,
+                    if (delivered) {
+                        "album rip completed for provider album $providerAlbumId; refreshing availability"
+                    } else {
+                        "album rip completed for provider album $providerAlbumId but no listener accepted it"
+                    }
+                )
+            }
             val providerTrackId =
-                RipCompletionDetector.completedProviderTrackId(type, payload.objOrNull("task"))
-                    ?: return@runCatching
-            val delivered = _completedRipTrackIds.tryEmit(providerTrackId)
-            Log.i(
-                TAG,
-                if (delivered) {
-                    "rip completed for provider track $providerTrackId; refreshing availability"
-                } else {
-                    "rip completed for provider track $providerTrackId but no listener accepted it"
-                }
-            )
+                RipCompletionDetector.completedProviderTrackId(type, task)
+            if (providerTrackId != null) {
+                val delivered = _completedRipTrackIds.tryEmit(providerTrackId)
+                Log.i(
+                    TAG,
+                    if (delivered) {
+                        "rip completed for provider track $providerTrackId; refreshing availability"
+                    } else {
+                        "rip completed for provider track $providerTrackId but no listener accepted it"
+                    }
+                )
+            }
         }
     }
 
@@ -364,10 +412,7 @@ class RipWebSocketClient(
             track.providerTrackId?.trim()?.takeIf { id -> id.isNotBlank() && id.all(Char::isDigit) }
                 ?: return false
         val current = _state.value
-        if (current.pendingTrackIds.contains(sourceTrackId) || current.activeTasks.any {
-                it.provider.equals("apple", ignoreCase = true) && it.sourceTrackId == sourceTrackId
-            }
-        ) return false
+        if (current.pendingTrackIds.contains(sourceTrackId) || current.activeTasks.any { it.sourceTrackId == sourceTrackId }) return false
 
         val requestId = "req_${UUID.randomUUID()}"
         val request = JSONObject().apply {
@@ -379,14 +424,7 @@ class RipWebSocketClient(
                     put(
                         "request",
                         JSONObject().apply {
-                            put("provider", "apple")
                             put("track_id", sourceTrackId)
-                            put("codec", track.codec?.takeIf(String::isNotBlank) ?: "alac")
-                            put("title", track.title)
-                            put("artist", track.artist)
-                            track.album?.let { put("album", it) }
-                            track.durationMs?.let { put("duration", (it / 1000L).toInt()) }
-                            track.artworkUrl?.let { put("artwork_url", it) }
                         },
                     )
                 },
@@ -408,6 +446,46 @@ class RipWebSocketClient(
         return true
     }
 
+    fun startAlbumRip(album: HomeAlbum): Boolean {
+        val albumId =
+            album.appleCatalogId?.trim()?.takeIf { id -> id.isNotBlank() && id.all(Char::isDigit) }
+                ?: return false
+        val current = _state.value
+        if (pendingAlbumIds.contains(albumId) || current.activeTasks.any { it.isAlbum && it.sourceTrackId == albumId }) return false
+
+        val requestId = "req_${UUID.randomUUID()}"
+        val request = JSONObject().apply {
+            put("type", "create_rip_task")
+            put(
+                "payload",
+                JSONObject().apply {
+                    put("request_id", requestId)
+                    put(
+                        "request",
+                        JSONObject().apply {
+                            put("album_id", albumId)
+                        },
+                    )
+                },
+            )
+        }
+        pendingRipRequests[requestId] =
+            PendingRipRequest(albumId, request.toString(), isAlbum = true)
+        pendingAlbumIds.add(albumId)
+
+        if (!isRunning.get()) start()
+        if (_state.value.wsStatus == RipWsStatus.ERROR) {
+            pendingRipRequests.remove(requestId)
+            sentRipRequestIds.remove(requestId)
+            pendingAlbumIds.remove(albumId)
+            return false
+        }
+        if (_state.value.wsStatus == RipWsStatus.CONNECTED) {
+            webSocket?.let(::sendPendingRipRequests)
+        }
+        return true
+    }
+
     private fun sendPendingRipRequests(socket: WebSocket) {
         pendingRipRequests.entries.toList().forEach { (requestId, request) ->
             if (!sentRipRequestIds.add(requestId)) return@forEach
@@ -418,12 +496,26 @@ class RipWebSocketClient(
     private fun clearPendingRipRequestsForTracks(sourceTrackIds: Set<String>) {
         if (sourceTrackIds.isEmpty()) return
         pendingRipRequests.entries.toList().forEach { (requestId, request) ->
-            if (request.sourceTrackId in sourceTrackIds && pendingRipRequests.remove(
+            if (!request.isAlbum && request.sourceTrackId in sourceTrackIds && pendingRipRequests.remove(
                     requestId,
                     request
                 )
             ) {
                 sentRipRequestIds.remove(requestId)
+            }
+        }
+    }
+
+    private fun clearPendingRipRequestsForAlbums(sourceAlbumIds: Set<String>) {
+        if (sourceAlbumIds.isEmpty()) return
+        pendingRipRequests.entries.toList().forEach { (requestId, request) ->
+            if (request.isAlbum && request.sourceTrackId in sourceAlbumIds && pendingRipRequests.remove(
+                    requestId,
+                    request
+                )
+            ) {
+                sentRipRequestIds.remove(requestId)
+                pendingAlbumIds.remove(request.sourceTrackId)
             }
         }
     }

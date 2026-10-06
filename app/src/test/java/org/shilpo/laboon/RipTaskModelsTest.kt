@@ -73,9 +73,7 @@ class RipTaskModelsTest {
             """
             {
                 "task_id": "task_abc123",
-                "provider": "apple",
                 "source_track_id": "1440857781",
-                "codec": "alac",
                 "title": "Anti-Hero",
                 "artist": "Taylor Swift",
                 "album": "Midnights",
@@ -123,7 +121,6 @@ class RipTaskModelsTest {
         val snapshot = RipTaskSnapshot.fromJson(json)
 
         assertEquals("task_abc123", snapshot.taskId)
-        assertEquals("apple", snapshot.provider)
         assertEquals("1440857781", snapshot.sourceTrackId)
         assertEquals("Anti-Hero", snapshot.title)
         assertEquals("Taylor Swift", snapshot.artist)
