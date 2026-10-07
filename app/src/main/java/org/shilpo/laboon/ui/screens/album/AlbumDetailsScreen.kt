@@ -123,7 +123,7 @@ fun AlbumDetailsScreen(
     isDownloadPending: (HomeTrack) -> Boolean,
     onOpenAlbumVersion: (String) -> Unit,
     onOpenArtist: (String, String?) -> Unit,
-    onOpenRecordLabel: (String) -> Unit,
+    onOpenRecordLabel: (String, String?) -> Unit,
     modifier: Modifier = Modifier,
     isRefreshing: Boolean = false,
     onRefresh: () -> Unit = {},
@@ -316,7 +316,7 @@ private fun AlbumContent(
     isDownloadPending: (HomeTrack) -> Boolean,
     onOpenAlbumVersion: (String) -> Unit,
     onOpenArtist: (String, String?) -> Unit,
-    onOpenRecordLabel: (String) -> Unit,
+    onOpenRecordLabel: (String, String?) -> Unit,
     currentTrackId: String?,
     isPlaying: Boolean,
     modifier: Modifier = Modifier,
@@ -1084,6 +1084,7 @@ internal data class AlbumFooterMetadata(
     val trackSummary: String?,
     val copyright: String?,
     val recordLabel: String?,
+    val recordLabelId: String? = null,
 ) {
     val hasContent: Boolean
         get() = releaseDate != null || trackSummary != null || copyright != null ||
@@ -1109,6 +1110,7 @@ internal fun albumFooterMetadata(album: LyricspornAlbum): AlbumFooterMetadata {
         trackSummary = trackSummary,
         copyright = album.copyright?.trim()?.takeIf(String::isNotEmpty),
         recordLabel = album.recordLabel?.trim()?.takeIf(String::isNotEmpty),
+        recordLabelId = album.recordLabelId?.trim()?.takeIf(String::isNotEmpty),
     )
 }
 
@@ -1253,7 +1255,7 @@ private fun openAlbumInAppleMusic(context: Context, albumUrl: String) {
 @Composable
 private fun AlbumMetadataFooter(
     metadata: AlbumFooterMetadata,
-    onOpenRecordLabel: (String) -> Unit,
+    onOpenRecordLabel: (String, String?) -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -1301,7 +1303,7 @@ private fun AlbumMetadataFooter(
                     modifier = Modifier.clickable(
                         role = Role.Button,
                         onClickLabel = "Open record label $value",
-                    ) { onOpenRecordLabel(value) },
+                    ) { onOpenRecordLabel(value, metadata.recordLabelId) },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.primary,
                     textDecoration = TextDecoration.Underline,

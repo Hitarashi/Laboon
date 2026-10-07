@@ -598,6 +598,21 @@ class AutoRipCoordinatorTest {
         assertFalse(cache.isAlbumCached("500"))
     }
 
+    @Test
+    fun `observeAlbums with RECORD_LABEL requests rip for uncached album`() {
+        val autoRip = coordinator(
+            lookup = recordingLookup { BatchAvailabilityLookup.EMPTY },
+            albumLookup = recordingAlbumLookup {
+                BatchAlbumAvailabilityLookup(uncachedAlbumIds = it.toSet())
+            },
+        )
+
+        autoRip.observeAlbums(AutoRipSource.RECORD_LABEL, listOf(album("600")))
+        settle()
+
+        assertEquals(listOf("600"), rippedAlbums)
+    }
+
     private companion object {
         const val SCAN_SETTLE_MS = 300L
     }

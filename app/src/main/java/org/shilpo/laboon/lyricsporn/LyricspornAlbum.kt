@@ -13,6 +13,7 @@ data class LyricspornAlbum(
     val contentRating: String? = null,
     val copyright: String? = null,
     val recordLabel: String? = null,
+    val recordLabelId: String? = null,
     val editorialNotes: String? = null,
     val tracks: List<LyricspornAlbumTrack> = emptyList(),
     val otherVersions: List<LyricspornAlbumVersion> = emptyList(),

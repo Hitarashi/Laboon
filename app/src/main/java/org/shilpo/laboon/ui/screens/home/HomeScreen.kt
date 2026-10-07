@@ -107,6 +107,8 @@ import org.shilpo.laboon.home.HomeFeedDefaults
 import org.shilpo.laboon.home.HomeFeedRepository
 import org.shilpo.laboon.home.HomeFeedState
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.home.RecordLabelCache
+import org.shilpo.laboon.home.RecordLabelRepository
 import org.shilpo.laboon.home.SectionLoadState
 import org.shilpo.laboon.home.SectionState
 import org.shilpo.laboon.navigation.MainTab
@@ -146,11 +148,13 @@ import org.shilpo.laboon.ui.screens.album.AlbumDetailsUiState
 import org.shilpo.laboon.ui.screens.album.AlbumRelatedDestination
 import org.shilpo.laboon.ui.screens.album.AlbumRelatedPlaceholderScreen
 import org.shilpo.laboon.ui.screens.album.albumArtistDestination
-import org.shilpo.laboon.ui.screens.album.albumRecordLabelDestination
 import org.shilpo.laboon.ui.screens.album.toUiState
 import org.shilpo.laboon.ui.screens.artist.ArtistDetailsScreen
 import org.shilpo.laboon.ui.screens.artist.ArtistDetailsUiState
 import org.shilpo.laboon.ui.screens.artist.toUiState
+import org.shilpo.laboon.ui.screens.label.RecordLabelScreen
+import org.shilpo.laboon.ui.screens.label.RecordLabelUiState
+import org.shilpo.laboon.ui.screens.label.toUiState
 import org.shilpo.laboon.ui.screens.library.LibraryScreen
 import org.shilpo.laboon.ui.screens.player.MorphingPlayerSheet
 import org.shilpo.laboon.ui.screens.rip.RipVisualizerScreen
@@ -160,6 +164,11 @@ import org.shilpo.laboon.ui.screens.settings.SettingsScreen
 data class ArtistDestination(
     val name: String,
     val appleArtistId: String? = null,
+)
+
+data class RecordLabelDestination(
+    val name: String,
+    val appleLabelId: String? = null,
 )
 
 internal sealed interface OverlayDestination {
@@ -175,6 +184,10 @@ internal sealed interface OverlayDestination {
 
     data class AlbumRelated(val destination: AlbumRelatedDestination) : OverlayDestination {
         override val key: String = "related_${destination.identity}_${destination.title}"
+    }
+
+    data class RecordLabel(val destination: RecordLabelDestination) : OverlayDestination {
+        override val key: String = "label_${destination.appleLabelId ?: destination.name}"
     }
 }
 
@@ -226,6 +239,9 @@ fun HomeScreen(
     val artistDetailsRepository = remember(sessionStore, keyValueStore) {
         ArtistDetailsRepository(sessionStore, ArtistDetailsCache(keyValueStore))
     }
+    val recordLabelRepository = remember(sessionStore, keyValueStore) {
+        RecordLabelRepository(sessionStore, RecordLabelCache(keyValueStore))
+    }
     val isAlbumOverlayVisible = overlayStack.isNotEmpty()
 
     val openArtist: (String, String?) -> Unit = { name, appleId ->
@@ -258,11 +274,20 @@ fun HomeScreen(
             )
         }
     }
-    val openAlbumRecordLabel: (String) -> Unit = { name ->
-        albumRecordLabelDestination(name)?.let { dest ->
+    val openAlbumRecordLabel: (String, String?) -> Unit = { name, explicitLabelId ->
+        val cleanName = name.trim()
+        val cleanId = explicitLabelId?.trim()?.takeIf { it.isNotEmpty() }
+            ?: cleanName.takeIf { it.removePrefix("apple_").all(Char::isDigit) }
+                ?.removePrefix("apple_")
+        if (cleanName.isNotEmpty() || cleanId != null) {
             overlayStack = overlayStack + OverlayEntry(
                 id = nextOverlayId++,
-                destination = OverlayDestination.AlbumRelated(dest),
+                destination = OverlayDestination.RecordLabel(
+                    RecordLabelDestination(
+                        name = cleanName.ifEmpty { "Record Label" },
+                        appleLabelId = cleanId,
+                    )
+                ),
             )
         }
     }
@@ -772,6 +797,22 @@ fun HomeScreen(
                             AlbumRelatedPlaceholderScreen(
                                 destination = dest.destination,
                                 onBack = popOverlay,
+                                modifier = surfaceModifier.fillMaxSize(),
+                            )
+                        }
+
+                        is OverlayDestination.RecordLabel -> {
+                            RecordLabelOverlayHost(
+                                destination = dest.destination,
+                                recordLabelRepository = recordLabelRepository,
+                                autoRipCoordinator = autoRipCoordinator,
+                                albumBottomClearance = albumBottomClearance,
+                                isTop = isTop,
+                                liquidGlassBackdropState = liquidGlassBackdropState,
+                                liquidGlassBackdropLayer = liquidGlassBackdropLayer,
+                                onBack = popOverlay,
+                                onOpenAlbum = openAlbum,
+                                onOpenArtist = openArtist,
                                 modifier = surfaceModifier.fillMaxSize(),
                             )
                         }
@@ -1517,7 +1558,7 @@ private fun AlbumOverlayHost(
     onBack: () -> Unit,
     onOpenAlbumVersion: (String) -> Unit,
     onOpenArtist: (String, String?) -> Unit,
-    onOpenRecordLabel: (String) -> Unit,
+    onOpenRecordLabel: (String, String?) -> Unit,
     onDownloadTrack: (HomeTrack) -> Unit,
     isDownloadPending: (HomeTrack) -> Boolean,
     modifier: Modifier = Modifier,
@@ -1815,3 +1856,116 @@ private fun ArtistOverlayHost(
         modifier = finalModifier,
     )
 }
+
+@Composable
+private fun RecordLabelOverlayHost(
+    destination: RecordLabelDestination,
+    recordLabelRepository: RecordLabelRepository,
+    autoRipCoordinator: AutoRipCoordinator,
+    albumBottomClearance: Dp,
+    isTop: Boolean,
+    liquidGlassBackdropState: LiquidGlassBackdropState,
+    liquidGlassBackdropLayer: GraphicsLayer,
+    onBack: () -> Unit,
+    onOpenAlbum: (String) -> Unit,
+    onOpenArtist: (String, String?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val coroutineScope = rememberCoroutineScope()
+    var labelLoadAttempt by remember(destination) { mutableIntStateOf(0) }
+    var isRefreshingLabel by remember(destination) { mutableStateOf(false) }
+
+    val cachedInitial = remember(destination) {
+        val key = destination.appleLabelId ?: destination.name
+        recordLabelRepository.getCachedRecordLabel(key)?.toUiState()
+    }
+
+    var recordLabelState by remember(destination) {
+        mutableStateOf<RecordLabelUiState>(cachedInitial ?: RecordLabelUiState.Loading)
+    }
+
+    val allReleases = remember(recordLabelState) {
+        (recordLabelState as? RecordLabelUiState.Loaded)?.let { loaded ->
+            (loaded.latestReleases + loaded.topReleases).distinctBy { it.id }
+        }.orEmpty()
+    }
+
+    LaunchedEffect(autoRipCoordinator, allReleases) {
+        if (allReleases.isNotEmpty()) {
+            autoRipCoordinator.observeAlbums(AutoRipSource.RECORD_LABEL, allReleases)
+        }
+    }
+
+    DisposableEffect(autoRipCoordinator, destination) {
+        onDispose {
+            autoRipCoordinator.observeAlbums(AutoRipSource.RECORD_LABEL, emptyList())
+        }
+    }
+
+    LaunchedEffect(destination, labelLoadAttempt) {
+        val key = destination.appleLabelId ?: destination.name
+        if (recordLabelState !is RecordLabelUiState.Loaded) {
+            val cached = recordLabelRepository.getCachedRecordLabel(key)
+            if (cached != null) {
+                recordLabelState = cached.toUiState()
+            }
+        }
+        val label = recordLabelRepository.getRecordLabel(key)
+        if (label != null) {
+            recordLabelState = label.toUiState()
+        } else {
+            recordLabelState = RecordLabelUiState.NotFound
+        }
+    }
+
+    val finalModifier = if (isTop) {
+        modifier.liquidGlassBackdropProducer(
+            liquidGlassBackdropState,
+            liquidGlassBackdropLayer,
+        )
+    } else modifier
+
+    RecordLabelScreen(
+        state = recordLabelState,
+        bottomClearance = albumBottomClearance,
+        isRefreshing = isRefreshingLabel,
+        onBack = onBack,
+        onRetry = { labelLoadAttempt += 1 },
+        onRefresh = {
+            if (!isRefreshingLabel) {
+                coroutineScope.launch {
+                    isRefreshingLabel = true
+                    try {
+                        val albumCatalogIds = allReleases.mapNotNull { it.appleCatalogId }
+                        if (albumCatalogIds.isNotEmpty()) {
+                            autoRipCoordinator.invalidateAlbums(albumCatalogIds)
+                            autoRipCoordinator.requestScan()
+                        }
+                        val key = destination.appleLabelId ?: destination.name
+                        val refreshed =
+                            recordLabelRepository.getRecordLabel(key, forceRefresh = true)
+                        if (refreshed != null) {
+                            recordLabelState = refreshed.toUiState()
+                        }
+                    } finally {
+                        isRefreshingLabel = false
+                    }
+                }
+            }
+        },
+        onOpenAlbum = onOpenAlbum,
+        onOpenArtist = onOpenArtist,
+        onPlayReleases = { releases ->
+            releases.firstOrNull()?.let { album ->
+                onOpenAlbum(album.appleCatalogId ?: album.id)
+            }
+        },
+        onShuffleReleases = { releases ->
+            releases.shuffled().firstOrNull()?.let { album ->
+                onOpenAlbum(album.appleCatalogId ?: album.id)
+            }
+        },
+        modifier = finalModifier,
+    )
+}
+

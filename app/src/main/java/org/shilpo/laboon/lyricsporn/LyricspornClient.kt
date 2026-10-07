@@ -5,6 +5,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import org.json.JSONObject
+import org.shilpo.laboon.home.HomeAlbum
 import org.shilpo.laboon.net.HttpError
 import org.shilpo.laboon.net.HttpErrorKind
 import org.shilpo.laboon.net.HttpJsonClient
@@ -293,6 +294,110 @@ object LyricspornClient {
             ?: results.artists.firstOrNull()?.id
     }
 
+    suspend fun resolveArtistCatalogItem(
+        apiBaseUrl: String?,
+        artistName: String,
+        artworkSize: Int = 300,
+    ): LyricspornCatalogItem? {
+        val trimmed = artistName.trim()
+        if (trimmed.isEmpty()) return null
+        val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return null
+        val items = searchCatalogItems(
+            apiBaseUrl = baseUrl,
+            term = trimmed,
+            type = "artists",
+            limit = 5,
+            artworkSize = artworkSize,
+        )
+        if (items.isEmpty()) return null
+        fun normalizeKey(s: String): String =
+            s.lowercase(Locale.ROOT).replace(Regex("[^\\p{L}\\p{N}]+"), "")
+
+        val normalizedQuery = normalizeKey(trimmed)
+        val exact = items.firstOrNull { item ->
+            normalizeKey(item.name) == normalizedQuery
+        }
+        return exact ?: items.firstOrNull()
+    }
+
+    suspend fun getRecordLabel(
+        apiBaseUrl: String?,
+        appleLabelId: String,
+        artworkSize: Int = 600,
+    ): HttpOutcome<LyricspornRecordLabel> {
+        val baseUrl = normalizeApiBaseUrl(apiBaseUrl)
+            ?: return HttpOutcome.Failure(
+                HttpError(HttpErrorKind.NETWORK, message = "Lyricsporn API is unavailable"),
+            )
+        val labelId = appleLabelId.takeIf { it.matches(APPLE_CATALOG_ID_PATTERN) }
+            ?: return HttpOutcome.Failure(
+                HttpError(HttpErrorKind.MALFORMED, message = "Invalid Apple Music record label ID"),
+            )
+        val url =
+            "$baseUrl/record-labels/$labelId?include=artwork,editorialArtwork,description,latestReleases,topReleases" +
+                    "&limit=25&artworkSize=$artworkSize"
+        return when (val response = http.getJson(url.withCurrentStorefront())) {
+            is HttpOutcome.Failure -> response
+            is HttpOutcome.Success -> {
+                val label = response.value.objOrNull("data")?.toLyricspornRecordLabel(artworkSize)
+                if (label != null) {
+                    HttpOutcome.Success(label)
+                } else {
+                    HttpOutcome.Failure(
+                        HttpError(
+                            HttpErrorKind.MALFORMED,
+                            message = "Lyricsporn returned an invalid record label response",
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    suspend fun resolveRecordLabelId(apiBaseUrl: String?, labelName: String): String? {
+        val trimmed = labelName.trim()
+        if (trimmed.isEmpty()) return null
+        val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return null
+        val url = "$baseUrl/catalog/search?term=${encode(trimmed)}&types=record-labels&limit=5"
+        val json = getJson(url) ?: return null
+        val resultsObj = json.objOrNull("results") ?: return null
+        val recordLabels = resultsObj.objOrNull("recordLabels")
+            ?: resultsObj.objOrNull("record-labels")
+            ?: return null
+        val itemsArr = recordLabels.arrOrNull("items")
+            ?: recordLabels.arrOrNull("data")
+            ?: return null
+
+        fun normalizeKey(s: String): String =
+            s.lowercase(Locale.ROOT).replace(Regex("[^\\p{L}\\p{N}]+"), "")
+
+        val normalizedQuery = normalizeKey(trimmed)
+        if (normalizedQuery.isEmpty()) return null
+
+        var bestPartialMatchId: String? = null
+
+        for (index in 0 until itemsArr.length()) {
+            val itemObj = itemsArr.objAtOrNull(index) ?: continue
+            val id = itemObj.stringOrNull("id")?.takeIf { it.matches(APPLE_CATALOG_ID_PATTERN) }
+                ?: continue
+            val name = itemObj.stringOrNull("name")
+                ?: itemObj.objOrNull("attributes")?.stringOrNull("name")
+                ?: continue
+            val normalizedName = normalizeKey(name)
+
+            if (normalizedName == normalizedQuery) {
+                return id
+            }
+            if (bestPartialMatchId == null && (normalizedName.contains(normalizedQuery) || normalizedQuery.contains(
+                    normalizedName
+                ))
+            ) {
+                bestPartialMatchId = id
+            }
+        }
+        return bestPartialMatchId
+    }
+
     suspend fun resolveTrackArtwork(
         apiBaseUrl: String?,
         title: String,
@@ -423,6 +528,13 @@ object LyricspornClient {
 
     suspend fun resolveArtistArtwork(apiBaseUrl: String?, artist: String): String? =
         resolveArtwork(apiBaseUrl = apiBaseUrl, type = "artists", title = artist, artist = null)
+
+    suspend fun resolveArtistCatalogItem(
+        apiBaseUrl: String?,
+        artist: String
+    ): LyricspornCatalogItem? =
+        resolveCatalogItem(apiBaseUrl = apiBaseUrl, type = "artists", title = artist, artist = null)
+            ?.item
 
     private suspend fun resolveArtwork(
         apiBaseUrl: String?,
@@ -614,6 +726,17 @@ object LyricspornClient {
             ?.toAlbumVersions()
             .orEmpty()
         val notes = objOrNull("editorialNotes")
+        val recordLabelsColl = collections?.objOrNull("recordLabels")
+            ?: collections?.objOrNull("record-labels")
+            ?: objOrNull("relationships")?.objOrNull("recordLabels")
+            ?: objOrNull("relationships")?.objOrNull("record-labels")
+        val firstLabelItem = recordLabelsColl?.arrOrNull("items")?.objAtOrNull(0)
+            ?: recordLabelsColl?.arrOrNull("data")?.objAtOrNull(0)
+        val recordLabelId = firstLabelItem?.stringOrNull("id")
+            ?: firstLabelItem?.objOrNull("attributes")?.stringOrNull("id")
+        val recordLabelName = stringOrNull("recordLabel")
+            ?: firstLabelItem?.stringOrNull("name")
+            ?: firstLabelItem?.objOrNull("attributes")?.stringOrNull("name")
 
         return LyricspornAlbum(
             id = id,
@@ -627,7 +750,8 @@ object LyricspornClient {
             trackCount = intOrNull("trackCount"),
             contentRating = stringOrNull("contentRating"),
             copyright = stringOrNull("copyright"),
-            recordLabel = stringOrNull("recordLabel"),
+            recordLabel = recordLabelName,
+            recordLabelId = recordLabelId,
             editorialNotes = preferredAlbumEditorialNotes(
                 standard = notes?.stringOrNull("standard"),
                 short = notes?.stringOrNull("short"),
@@ -686,6 +810,86 @@ object LyricspornClient {
             singles = singles,
             similarArtists = similarArtists,
         )
+    }
+
+    private fun JSONObject.toLyricspornRecordLabel(artworkSize: Int): LyricspornRecordLabel? {
+        val id = stringOrNull("id")?.takeIf { it.matches(APPLE_CATALOG_ID_PATTERN) }
+            ?: return null
+        val name = stringOrNull("name")
+            ?: objOrNull("attributes")?.stringOrNull("name")
+            ?: return null
+
+        val url = stringOrNull("url")
+            ?: objOrNull("attributes")?.stringOrNull("url")
+
+        val description = stringOrNull("description")
+            ?: objOrNull("description")?.stringOrNull("standard")
+            ?: objOrNull("description")?.stringOrNull("short")
+            ?: objOrNull("editorialNotes")?.stringOrNull("standard")
+            ?: objOrNull("editorialNotes")?.stringOrNull("short")
+            ?: objOrNull("attributes")?.stringOrNull("description")
+            ?: objOrNull("attributes")?.objOrNull("description")?.stringOrNull("standard")
+            ?: objOrNull("attributes")?.objOrNull("description")?.stringOrNull("short")
+            ?: objOrNull("attributes")?.objOrNull("editorialNotes")?.stringOrNull("standard")
+            ?: objOrNull("attributes")?.objOrNull("editorialNotes")?.stringOrNull("short")
+
+        val artworkObj = objOrNull("artwork") ?: objOrNull("attributes")?.objOrNull("artwork")
+        val artworkUrl = artworkObj?.stringOrNull("url")?.albumArtworkUrl(artworkSize)
+        val editorialArtworkUrl = toEditorialArtworkUrl(artworkSize)
+
+        val collections = objOrNull("collections")
+            ?: objOrNull("relationships")
+            ?: objOrNull("attributes")?.objOrNull("collections")
+
+        fun parseAlbumCollection(key: String): List<HomeAlbum> {
+            val collectionObj = collections?.objOrNull(key) ?: return emptyList()
+            val itemsArr = collectionObj.arrOrNull("items")
+                ?: collectionObj.arrOrNull("data")
+                ?: return emptyList()
+            return itemsArr.toCatalogItems(artworkSize).map { item ->
+                HomeAlbum(
+                    id = "apple_${item.id}",
+                    title = item.name,
+                    artist = item.artistName ?: "",
+                    artworkUrl = item.artworkUrl,
+                    appleCatalogId = item.id,
+                )
+            }
+        }
+
+        val latestReleases = parseAlbumCollection("latestReleases")
+        val topReleases = parseAlbumCollection("topReleases")
+
+        return LyricspornRecordLabel(
+            id = id,
+            name = name,
+            url = url,
+            description = description,
+            artworkUrl = artworkUrl,
+            editorialArtworkUrl = editorialArtworkUrl,
+            latestReleases = latestReleases,
+            topReleases = topReleases,
+        )
+    }
+
+    private fun JSONObject.toEditorialArtworkUrl(artworkSize: Int): String? {
+        val editorial = objOrNull("editorialArtwork")
+            ?: objOrNull("attributes")?.objOrNull("editorialArtwork")
+            ?: return null
+        editorial.stringOrNull("url")?.albumArtworkUrl(artworkSize)?.let { return it }
+        val preferredKeys =
+            listOf("banner", "storeFlowcase", "header", "static", "default", "brandLogo")
+        for (key in preferredKeys) {
+            editorial.objOrNull(key)?.stringOrNull("url")?.albumArtworkUrl(artworkSize)
+                ?.let { return it }
+        }
+        val keys = editorial.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            editorial.objOrNull(key)?.stringOrNull("url")?.albumArtworkUrl(artworkSize)
+                ?.let { return it }
+        }
+        return null
     }
 
     private fun org.json.JSONArray.toAlbumTracks(): List<LyricspornAlbumTrack> = buildList {
