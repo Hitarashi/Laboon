@@ -1234,13 +1234,7 @@ fun MorphingPlayerSheet(
 
                         FullPlayerToolbar(
                             albumName = track.album,
-                            onOpenAlbum = if (
-                                onOpenAlbum != null &&
-                                !track.album.isNullOrBlank() &&
-                                track.providerTrackId?.let { id ->
-                                    id.isNotBlank() && id.all(Char::isDigit)
-                                } == true
-                            ) {
+                            onOpenAlbum = if (onOpenAlbum != null && !track.album.isNullOrBlank()) {
                                 {
                                     val openAlbum = onOpenAlbum
                                     coroutineScope.launch {
@@ -1562,6 +1556,7 @@ private fun FullPlayerToolbar(
             )
         }
 
+        val hasAlbum = !albumName.isNullOrBlank()
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1573,13 +1568,13 @@ private fun FullPlayerToolbar(
             Text(
                 text = "NOW PLAYING",
                 color = if (isDark) Color.White.copy(alpha = 0.65f) else Color.Black.copy(alpha = 0.60f),
-                fontSize = if (albumName != null) 11.sp else 13.sp,
+                fontSize = if (hasAlbum) 11.sp else 13.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.4.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (!albumName.isNullOrBlank()) {
+            if (hasAlbum) {
                 Text(
                     text = albumName,
                     color = if (isDark) Color.White.copy(alpha = 0.90f) else Color(0xFF191C1E),

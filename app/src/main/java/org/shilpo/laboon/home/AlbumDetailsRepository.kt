@@ -48,6 +48,44 @@ class AlbumDetailsRepository(
             albumClient.getTrackAlbumId(apiBaseUrl, trackId)
         }
 
+    suspend fun resolveAlbumIdForTrack(track: HomeTrack): String? =
+        withContext(Dispatchers.IO) {
+            val apiBaseUrl = sessionStore.getSession()?.lyricspornApiUrl
+                ?: return@withContext null
+
+            val appleTrackId =
+                track.providerTrackId?.takeIf { it.isNotBlank() && it.all(Char::isDigit) }
+            if (appleTrackId != null) {
+                val albumId = albumClient.getTrackAlbumId(apiBaseUrl, appleTrackId)
+                if (albumId != null) return@withContext albumId
+            }
+
+            val albumName = track.album?.takeIf(String::isNotBlank)
+            val artistName = track.artist.takeIf(String::isNotBlank)
+            if (albumName != null && artistName != null) {
+                val albumMatch =
+                    albumClient.resolveAlbumCatalogItem(apiBaseUrl, albumName, artistName)
+                if (albumMatch != null) return@withContext albumMatch.item.id
+            }
+
+            val trackTitle = track.title.takeIf(String::isNotBlank)
+            if (trackTitle != null && artistName != null) {
+                val trackMatch = albumClient.resolveTrackCatalogItem(
+                    apiBaseUrl = apiBaseUrl,
+                    title = trackTitle,
+                    artist = artistName,
+                    album = albumName,
+                )
+                val resolvedTrackId = trackMatch?.item?.id
+                if (resolvedTrackId != null && resolvedTrackId.all(Char::isDigit)) {
+                    val albumId = albumClient.getTrackAlbumId(apiBaseUrl, resolvedTrackId)
+                    if (albumId != null) return@withContext albumId
+                }
+            }
+
+            null
+        }
+
     fun getCachedAlbum(appleAlbumId: String): AlbumDetailsResult.Success? {
         val cacheKey = albumCacheKey(appleAlbumId)
         return albumCache[cacheKey] ?: persistentCache.load(cacheKey)?.also {

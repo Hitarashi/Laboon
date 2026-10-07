@@ -235,6 +235,7 @@ class HomeFeedRepository(
                     artworkUrl = track.artworkUrl ?: exactItem.artworkUrl,
                     isrc = track.isrc ?: exactItem.isrc,
                     providerTrackId = exactItem.id,
+                    album = track.album?.takeIf(String::isNotBlank) ?: exactItem.albumName,
                     durationMs = track.durationMs ?: exactItem.durationMs,
                 )
             }

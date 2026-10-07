@@ -8,6 +8,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import org.shilpo.laboon.auth.SessionStore
+import org.shilpo.laboon.home.HomeAlbum
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.lyricsporn.LyricspornCatalogItem
@@ -85,11 +86,21 @@ fun interface AlbumAvailabilityLookup {
     suspend fun lookupAvailableAlbums(providerAlbumIds: List<String>): BatchAlbumAvailabilityLookup
 }
 
+data class SearchResults(
+    val tracks: List<HomeTrack> = emptyList(),
+    val albums: List<HomeAlbum> = emptyList(),
+)
+
+data class SearchSuggestions(
+    val tracks: List<HomeTrack> = emptyList(),
+    val albums: List<HomeAlbum> = emptyList(),
+)
+
 interface SearchRepository {
-    suspend fun search(query: String): List<HomeTrack>
+    suspend fun search(query: String): SearchResults
     suspend fun enrichAvailability(tracks: List<HomeTrack>): List<HomeTrack>
     suspend fun searchHints(query: String): List<String> = emptyList()
-    suspend fun searchSuggestions(query: String): List<HomeTrack> = emptyList()
+    suspend fun searchSuggestions(query: String): SearchSuggestions = SearchSuggestions()
     suspend fun resolvePlaybackUrl(track: HomeTrack): String?
     suspend fun resolvePlayback(track: HomeTrack): PlaybackResolution?
     suspend fun resolvePlaybackBatch(tracks: List<HomeTrack>): List<HomeTrack>
@@ -100,10 +111,13 @@ class SearchRepositoryImpl(
     private val http: HttpJsonClient = HttpJsonClient(),
 ) : SearchRepository, TrackAvailabilityLookup, AlbumAvailabilityLookup {
 
-    override suspend fun search(query: String): List<HomeTrack> = withContext(Dispatchers.IO) {
+    override suspend fun search(query: String): SearchResults = withContext(Dispatchers.IO) {
         val apiBaseUrl = sessionStore.getSession()?.lyricspornApiUrl
-        val items = LyricspornClient.searchSongs(apiBaseUrl, query, limit = MAX_SEARCH_RESULTS)
-        withAvailability(items)
+        val catalogResults =
+            LyricspornClient.searchCatalog(apiBaseUrl, query, limit = MAX_SEARCH_RESULTS)
+        val tracks = withAvailability(catalogResults.songs)
+        val albums = catalogResults.albums.map { it.toHomeAlbum() }
+        SearchResults(tracks = tracks, albums = albums)
     }
 
     override suspend fun searchHints(query: String): List<String> =
@@ -113,16 +127,27 @@ class SearchRepositoryImpl(
             limit = MAX_HINTS,
         )
 
-    override suspend fun searchSuggestions(query: String): List<HomeTrack> =
+    override suspend fun searchSuggestions(query: String): SearchSuggestions =
         withContext(Dispatchers.IO) {
             val apiBaseUrl = sessionStore.getSession()?.lyricspornApiUrl
-            val items = LyricspornClient.searchTopSongSuggestions(
+            val suggestions = LyricspornClient.searchTopSuggestions(
                 apiBaseUrl,
                 query,
                 limit = MAX_TOP_RESULTS,
             )
-            withAvailability(items)
+            val tracks = withAvailability(suggestions.songs)
+            val albums = suggestions.albums.map { it.toHomeAlbum() }
+            SearchSuggestions(tracks = tracks, albums = albums)
         }
+
+    private fun LyricspornCatalogItem.toHomeAlbum(): HomeAlbum =
+        HomeAlbum(
+            id = "apple_$id",
+            title = name,
+            artist = artistName.orEmpty(),
+            artworkUrl = artworkUrl,
+            appleCatalogId = id,
+        )
 
     private suspend fun withAvailability(items: List<LyricspornCatalogItem>): List<HomeTrack> {
         if (items.isEmpty()) return emptyList()

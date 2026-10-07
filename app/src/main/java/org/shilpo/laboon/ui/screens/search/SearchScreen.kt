@@ -18,8 +18,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -55,6 +57,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -69,6 +72,7 @@ import kotlinx.coroutines.flow.Flow
 import org.shilpo.laboon.R
 import org.shilpo.laboon.auth.SessionStore
 import org.shilpo.laboon.auth.SharedPreferencesKeyValueStore
+import org.shilpo.laboon.home.HomeAlbum
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.home.TrackAvailability
 import org.shilpo.laboon.rip.RipTaskSnapshot
@@ -76,11 +80,14 @@ import org.shilpo.laboon.search.CachedTrackAvailability
 import org.shilpo.laboon.search.SearchHistoryStore
 import org.shilpo.laboon.search.SearchRepository
 import org.shilpo.laboon.search.SearchRepositoryImpl
+import org.shilpo.laboon.search.SearchResults
+import org.shilpo.laboon.search.SearchSuggestions
 import org.shilpo.laboon.ui.design.CodecIcon
 
 @Composable
 fun SearchScreen(
     onTrackClick: (HomeTrack) -> Unit = {},
+    onAlbumClick: (HomeAlbum) -> Unit = {},
     onPlayWithContext: ((HomeTrack, List<HomeTrack>) -> Unit)? = null,
     onPlayNext: ((HomeTrack) -> Unit)? = null,
     onAddToQueue: ((HomeTrack) -> Unit)? = null,
@@ -91,6 +98,7 @@ fun SearchScreen(
     modifier: Modifier = Modifier,
     searchRepository: SearchRepository? = null,
     onObservedTracks: (List<HomeTrack>) -> Unit = {},
+    onObservedAlbums: (List<HomeAlbum>) -> Unit = {},
     ripCompletions: Flow<String>? = null,
     resolveAvailability: (suspend (String) -> Map<String, CachedTrackAvailability>)? = null,
 ) {
@@ -116,7 +124,9 @@ fun SearchScreen(
     var isSearching by remember { mutableStateOf(false) }
     var hints by remember { mutableStateOf<List<String>>(emptyList()) }
     var suggestions by remember { mutableStateOf<List<HomeTrack>>(emptyList()) }
+    var albumSuggestions by remember { mutableStateOf<List<HomeAlbum>>(emptyList()) }
     var results by remember { mutableStateOf<List<HomeTrack>>(emptyList()) }
+    var albumResults by remember { mutableStateOf<List<HomeAlbum>>(emptyList()) }
 
     fun submitSearch(term: String = query.trim()) {
         if (term.isBlank()) return
@@ -130,7 +140,9 @@ fun SearchScreen(
         isSearching = true
         hints = emptyList()
         suggestions = emptyList()
+        albumSuggestions = emptyList()
         results = emptyList()
+        albumResults = emptyList()
         focusManager.clearFocus()
     }
 
@@ -147,6 +159,7 @@ fun SearchScreen(
         if (term.length < MIN_SUGGESTION_QUERY_LENGTH || term == searchRequest) {
             hints = emptyList()
             suggestions = emptyList()
+            albumSuggestions = emptyList()
             isSuggesting = false
             return@LaunchedEffect
         }
@@ -155,25 +168,26 @@ fun SearchScreen(
         delay(SUGGESTION_DEBOUNCE_MS)
         val hintRequest =
             async { runCatching { repository.searchHints(term) }.getOrDefault(emptyList()) }
-        val songRequest = async {
-            runCatching { repository.searchSuggestions(term) }.getOrDefault(emptyList())
+        val suggestionRequest = async {
+            runCatching { repository.searchSuggestions(term) }.getOrDefault(SearchSuggestions())
         }
         hints = hintRequest.await().distinct().take(MAX_HINTS)
-        suggestions = songRequest.await().distinctBy(HomeTrack::id).take(MAX_TOP_RESULTS)
+        val suggestionsResult = suggestionRequest.await()
+        suggestions = suggestionsResult.tracks.distinctBy(HomeTrack::id).take(MAX_TOP_RESULTS)
+        albumSuggestions = suggestionsResult.albums.distinctBy(HomeAlbum::id).take(MAX_TOP_RESULTS)
         isSuggesting = false
     }
 
     LaunchedEffect(searchRequest) {
         val term = searchRequest ?: return@LaunchedEffect
         isSearching = true
-        val found = runCatching { repository.search(term) }.getOrDefault(emptyList())
+        val found = runCatching { repository.search(term) }.getOrDefault(SearchResults())
         if (searchRequest == term) {
-            results = found.distinctBy(HomeTrack::id)
+            results = found.tracks.distinctBy(HomeTrack::id)
+            albumResults = found.albums.distinctBy(HomeAlbum::id)
             isSearching = false
         }
     }
-
-
 
     LaunchedEffect(results, suggestions, trackHistory) {
         onObservedTracks(
@@ -182,6 +196,15 @@ fun SearchScreen(
                 addAll(suggestions)
                 addAll(trackHistory)
             }.distinctBy(HomeTrack::id)
+        )
+    }
+
+    LaunchedEffect(albumResults, albumSuggestions) {
+        onObservedAlbums(
+            buildList {
+                addAll(albumResults)
+                addAll(albumSuggestions)
+            }.distinctBy(HomeAlbum::id)
         )
     }
 
@@ -215,9 +238,11 @@ fun SearchScreen(
                 isSuggesting = false
                 hints = emptyList()
                 suggestions = emptyList()
+                albumSuggestions = emptyList()
                 if (it.trim() != searchRequest) {
                     searchRequest = null
                     results = emptyList()
+                    albumResults = emptyList()
                 }
             },
             placeholder = {
@@ -245,7 +270,9 @@ fun SearchScreen(
                             isSuggesting = false
                             hints = emptyList()
                             suggestions = emptyList()
+                            albumSuggestions = emptyList()
                             results = emptyList()
+                            albumResults = emptyList()
                         },
                     ) {
                         Icon(
@@ -305,33 +332,60 @@ fun SearchScreen(
                     )
 
                 query.isBlank() -> SearchPlaceholder()
-                showingSearchResults && results.isEmpty() -> SearchEmptyResults(query)
+                showingSearchResults && results.isEmpty() && albumResults.isEmpty() -> SearchEmptyResults(
+                    query
+                )
+
                 showingSearchResults -> {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(top = 8.dp, bottom = 160.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
-                        items(results, key = HomeTrack::id) { track ->
-                            SearchTrackRow(
-                                track = track,
-                                contextTracks = results,
-                                onTrackClick = onTrackClick,
-                                onPlayWithContext = onPlayWithContext,
-                                onPlayNext = onPlayNext,
-                                onAddToQueue = onAddToQueue,
-                                ripTasks = ripTasks,
-                                pendingRipTrackIds = pendingRipTrackIds,
-                                onRipTrack = onRipTrack,
-                                onOpenRipVisualizer = onOpenRipVisualizer,
-                                onTrackSelected = ::recordSearchTrack,
-                            )
+                        if (albumResults.isNotEmpty()) {
+                            item(key = "album_results_heading") {
+                                SuggestionHeading(text = "Albums")
+                            }
+                            item(key = "album_results_row") {
+                                LazyRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentPadding = PaddingValues(horizontal = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    items(albumResults, key = HomeAlbum::id) { album ->
+                                        SearchAlbumCard(
+                                            album = album,
+                                            onClick = { onAlbumClick(album) },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        if (results.isNotEmpty()) {
+                            item(key = "song_results_heading") {
+                                SuggestionHeading(text = if (albumResults.isNotEmpty()) "Songs" else "Top results")
+                            }
+                            items(results, key = HomeTrack::id) { track ->
+                                SearchTrackRow(
+                                    track = track,
+                                    contextTracks = results,
+                                    onTrackClick = onTrackClick,
+                                    onPlayWithContext = onPlayWithContext,
+                                    onPlayNext = onPlayNext,
+                                    onAddToQueue = onAddToQueue,
+                                    ripTasks = ripTasks,
+                                    pendingRipTrackIds = pendingRipTrackIds,
+                                    onRipTrack = onRipTrack,
+                                    onOpenRipVisualizer = onOpenRipVisualizer,
+                                    onTrackSelected = ::recordSearchTrack,
+                                )
+                            }
                         }
                     }
                 }
 
-                isSuggesting && hints.isEmpty() && suggestions.isEmpty() -> SearchLoading()
-                hints.isEmpty() && suggestions.isEmpty() -> SearchNoSuggestions()
+                isSuggesting && hints.isEmpty() && suggestions.isEmpty() && albumSuggestions.isEmpty() -> SearchLoading()
+                hints.isEmpty() && suggestions.isEmpty() && albumSuggestions.isEmpty() -> SearchNoSuggestions()
                 else -> {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
@@ -346,9 +400,23 @@ fun SearchScreen(
                                 SearchHintRow(text = hint, onClick = { submitSearch(hint) })
                             }
                         }
+                        if (albumSuggestions.isNotEmpty()) {
+                            item(key = "album_suggestions_heading") {
+                                SuggestionHeading(text = "Albums")
+                            }
+                            items(albumSuggestions, key = HomeAlbum::id) { album ->
+                                SearchAlbumRow(
+                                    album = album,
+                                    onClick = {
+                                        submitSearch(album.title)
+                                        onAlbumClick(album)
+                                    },
+                                )
+                            }
+                        }
                         if (suggestions.isNotEmpty()) {
                             item(key = "top_results_heading") {
-                                SuggestionHeading(text = "Top results")
+                                SuggestionHeading(text = if (albumSuggestions.isNotEmpty()) "Songs" else "Top results")
                             }
                             items(suggestions, key = HomeTrack::id) { track ->
                                 SearchTrackRow(
@@ -593,6 +661,129 @@ private fun RipSearchAction(
                 waveSpeed = WavyProgressIndicatorDefaults.CircularWavelength / 2f,
             )
         }
+    }
+}
+
+@Composable
+private fun SearchAlbumRow(
+    album: HomeAlbum,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (!album.artworkUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalPlatformContext.current)
+                        .data(album.artworkUrl)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = album.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Icon(
+                    painter = painterResource(R.drawable.app_icon_small),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 14.dp, end = 8.dp),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = album.title,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "Album • ${album.artist}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SearchAlbumCard(
+    album: HomeAlbum,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .width(124.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(124.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (!album.artworkUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalPlatformContext.current)
+                        .data(album.artworkUrl)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = album.title,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Icon(
+                    painter = painterResource(R.drawable.app_icon_small),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.size(40.dp),
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = album.title,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = album.artist,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

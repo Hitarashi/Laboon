@@ -55,11 +55,11 @@ internal class LyricsRepositoryImpl(
         }
 
         val appleId = track.appleTrackId?.takeIf { it.isNumericId() }
-            ?: LyricspornClient.searchSongs(
+            ?: LyricspornClient.searchCatalog(
                 apiBaseUrl = apiBaseUrl,
                 term = listOf(track.title.trim(), track.artistString.trim()).joinToString(" "),
                 limit = 1,
-            ).firstOrNull()?.id
+            ).songs.firstOrNull()?.id
         if (appleId.isNullOrBlank()) {
             return@withContext fallbackLyrics(track, durationMs).withGeneratedRomanization()
         }

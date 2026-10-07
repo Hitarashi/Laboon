@@ -160,6 +160,7 @@ fun FullPlayerScreen(
     onRemoveUpNext: ((Int) -> Unit)? = null,
     onMoveUpNext: ((Int, Int) -> Unit)? = null,
     onTrackClick: ((HomeTrack) -> Unit)? = null,
+    onOpenAlbum: ((HomeTrack) -> Unit)? = null,
     lyricsLines: List<LyricsLine> = emptyList(),
     lyricsLoading: Boolean = false,
     switchingQualityFormat: String? = null,
@@ -287,6 +288,11 @@ fun FullPlayerScreen(
                     toolbar = {
                         FullPlayerToolbar(
                             albumName = track.album,
+                            onOpenAlbum = if (onOpenAlbum != null && !track.album.isNullOrBlank()) {
+                                { onOpenAlbum(track) }
+                            } else {
+                                null
+                            },
                             onCollapse = onCollapse,
                             onMoreClick = onMoreClick,
                             isDark = isDark,
@@ -448,6 +454,7 @@ private fun FullPlayerLayout(
 @Composable
 private fun FullPlayerToolbar(
     albumName: String?,
+    onOpenAlbum: (() -> Unit)? = null,
     onCollapse: () -> Unit,
     onMoreClick: () -> Unit,
     isDark: Boolean = isSystemInDarkTheme(),
@@ -478,6 +485,7 @@ private fun FullPlayerToolbar(
             )
         }
 
+        val hasAlbum = !albumName.isNullOrBlank()
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -489,13 +497,13 @@ private fun FullPlayerToolbar(
             Text(
                 text = "NOW PLAYING",
                 color = if (isDark) Color.White.copy(alpha = 0.65f) else Color.Black.copy(alpha = 0.60f),
-                fontSize = if (albumName != null) 11.sp else 13.sp,
+                fontSize = if (hasAlbum) 11.sp else 13.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.4.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (!albumName.isNullOrBlank()) {
+            if (hasAlbum) {
                 Text(
                     text = albumName,
                     color = if (isDark) Color.White.copy(alpha = 0.90f) else Color(0xFF191C1E),
@@ -503,6 +511,17 @@ private fun FullPlayerToolbar(
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = if (onOpenAlbum != null) {
+                        Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(
+                                onClickLabel = "Open album",
+                                onClick = onOpenAlbum,
+                            )
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    } else {
+                        Modifier
+                    },
                 )
             }
         }

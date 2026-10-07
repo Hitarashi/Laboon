@@ -186,6 +186,7 @@ class PlaybackManagerImpl(
     private var motionArtworkRequestedTrackId: String? = null
     private var lyricsGeneration = 0L
     private var lyricsRequestedGeneration = -1L
+    private var metadataJob: Job? = null
 
     @Volatile
     private var currentDecoderName: String? = null
@@ -209,6 +210,7 @@ class PlaybackManagerImpl(
             _state.value = _state.value.copy(lyricsLoading = true)
             requestLyrics(track, _state.value.durationMs)
             requestTrackArtwork(track)
+            requestTrackMetadata(track)
         }
         scope.launch {
             queueManager.state.collect { qState ->
@@ -283,6 +285,82 @@ class PlaybackManagerImpl(
                             it.artworkUrl == artworkUrl
                 }
                 ?.let(playbackPersistence::saveLastTrack)
+        }
+    }
+
+    private fun requestTrackMetadata(track: HomeTrack) {
+        if (!track.album.isNullOrBlank() &&
+            !track.providerTrackId.isNullOrBlank() &&
+            !track.artworkUrl.isNullOrBlank()
+        ) {
+            return
+        }
+        val apiBaseUrl = sessionStore.getSession()?.lyricspornApiUrl
+            ?.takeIf(String::isNotBlank) ?: return
+
+        metadataJob?.cancel()
+        metadataJob = scope.launch {
+            val appleTrackId =
+                track.providerTrackId?.takeIf { it.isNotBlank() && it.all(Char::isDigit) }
+            var resolvedAlbum = track.album?.takeIf(String::isNotBlank)
+            var resolvedProviderTrackId = appleTrackId
+            var resolvedArtworkUrl = track.artworkUrl?.takeIf(String::isNotBlank)
+
+            if (resolvedAlbum == null && appleTrackId != null) {
+                resolvedAlbum = LyricspornClient.getTrackAlbumName(apiBaseUrl, appleTrackId)
+            }
+
+            if (resolvedProviderTrackId == null || resolvedArtworkUrl == null || resolvedAlbum == null) {
+                val match = LyricspornClient.resolveTrackCatalogItem(
+                    apiBaseUrl = apiBaseUrl,
+                    title = track.title,
+                    artist = track.artist,
+                    album = resolvedAlbum,
+                    durationMs = track.durationMs,
+                )?.item
+                if (match != null) {
+                    if (resolvedProviderTrackId == null && match.id.all(Char::isDigit)) {
+                        resolvedProviderTrackId = match.id
+                    }
+                    if (resolvedAlbum == null) {
+                        resolvedAlbum = match.albumName
+                    }
+                    if (resolvedArtworkUrl == null) {
+                        resolvedArtworkUrl = match.artworkUrl
+                    }
+                }
+            }
+
+            if (resolvedAlbum == null && resolvedProviderTrackId != null) {
+                resolvedAlbum =
+                    LyricspornClient.getTrackAlbumName(apiBaseUrl, resolvedProviderTrackId)
+            }
+
+            if (!isActive) return@launch
+
+            val isUpdated = resolvedAlbum != track.album ||
+                    resolvedProviderTrackId != track.providerTrackId ||
+                    resolvedArtworkUrl != track.artworkUrl
+
+            if (isUpdated) {
+                val currentTrack = _state.value.currentTrack
+                if (currentTrack?.id == track.id) {
+                    val updatedTrack = currentTrack.copy(
+                        album = resolvedAlbum ?: currentTrack.album,
+                        providerTrackId = resolvedProviderTrackId ?: currentTrack.providerTrackId,
+                        artworkUrl = resolvedArtworkUrl ?: currentTrack.artworkUrl,
+                    )
+                    _state.update { current ->
+                        if (current.currentTrack?.id == track.id) {
+                            current.copy(currentTrack = updatedTrack)
+                        } else {
+                            current
+                        }
+                    }
+                    queueManager.updateCurrentTrack(updatedTrack)
+                    playbackPersistence.saveLastTrack(updatedTrack)
+                }
+            }
         }
     }
 
@@ -821,7 +899,10 @@ class PlaybackManagerImpl(
             switchingQualityFormat = null,
         )
         playbackPersistence.saveLastTrack(nextTrack)
-        if (trackChanged) requestLyrics(nextTrack, 0L)
+        if (trackChanged) {
+            requestLyrics(nextTrack, 0L)
+            requestTrackMetadata(nextTrack)
+        }
         if (exo.mediaItemCount > 1 && exo.currentMediaItemIndex > 0) {
             exo.removeMediaItem(0)
         }
@@ -909,6 +990,7 @@ class PlaybackManagerImpl(
             },
         )
         requestLyrics(track, 0L)
+        requestTrackMetadata(track)
         playbackPersistence.saveLastTrack(track)
         playbackPersistence.setPlayerDismissed(false)
         if (startPositionMs > 0L) {
@@ -1916,6 +1998,8 @@ class PlaybackManagerImpl(
     }
 
     override fun release() {
+        metadataJob?.cancel()
+        metadataJob = null
         lyricsJob?.cancel()
         motionArtworkJob?.cancel()
         motionArtworkJob = null

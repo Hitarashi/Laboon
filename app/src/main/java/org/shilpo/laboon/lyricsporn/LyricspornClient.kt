@@ -30,6 +30,16 @@ data class LyricspornCatalogItem(
     val isrc: String? = null,
 )
 
+data class LyricspornSearchResults(
+    val songs: List<LyricspornCatalogItem> = emptyList(),
+    val albums: List<LyricspornCatalogItem> = emptyList(),
+)
+
+data class LyricspornTopSuggestions(
+    val songs: List<LyricspornCatalogItem> = emptyList(),
+    val albums: List<LyricspornCatalogItem> = emptyList(),
+)
+
 data class LyricspornCatalogMatch(
     val item: LyricspornCatalogItem,
     val isExactIdentity: Boolean,
@@ -47,6 +57,7 @@ internal fun preferredAlbumEditorialNotes(standard: String?, short: String?): St
 private data class LyricspornTrackDetails(
     val albumId: String?,
     val motionArtwork: LyricspornMotionArtwork?,
+    val albumName: String? = null,
 )
 
 object LyricspornClient {
@@ -71,22 +82,33 @@ object LyricspornClient {
     fun normalizedArtworkKey(title: String, artist: String, apiBaseUrl: String?): String =
         "${normalizeApiBaseUrl(apiBaseUrl).orEmpty()}:${currentStorefront()}:${title.normalized()}:${artist.normalized()}"
 
-    suspend fun searchSongs(
+    suspend fun searchCatalog(
         apiBaseUrl: String?,
         term: String,
         limit: Int = 25,
-    ): List<LyricspornCatalogItem> {
-        if (term.isBlank()) return emptyList()
-        val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return emptyList()
+    ): LyricspornSearchResults {
+        if (term.isBlank()) return LyricspornSearchResults()
+        val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return LyricspornSearchResults()
         val query = encode(term.trim())
         val json = getJson(
-            "$baseUrl/catalog/search?term=$query&types=songs&limit=${limit.coerceIn(1, 25)}" +
+            "$baseUrl/catalog/search?term=$query&types=songs,albums&limit=${
+                limit.coerceIn(
+                    1,
+                    25
+                )
+            }" +
                     "&artworkSize=300",
-        ) ?: return emptyList()
-        return json.objOrNull("results")?.objOrNull("songs")?.arrOrNull("items")
+        ) ?: return LyricspornSearchResults()
+        val resultsObj = json.objOrNull("results") ?: return LyricspornSearchResults()
+        val songs = resultsObj.objOrNull("songs")?.arrOrNull("items")
             ?.toCatalogItems(300)
             .orEmpty()
             .filter { it.type == "song" && it.id.isNumericAppleId() }
+        val albums = resultsObj.objOrNull("albums")?.arrOrNull("items")
+            ?.toCatalogItems(300)
+            .orEmpty()
+            .filter { it.type == "album" && it.id.matches(APPLE_CATALOG_ID_PATTERN) }
+        return LyricspornSearchResults(songs = songs, albums = albums)
     }
 
     suspend fun getTrackLyrics(apiBaseUrl: String?, appleTrackId: String): JSONObject? {
@@ -99,6 +121,12 @@ object LyricspornClient {
         val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return null
         val trackId = appleTrackId.takeIf { it.isNumericAppleId() } ?: return null
         return getTrackDetails(baseUrl, trackId)?.albumId
+    }
+
+    suspend fun getTrackAlbumName(apiBaseUrl: String?, appleTrackId: String): String? {
+        val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return null
+        val trackId = appleTrackId.takeIf { it.isNumericAppleId() } ?: return null
+        return getTrackDetails(baseUrl, trackId)?.albumName
     }
 
     suspend fun getAlbumDetails(
@@ -150,27 +178,35 @@ object LyricspornClient {
         }.orEmpty()
     }
 
-    suspend fun searchTopSongSuggestions(
+    suspend fun searchTopSuggestions(
         apiBaseUrl: String?,
         term: String,
         limit: Int = 5,
-    ): List<LyricspornCatalogItem> {
-        if (term.isBlank()) return emptyList()
-        val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return emptyList()
+    ): LyricspornTopSuggestions {
+        if (term.isBlank()) return LyricspornTopSuggestions()
+        val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return LyricspornTopSuggestions()
         val query = encode(term.trim())
         val json = getJson(
-            "$baseUrl/catalog/search/suggestions?term=$query&kinds=topResults&types=songs" +
+            "$baseUrl/catalog/search/suggestions?term=$query&kinds=topResults&types=songs,albums" +
                     "&limit=${limit.coerceIn(1, 10)}&artworkSize=300",
-        ) ?: return emptyList()
-        val suggestions = json.arrOrNull("suggestions") ?: return emptyList()
-        return buildList {
-            for (index in 0 until suggestions.length()) {
-                val suggestion = suggestions.objAtOrNull(index) ?: continue
-                if (suggestion.optString("kind") != "topResults") continue
-                val item = suggestion.objOrNull("content")?.toCatalogItem(300) ?: continue
-                if (item.type == "song" && item.id.isNumericAppleId()) add(item)
+        ) ?: return LyricspornTopSuggestions()
+        val suggestions = json.arrOrNull("suggestions") ?: return LyricspornTopSuggestions()
+        val songs = mutableListOf<LyricspornCatalogItem>()
+        val albums = mutableListOf<LyricspornCatalogItem>()
+        for (index in 0 until suggestions.length()) {
+            val suggestion = suggestions.objAtOrNull(index) ?: continue
+            if (suggestion.optString("kind") != "topResults") continue
+            val item = suggestion.objOrNull("content")?.toCatalogItem(300) ?: continue
+            if (item.type == "song" && item.id.isNumericAppleId()) {
+                songs.add(item)
+            } else if (item.type == "album" && item.id.matches(APPLE_CATALOG_ID_PATTERN)) {
+                albums.add(item)
             }
-        }.distinctBy(LyricspornCatalogItem::id)
+        }
+        return LyricspornTopSuggestions(
+            songs = songs.distinctBy(LyricspornCatalogItem::id),
+            albums = albums.distinctBy(LyricspornCatalogItem::id),
+        )
     }
 
     suspend fun resolveTrackArtwork(
@@ -271,11 +307,18 @@ object LyricspornClient {
             val track = getJson(
                 "$apiBaseUrl/tracks/$appleTrackId?include=motionArtwork,album",
             )?.objOrNull("track") ?: return@withLock null
+            val albumObj = track.objOrNull("albumResource")
+            val albumId =
+                albumObj?.stringOrNull("id")?.takeIf { it.matches(APPLE_CATALOG_ID_PATTERN) }
+                    ?: track.stringOrNull("albumId")
+                        ?.takeIf { it.matches(APPLE_CATALOG_ID_PATTERN) }
+            val albumName = track.stringOrNull("album")
+                ?: track.stringOrNull("albumName")
+                ?: albumObj?.stringOrNull("name")
             LyricspornTrackDetails(
-                albumId = track.objOrNull("albumResource")
-                    ?.stringOrNull("id")
-                    ?.takeIf { it.matches(APPLE_CATALOG_ID_PATTERN) },
+                albumId = albumId,
                 motionArtwork = track.objOrNull("motionArtwork")?.toMotionArtwork(),
+                albumName = albumName,
             ).also { trackDetailsCache[key] = it }
         }
     }
@@ -450,7 +493,9 @@ object LyricspornClient {
             type = stringOrNull("type").orEmpty(),
             name = name,
             artistName = stringOrNull("artistName"),
-            albumName = stringOrNull("albumName"),
+            albumName = stringOrNull("albumName")
+                ?: stringOrNull("album")
+                ?: objOrNull("albumResource")?.stringOrNull("name"),
             artworkUrl = artworkUrl,
             motionArtwork = objOrNull("motionArtwork")?.toMotionArtwork(),
             durationMs = optLong("durationMs").takeIf { has("durationMs") && !isNull("durationMs") },

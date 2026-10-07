@@ -623,6 +623,7 @@ fun HomeScreen(
                         onTrackClick = { track ->
                             playbackManager.play(track)
                         },
+                        onAlbumClick = onAlbumClick,
                         onPlayWithContext = { track, results ->
                             playbackManager.play(track, results)
                         },
@@ -639,6 +640,9 @@ fun HomeScreen(
                         searchRepository = searchRepository,
                         onObservedTracks = { tracks ->
                             autoRipCoordinator.observe(AutoRipSource.SEARCH, tracks)
+                        },
+                        onObservedAlbums = { albums ->
+                            autoRipCoordinator.observeAlbums(AutoRipSource.SEARCH, albums)
                         },
                         ripCompletions = ripConnection.completedRipTrackIds,
                         resolveAvailability = { providerTrackId ->
@@ -843,9 +847,7 @@ fun HomeScreen(
                         playbackManager.play(t, contextTracks = queueState.items)
                     },
                     onOpenAlbum = { albumTrack ->
-                        val albumId = albumDetailsRepository.getAlbumIdForTrack(
-                            albumTrack.providerTrackId,
-                        )
+                        val albumId = albumDetailsRepository.resolveAlbumIdForTrack(albumTrack)
                         if (albumId == null) {
                             false
                         } else {
