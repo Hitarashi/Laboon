@@ -10,6 +10,7 @@ import org.shilpo.laboon.home.SectionLoadState
 import org.shilpo.laboon.home.SectionState
 import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.search.PlaybackResolution
+import org.shilpo.laboon.search.SearchFilter
 import org.shilpo.laboon.search.SearchRepository
 import org.shilpo.laboon.search.SearchResults
 
@@ -36,7 +37,9 @@ class FeedAvailabilityRefreshTest {
     )
 
     private fun repository(cachedIds: Set<String>) = object : SearchRepository {
-        override suspend fun search(query: String): SearchResults = SearchResults()
+        override suspend fun search(query: String, filter: SearchFilter): SearchResults =
+            SearchResults()
+
         override suspend fun enrichAvailability(tracks: List<HomeTrack>): List<HomeTrack> =
             tracks.map { enriched(it, it.providerTrackId in cachedIds) }
 

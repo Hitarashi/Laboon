@@ -16,7 +16,7 @@ class SearchAlbumSupportTest {
     fun `default SearchRepository searchSuggestions returns empty SearchSuggestions`() =
         runBlocking {
             val stub = object : SearchRepository {
-                override suspend fun search(query: String) = SearchResults()
+                override suspend fun search(query: String, filter: SearchFilter) = SearchResults()
                 override suspend fun enrichAvailability(tracks: List<HomeTrack>) = tracks
                 override suspend fun resolvePlaybackUrl(track: HomeTrack) = null
                 override suspend fun resolvePlayback(track: HomeTrack) = null

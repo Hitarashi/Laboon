@@ -34,6 +34,10 @@ data class LyricspornSearchResults(
     val songs: List<LyricspornCatalogItem> = emptyList(),
     val albums: List<LyricspornCatalogItem> = emptyList(),
     val artists: List<LyricspornCatalogItem> = emptyList(),
+    val playlists: List<LyricspornCatalogItem> = emptyList(),
+    val stations: List<LyricspornCatalogItem> = emptyList(),
+    val musicVideos: List<LyricspornCatalogItem> = emptyList(),
+    val topResults: List<LyricspornCatalogItem> = emptyList(),
 )
 
 data class LyricspornTopSuggestions(
@@ -87,21 +91,26 @@ object LyricspornClient {
     suspend fun searchCatalog(
         apiBaseUrl: String?,
         term: String,
+        types: String = "top-results,songs,albums,artists,playlists,stations,music-videos",
         limit: Int = 25,
     ): LyricspornSearchResults {
         if (term.isBlank()) return LyricspornSearchResults()
         val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return LyricspornSearchResults()
         val query = encode(term.trim())
+        val encodedTypes = encode(types.trim())
         val json = getJson(
-            "$baseUrl/catalog/search?term=$query&types=songs,albums,artists&limit=${
+            "$baseUrl/catalog/search?term=$query&types=$encodedTypes&limit=${
                 limit.coerceIn(
                     1,
                     25
                 )
-            }" +
-                    "&artworkSize=300",
+            }&artworkSize=300",
         ) ?: return LyricspornSearchResults()
         val resultsObj = json.objOrNull("results") ?: return LyricspornSearchResults()
+        val topResults = resultsObj.objOrNull("topResults")?.arrOrNull("items")
+            ?.toCatalogItems(300)
+            .orEmpty()
+            .filter { it.id.matches(APPLE_CATALOG_ID_PATTERN) }
         val songs = resultsObj.objOrNull("songs")?.arrOrNull("items")
             ?.toCatalogItems(300)
             .orEmpty()
@@ -114,7 +123,27 @@ object LyricspornClient {
             ?.toCatalogItems(300)
             .orEmpty()
             .filter { it.type == "artist" && it.id.matches(APPLE_CATALOG_ID_PATTERN) }
-        return LyricspornSearchResults(songs = songs, albums = albums, artists = artists)
+        val playlists = resultsObj.objOrNull("playlists")?.arrOrNull("items")
+            ?.toCatalogItems(300)
+            .orEmpty()
+            .filter { it.type == "playlist" && it.id.matches(APPLE_CATALOG_ID_PATTERN) }
+        val stations = resultsObj.objOrNull("stations")?.arrOrNull("items")
+            ?.toCatalogItems(300)
+            .orEmpty()
+            .filter { it.type == "station" && it.id.matches(APPLE_CATALOG_ID_PATTERN) }
+        val musicVideos = resultsObj.objOrNull("musicVideos")?.arrOrNull("items")
+            ?.toCatalogItems(300)
+            .orEmpty()
+            .filter { it.type == "musicVideo" && it.id.matches(APPLE_CATALOG_ID_PATTERN) }
+        return LyricspornSearchResults(
+            songs = songs,
+            albums = albums,
+            artists = artists,
+            playlists = playlists,
+            stations = stations,
+            musicVideos = musicVideos,
+            topResults = topResults,
+        )
     }
 
     suspend fun getTrackLyrics(apiBaseUrl: String?, appleTrackId: String): JSONObject? {

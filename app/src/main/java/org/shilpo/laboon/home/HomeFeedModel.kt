@@ -47,6 +47,21 @@ data class HomeAlbum(
     val appleCatalogId: String? = null,
 )
 
+data class HomePlaylist(
+    val id: String,
+    val title: String,
+    val curator: String? = null,
+    val artworkUrl: String? = null,
+    val appleCatalogId: String? = null,
+)
+
+data class HomeStation(
+    val id: String,
+    val title: String,
+    val artworkUrl: String? = null,
+    val appleCatalogId: String? = null,
+)
+
 enum class SectionLoadState {
     IDLE,
     LOADING,

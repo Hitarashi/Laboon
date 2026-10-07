@@ -10,6 +10,8 @@ import org.json.JSONObject
 import org.shilpo.laboon.auth.SessionStore
 import org.shilpo.laboon.home.HomeAlbum
 import org.shilpo.laboon.home.HomeArtist
+import org.shilpo.laboon.home.HomePlaylist
+import org.shilpo.laboon.home.HomeStation
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.lyricsporn.LyricspornCatalogItem
@@ -87,10 +89,28 @@ fun interface AlbumAvailabilityLookup {
     suspend fun lookupAvailableAlbums(providerAlbumIds: List<String>): BatchAlbumAvailabilityLookup
 }
 
+enum class SearchFilter(val label: String, val apiType: String) {
+    TOP_RESULTS("Top Results", "top-results"),
+    ARTISTS("Artist", "artists"),
+    ALBUMS("Albums", "albums"),
+    SONGS("Songs", "songs"),
+    PLAYLISTS("Playlists", "playlists"),
+    STATIONS("Stations", "stations"),
+    MUSIC_VIDEOS("Music Videos", "music-videos");
+
+    companion object {
+        val ALL = entries.toList()
+    }
+}
+
 data class SearchResults(
     val tracks: List<HomeTrack> = emptyList(),
     val albums: List<HomeAlbum> = emptyList(),
     val artists: List<HomeArtist> = emptyList(),
+    val playlists: List<HomePlaylist> = emptyList(),
+    val stations: List<HomeStation> = emptyList(),
+    val musicVideos: List<HomeTrack> = emptyList(),
+    val topResults: List<LyricspornCatalogItem> = emptyList(),
 )
 
 data class SearchSuggestions(
@@ -100,7 +120,11 @@ data class SearchSuggestions(
 )
 
 interface SearchRepository {
-    suspend fun search(query: String): SearchResults
+    suspend fun search(
+        query: String,
+        filter: SearchFilter = SearchFilter.TOP_RESULTS
+    ): SearchResults
+
     suspend fun enrichAvailability(tracks: List<HomeTrack>): List<HomeTrack>
     suspend fun searchHints(query: String): List<String> = emptyList()
     suspend fun searchSuggestions(query: String): SearchSuggestions = SearchSuggestions()
@@ -114,14 +138,55 @@ class SearchRepositoryImpl(
     private val http: HttpJsonClient = HttpJsonClient(),
 ) : SearchRepository, TrackAvailabilityLookup, AlbumAvailabilityLookup {
 
-    override suspend fun search(query: String): SearchResults = withContext(Dispatchers.IO) {
+    override suspend fun search(
+        query: String,
+        filter: SearchFilter,
+    ): SearchResults = withContext(Dispatchers.IO) {
         val apiBaseUrl = sessionStore.getSession()?.lyricspornApiUrl
-        val catalogResults =
-            LyricspornClient.searchCatalog(apiBaseUrl, query, limit = MAX_SEARCH_RESULTS)
+        val types = if (filter == SearchFilter.TOP_RESULTS) {
+            "top-results,songs,albums,artists,playlists,stations,music-videos"
+        } else {
+            filter.apiType
+        }
+        var catalogResults = LyricspornClient.searchCatalog(
+            apiBaseUrl = apiBaseUrl,
+            term = query,
+            types = types,
+            limit = MAX_SEARCH_RESULTS,
+        )
+        if (catalogResults.songs.isEmpty() && catalogResults.albums.isEmpty() && catalogResults.artists.isEmpty() && types.contains(
+                "top-results"
+            )
+        ) {
+            val safeTypes = types.split(',').filter { it != "top-results" && it != "topResults" }
+                .joinToString(",")
+            if (safeTypes.isNotBlank()) {
+                val fallback = LyricspornClient.searchCatalog(
+                    apiBaseUrl = apiBaseUrl,
+                    term = query,
+                    types = safeTypes,
+                    limit = MAX_SEARCH_RESULTS,
+                )
+                if (fallback.songs.isNotEmpty() || fallback.albums.isNotEmpty() || fallback.artists.isNotEmpty()) {
+                    catalogResults = fallback
+                }
+            }
+        }
         val tracks = withAvailability(catalogResults.songs)
         val albums = catalogResults.albums.map { it.toHomeAlbum() }
         val artists = catalogResults.artists.map { it.toHomeArtist() }
-        SearchResults(tracks = tracks, albums = albums, artists = artists)
+        val playlists = catalogResults.playlists.map { it.toHomePlaylist() }
+        val stations = catalogResults.stations.map { it.toHomeStation() }
+        val musicVideos = withAvailability(catalogResults.musicVideos)
+        SearchResults(
+            tracks = tracks,
+            albums = albums,
+            artists = artists,
+            playlists = playlists,
+            stations = stations,
+            musicVideos = musicVideos,
+            topResults = catalogResults.topResults,
+        )
     }
 
     override suspend fun searchHints(query: String): List<String> =
@@ -159,6 +224,23 @@ class SearchRepositoryImpl(
             id = "apple_$id",
             name = name,
             imageUrl = artworkUrl,
+            appleCatalogId = id,
+        )
+
+    private fun LyricspornCatalogItem.toHomePlaylist(): HomePlaylist =
+        HomePlaylist(
+            id = "apple_$id",
+            title = name,
+            curator = artistName,
+            artworkUrl = artworkUrl,
+            appleCatalogId = id,
+        )
+
+    private fun LyricspornCatalogItem.toHomeStation(): HomeStation =
+        HomeStation(
+            id = "apple_$id",
+            title = name,
+            artworkUrl = artworkUrl,
             appleCatalogId = id,
         )
 

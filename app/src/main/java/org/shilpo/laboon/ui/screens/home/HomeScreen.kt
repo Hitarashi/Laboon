@@ -326,6 +326,7 @@ fun HomeScreen(
 
     var isPlayerDismissed by rememberSaveable { mutableStateOf(playbackPersistence.isPlayerDismissed()) }
     var fallbackTrack by remember { mutableStateOf<HomeTrack?>(playbackPersistence.getLastTrack()) }
+    var searchFocusTrigger by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(playbackState.currentTrack) {
         val current = playbackState.currentTrack
@@ -629,6 +630,7 @@ fun HomeScreen(
                     )
 
                     MainTab.Search -> SearchScreen(
+                        searchFocusTrigger = searchFocusTrigger,
                         onTrackClick = { track ->
                             playbackManager.play(track)
                         },
@@ -794,7 +796,11 @@ fun HomeScreen(
                 selectedTab = currentTab,
                 onTabSelected = {
                     closeAlbum()
-                    onEvent(RouteEvent.TabSelected(it))
+                    if (it == MainTab.Search && currentTab == MainTab.Search) {
+                        searchFocusTrigger++
+                    } else {
+                        onEvent(RouteEvent.TabSelected(it))
+                    }
                 },
                 hasMiniPlayerAbove = activeTrack != null && !isAlbumOverlayVisible,
                 backdropState = liquidGlassBackdropState,
