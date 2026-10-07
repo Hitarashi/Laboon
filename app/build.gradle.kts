@@ -32,8 +32,8 @@ android {
         applicationId = "org.shilpo.laboon"
         minSdk = 33
         targetSdk = 37
-        versionCode = 3
-        versionName = "0.0.3"
+        versionCode = 4
+        versionName = "0.0.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -92,6 +92,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.compose.reorderable)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
     implementation(libs.lottie.compose)

@@ -91,7 +91,8 @@ import org.shilpo.laboon.home.HomeAlbum
 import org.shilpo.laboon.home.HomeArtist
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.lyricsporn.LyricspornArtist
-import org.shilpo.laboon.ui.design.CodecIcon
+import org.shilpo.laboon.ui.design.TrackCodecBadges
+import org.shilpo.laboon.ui.design.getTrackQualityCodecs
 import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.sin
@@ -799,7 +800,7 @@ private fun ArtistTrackRow(
                 ?.takeIf { it > 0L }
                 ?.let(::formatTrackDuration)
             val albumSubtitle = track.album ?: track.artist
-            val qualityCodec = track.codec?.takeIf(::isQualityCodec)
+            val codecs = remember(track) { getTrackQualityCodecs(track) }
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -813,14 +814,14 @@ private fun ArtistTrackRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (qualityCodec != null) {
+                if (codecs.isNotEmpty()) {
                     Text(
                         text = " • ",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    CodecIcon(
-                        codec = qualityCodec,
+                    TrackCodecBadges(
+                        track = track,
                         height = 12.dp,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

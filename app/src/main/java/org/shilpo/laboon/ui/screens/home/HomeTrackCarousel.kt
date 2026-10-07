@@ -45,8 +45,8 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
-import org.shilpo.laboon.ui.design.CodecIcon
 import org.shilpo.laboon.ui.design.LiquidGlassPlayButton
+import org.shilpo.laboon.ui.design.TrackCodecBadges
 import org.shilpo.laboon.ui.design.liquidGlassBackdropProducer
 import org.shilpo.laboon.ui.design.rememberLiquidGlassBackdropState
 
@@ -236,8 +236,8 @@ fun CarouselItemScope.HomeTrackCard(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false),
                         )
-                        CodecIcon(
-                            codec = track.codec,
+                        TrackCodecBadges(
+                            track = track,
                             height = 9.dp,
                             tint = Color.White.copy(alpha = 0.75f),
                         )

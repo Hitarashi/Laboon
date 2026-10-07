@@ -100,9 +100,9 @@ import org.shilpo.laboon.search.SearchRepository
 import org.shilpo.laboon.search.SearchRepositoryImpl
 import org.shilpo.laboon.search.SearchResults
 import org.shilpo.laboon.search.SearchSuggestions
-import org.shilpo.laboon.ui.design.CodecIcon
 import org.shilpo.laboon.ui.design.FloatingCombinedClearance
 import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
+import org.shilpo.laboon.ui.design.TrackCodecBadges
 
 @Composable
 fun SearchScreen(
@@ -1050,13 +1050,11 @@ private fun SearchTrackRow(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
-                track.availableFormats.forEach { format ->
-                    CodecIcon(
-                        codec = format,
-                        height = 10.dp,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                    )
-                }
+                TrackCodecBadges(
+                    track = track,
+                    height = 10.dp,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                )
             }
         }
 
@@ -2221,13 +2219,11 @@ private fun SearchMusicVideoRow(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
-                track.availableFormats.forEach { format ->
-                    CodecIcon(
-                        codec = format,
-                        height = 10.dp,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                    )
-                }
+                TrackCodecBadges(
+                    track = track,
+                    height = 10.dp,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                )
             }
         }
 

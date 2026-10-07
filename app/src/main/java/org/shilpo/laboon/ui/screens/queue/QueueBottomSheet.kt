@@ -51,7 +51,7 @@ import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.playback.RepeatMode
-import org.shilpo.laboon.ui.design.CodecIcon
+import org.shilpo.laboon.ui.design.TrackCodecBadges
 
 @Composable
 fun QueueBottomSheet(
@@ -342,8 +342,8 @@ private fun NowPlayingQueueCard(track: HomeTrack) {
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
-                CodecIcon(
-                    codec = track.codec,
+                TrackCodecBadges(
+                    track = track,
                     height = 9.dp,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                 )
@@ -425,8 +425,8 @@ private fun QueueTrackRow(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
-                CodecIcon(
-                    codec = track.codec,
+                TrackCodecBadges(
+                    track = track,
                     height = 8.dp,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                 )

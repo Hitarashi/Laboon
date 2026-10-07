@@ -16,8 +16,10 @@ json = "20260814"
 okhttp = "5.5.0"
 media3 = "1.11.1"
 jellyfin-media3-ffmpeg = "1.9.0+1"
+compose-reorderable = "3.1.0"
 
 [libraries]
+compose-reorderable = { module = "sh.calvin.reorderable:reorderable", version.ref = "compose-reorderable" }
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 coil-network-okhttp = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }

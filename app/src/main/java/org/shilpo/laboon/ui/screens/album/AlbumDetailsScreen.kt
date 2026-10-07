@@ -95,6 +95,8 @@ import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.lyricsporn.LyricspornAlbum
 import org.shilpo.laboon.lyricsporn.LyricspornAlbumVersion
 import org.shilpo.laboon.ui.design.CodecIcon
+import org.shilpo.laboon.ui.design.TrackCodecBadges
+import org.shilpo.laboon.ui.design.getTrackQualityCodecs
 import java.net.URI
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -834,7 +836,7 @@ private fun AlbumTrackRow(
                 ?.takeIf { it > 0L }
                 ?.let(::formatAlbumDuration)
             val subtitle = duration ?: track.artist
-            val qualityCodec = track.codec?.takeIf(::isTrackQualityCodec)
+            val codecs = remember(track) { getTrackQualityCodecs(track) }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -847,10 +849,10 @@ private fun AlbumTrackRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (duration != null && qualityCodec != null) {
+                if (duration != null && codecs.isNotEmpty()) {
                     MetadataSeparator(MaterialTheme.colorScheme.onSurfaceVariant)
-                    CodecIcon(
-                        codec = qualityCodec,
+                    TrackCodecBadges(
+                        track = track,
                         height = 12.dp,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

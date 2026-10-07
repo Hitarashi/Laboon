@@ -1,32 +1,37 @@
+@file:OptIn(ExperimentalMaterial3ExpressiveApi::class, ExperimentalMaterial3Api::class)
+
 package org.shilpo.laboon.ui.screens.player.queue
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -34,7 +39,6 @@ import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,21 +48,22 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
+import androidx.core.view.HapticFeedbackConstantsCompat
+import androidx.core.view.ViewCompat
 import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
@@ -66,8 +71,9 @@ import coil3.request.crossfade
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.playback.QueueState
-import org.shilpo.laboon.ui.design.CodecIcon
-import kotlin.math.roundToInt
+import org.shilpo.laboon.ui.design.TrackCodecBadges
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 
 @Composable
 fun QueueScreen(
@@ -80,8 +86,7 @@ fun QueueScreen(
     lazyListState: LazyListState = rememberLazyListState(),
 ) {
     Box(
-        modifier = modifier
-            .fillMaxSize(),
+        modifier = modifier.fillMaxSize(),
     ) {
         QueueListContent(
             queueState = queueState,
@@ -105,167 +110,232 @@ private fun QueueListContent(
     onMoveUpNext: (Int, Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val density = LocalDensity.current
-
+    val hapticView = LocalView.current
     val upcomingTracks = remember { mutableStateListOf<HomeTrack>() }
+
+    var dragFromIndex by remember { mutableStateOf<Int?>(null) }
+    var dragToIndex by remember { mutableStateOf<Int?>(null) }
+    var reorderHandleInUse by remember { mutableStateOf(false) }
+
+    val reorderableState = rememberReorderableLazyListState(
+        lazyListState = lazyListState,
+        onMove = { from, to ->
+            if (dragFromIndex == null) {
+                dragFromIndex = from.index
+            }
+            dragToIndex = to.index
+            upcomingTracks.add(to.index, upcomingTracks.removeAt(from.index))
+        },
+    )
+
     LaunchedEffect(queueState.upcoming) {
-        upcomingTracks.clear()
-        upcomingTracks.addAll(queueState.upcoming)
+        if (!reorderableState.isAnyItemDragging) {
+            upcomingTracks.clear()
+            upcomingTracks.addAll(queueState.upcoming)
+        }
+    }
+
+    LaunchedEffect(reorderableState.isAnyItemDragging) {
+        if (!reorderableState.isAnyItemDragging) {
+            val from = dragFromIndex
+            val to = dragToIndex
+            if (from != null && to != null && from != to) {
+                onMoveUpNext(from, to)
+            }
+            dragFromIndex = null
+            dragToIndex = null
+        }
     }
 
     val fadeHeight = 24.dp
-    LazyColumn(
-        state = lazyListState,
-        contentPadding = PaddingValues(
-            top = 12.dp,
-            bottom = 12.dp,
-            start = 16.dp,
-            end = 16.dp,
-        ),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        modifier = modifier
-            .fillMaxSize()
-            .graphicsLayer {
-                compositingStrategy = if (queueFractionProvider() >= 0.99f) {
-                    CompositingStrategy.Offscreen
-                } else {
-                    CompositingStrategy.Auto
-                }
-            }
-            .drawWithContent {
-                drawContent()
-                if (queueFractionProvider() <= 0f) return@drawWithContent
-                val fadeHeightPx = fadeHeight.toPx()
-                if (size.height > 0f && fadeHeightPx > 0f) {
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(Color.Transparent, Color.Black),
-                            startY = 0f,
-                            endY = fadeHeightPx,
-                        ),
-                        blendMode = BlendMode.DstIn,
-                    )
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(Color.Black, Color.Transparent),
-                            startY = size.height - fadeHeightPx,
-                            endY = size.height,
-                        ),
-                        blendMode = BlendMode.DstIn,
-                    )
-                }
-            },
+
+    Column(
+        modifier = modifier.fillMaxSize(),
     ) {
-        queueState.currentTrack?.let { current ->
-            item(key = "now_playing_header") {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 22.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Text(
-                    text = "NOW PLAYING",
-                    fontSize = 11.sp,
+                    text = "Up Next",
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.2.sp,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(start = 8.dp, bottom = 4.dp),
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.secondaryContainer)
+                        .padding(horizontal = 9.dp, vertical = 2.5.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "${upcomingTracks.size}",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
             }
 
-            item(key = "current_track_${current.id}") {
-                QueueItemRow(
-                    track = current,
-                    isActive = true,
-                    onClick = { onTrackClick(current) },
-                    onRemove = null,
-                    reorderGestureArea = null,
+            if (upcomingTracks.isNotEmpty()) {
+                Text(
+                    text = "Swipe to remove",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.60f),
                 )
             }
         }
 
-        if (queueState.upcoming.isNotEmpty()) {
-            item(key = "up_next_header") {
-                Spacer(modifier = Modifier.height(12.dp))
+        if (upcomingTracks.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 24.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainer)
+                    .padding(vertical = 32.dp, horizontal = 16.dp),
+                contentAlignment = Alignment.Center,
+            ) {
                 Text(
-                    text = "UP NEXT (${queueState.upNextCount})",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.2.sp,
-                    color = Color.White.copy(alpha = 0.7f),
-                    modifier = Modifier.padding(start = 8.dp, bottom = 4.dp),
+                    text = "Queue is empty. Use 'Play Next' or 'Add to Queue' to queue up tracks.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
                 )
             }
-
-            itemsIndexed(
-                items = upcomingTracks,
-                key = { _, track -> "upcoming_${track.id}" },
-            ) { index, track ->
-                var dragOffsetY by remember { mutableFloatStateOf(0f) }
-                var isReordering by remember { mutableStateOf(false) }
-
-                val itemHeightPx = with(density) { 68.dp.toPx() }
-
-                QueueItemRow(
-                    track = track,
-                    isActive = false,
-                    onClick = { onTrackClick(track) },
-                    onRemove = { onRemoveUpNext(index) },
-                    reorderGestureArea = {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .pointerInput(index) {
-                                    detectVerticalDragGestures(
-                                        onDragStart = {
-                                            isReordering = true
-                                            dragOffsetY = 0f
-                                        },
-                                        onDragEnd = {
-                                            val shiftCount =
-                                                (dragOffsetY / itemHeightPx).roundToInt()
-                                            val targetIndex = (index + shiftCount).coerceIn(
-                                                0,
-                                                upcomingTracks.lastIndex
-                                            )
-                                            if (targetIndex != index) {
-                                                onMoveUpNext(index, targetIndex)
-                                            }
-                                            dragOffsetY = 0f
-                                            isReordering = false
-                                        },
-                                        onDragCancel = {
-                                            dragOffsetY = 0f
-                                            isReordering = false
-                                        },
-                                        onVerticalDrag = { change, dragAmount ->
-                                            change.consume()
-                                            dragOffsetY += dragAmount
+        } else {
+            LazyColumn(
+                state = lazyListState,
+                userScrollEnabled = !(reorderableState.isAnyItemDragging || reorderHandleInUse),
+                contentPadding = PaddingValues(
+                    top = 2.dp,
+                    bottom = 44.dp,
+                    start = 16.dp,
+                    end = 16.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        compositingStrategy = if (queueFractionProvider() >= 0.99f) {
+                            CompositingStrategy.Offscreen
+                        } else {
+                            CompositingStrategy.Auto
+                        }
+                    }
+                    .drawWithContent {
+                        drawContent()
+                        if (queueFractionProvider() <= 0f) return@drawWithContent
+                        val fadeHeightPx = fadeHeight.toPx()
+                        if (size.height > 0f && fadeHeightPx > 0f) {
+                            drawRect(
+                                brush = Brush.verticalGradient(
+                                    colors = listOf(Color.Transparent, Color.Black),
+                                    startY = 0f,
+                                    endY = fadeHeightPx,
+                                ),
+                                blendMode = BlendMode.DstIn,
+                            )
+                            drawRect(
+                                brush = Brush.verticalGradient(
+                                    colors = listOf(Color.Black, Color.Transparent),
+                                    startY = size.height - fadeHeightPx,
+                                    endY = size.height,
+                                ),
+                                blendMode = BlendMode.DstIn,
+                            )
+                        }
+                    },
+            ) {
+                itemsIndexed(
+                    items = upcomingTracks,
+                    key = { _, track -> track.id },
+                    contentType = { _, _ -> "queue_item" },
+                ) { index, track ->
+                    ReorderableItem(
+                        state = reorderableState,
+                        key = track.id,
+                        modifier = if (reorderableState.isAnyItemDragging) Modifier else Modifier.animateItem(),
+                    ) { isDragging ->
+                        UpNextTrackRow(
+                            track = track,
+                            index = index,
+                            count = upcomingTracks.size,
+                            isDragging = isDragging,
+                            isAnyDragging = reorderableState.isAnyItemDragging,
+                            onClick = { onTrackClick(track) },
+                            onRemove = {
+                                upcomingTracks.removeAt(index)
+                                onRemoveUpNext(index)
+                            },
+                            dragHandle = {
+                                IconButton(
+                                    onClick = {},
+                                    modifier = Modifier
+                                        .draggableHandle(
+                                            onDragStarted = {
+                                                reorderHandleInUse = true
+                                                ViewCompat.performHapticFeedback(
+                                                    hapticView,
+                                                    HapticFeedbackConstantsCompat.GESTURE_START,
+                                                )
+                                            },
+                                            onDragStopped = {
+                                                reorderHandleInUse = false
+                                                ViewCompat.performHapticFeedback(
+                                                    hapticView,
+                                                    HapticFeedbackConstantsCompat.GESTURE_END,
+                                                )
+                                            },
+                                        )
+                                        .size(40.dp),
+                                ) {
+                                    ReorderGripAffordance(
+                                        tint = if (isDragging) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.50f)
                                         },
                                     )
-                                },
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
                         )
-                    },
-                    modifier = Modifier
-                        .offset { IntOffset(0, dragOffsetY.roundToInt()) }
-                        .zIndex(if (isReordering) 1f else 0f),
-                )
+                    }
+                }
             }
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Suppress("DEPRECATION")
 @Composable
-private fun QueueItemRow(
+private fun UpNextTrackRow(
     track: HomeTrack,
-    isActive: Boolean,
+    index: Int,
+    count: Int,
+    isDragging: Boolean,
+    isAnyDragging: Boolean,
     onClick: () -> Unit,
-    onRemove: (() -> Unit)?,
-    reorderGestureArea: (@Composable () -> Unit)?,
+    onRemove: () -> Unit,
+    dragHandle: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val motionScheme = MaterialTheme.motionScheme
     val currentOnRemove by rememberUpdatedState(onRemove)
+
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
             if (value == SwipeToDismissBoxValue.EndToStart) {
-                currentOnRemove?.invoke()
+                currentOnRemove()
                 true
             } else {
                 false
@@ -273,73 +343,108 @@ private fun QueueItemRow(
         }
     )
 
-    val rowShape = RoundedCornerShape(16.dp)
-    val rowBackground = if (isActive) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-    } else {
-        Color.White.copy(alpha = 0.04f)
-    }
-    val rowBorderColor = if (isActive) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.40f)
-    } else {
-        Color.White.copy(alpha = 0.08f)
-    }
+    val shapes = ListItemDefaults.segmentedShapes(index = index, count = count)
+    val itemShape = if (isDragging) RoundedCornerShape(16.dp) else shapes.shape
 
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = modifier.fillMaxWidth(),
-    ) {
-        SwipeToDismissBox(
-            state = dismissState,
-            modifier = Modifier.weight(1f),
-            enableDismissFromStartToEnd = false,
-            enableDismissFromEndToStart = onRemove != null,
-            backgroundContent = {
-                val isTargeted = dismissState.targetValue == SwipeToDismissBoxValue.EndToStart
-                val backgroundColor by animateColorAsState(
-                    targetValue = if (isTargeted) {
-                        MaterialTheme.colorScheme.errorContainer
-                    } else {
-                        MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.82f)
-                    },
-                    animationSpec = tween(durationMillis = 150),
-                    label = "dismissBackgroundColor",
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clip(rowShape)
-                        .background(backgroundColor)
-                        .padding(end = 16.dp),
-                    contentAlignment = Alignment.CenterEnd,
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_clear),
-                        contentDescription = "Remove",
-                        tint = MaterialTheme.colorScheme.onErrorContainer,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            },
-        ) {
-            Row(
+    val scale by animateFloatAsState(
+        targetValue = if (isDragging) 1.025f else 1.0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "queueItemScale",
+    )
+    val elevation by animateDpAsState(
+        targetValue = if (isDragging) 10.dp else 0.dp,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioNoBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "queueItemElevation",
+    )
+
+    SwipeToDismissBox(
+        state = dismissState,
+        modifier = modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                compositingStrategy =
+                    if (isDragging) CompositingStrategy.Offscreen else CompositingStrategy.Auto
+            }
+            .shadow(
+                elevation = elevation,
+                shape = itemShape,
+                spotColor = Color.Black.copy(alpha = 0.35f),
+                ambientColor = Color.Black.copy(alpha = 0.15f),
+            ),
+        enableDismissFromStartToEnd = false,
+        enableDismissFromEndToStart = !isAnyDragging,
+        gesturesEnabled = !isAnyDragging,
+        backgroundContent = {
+            val isTargeted = dismissState.targetValue == SwipeToDismissBoxValue.EndToStart
+            val backgroundColor by animateColorAsState(
+                targetValue = if (isTargeted) {
+                    MaterialTheme.colorScheme.errorContainer
+                } else {
+                    MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.85f)
+                },
+                animationSpec = motionScheme.fastEffectsSpec(),
+                label = "dismissBgColor",
+            )
+            val iconScale by animateFloatAsState(
+                targetValue = if (isTargeted) 1.2f else 0.9f,
+                animationSpec = motionScheme.fastSpatialSpec(),
+                label = "dismissIconScale",
+            )
+            val iconAlpha by animateFloatAsState(
+                targetValue = if (isTargeted) 1.0f else 0.70f,
+                animationSpec = motionScheme.fastEffectsSpec(),
+                label = "dismissIconAlpha",
+            )
+
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(rowShape)
-                    .background(rowBackground)
-                    .border(1.dp, rowBorderColor, rowShape)
-                    .clickable(
-                        enabled = dismissState.currentValue == SwipeToDismissBoxValue.Settled,
-                        onClick = onClick,
-                    )
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .fillMaxSize()
+                    .clip(itemShape)
+                    .background(backgroundColor)
+                    .padding(end = 20.dp),
+                contentAlignment = Alignment.CenterEnd,
             ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_clear),
+                    contentDescription = "Remove from queue",
+                    tint = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = iconAlpha),
+                    modifier = Modifier
+                        .size(22.dp)
+                        .graphicsLayer {
+                            scaleX = iconScale
+                            scaleY = iconScale
+                        },
+                )
+            }
+        },
+    ) {
+        SegmentedListItem(
+            shapes = if (isDragging) shapes.copy(shape = RoundedCornerShape(16.dp)) else shapes,
+            colors = ListItemDefaults.segmentedColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            ),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(
+                    enabled = dismissState.currentValue == SwipeToDismissBoxValue.Settled && !isAnyDragging,
+                    onClick = onClick,
+                ),
+            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+            leadingContent = {
                 Box(
                     modifier = Modifier
                         .size(46.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Color.White.copy(alpha = 0.06f)),
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHighest),
                     contentAlignment = Alignment.Center,
                 ) {
                     if (!track.artworkUrl.isNullOrBlank()) {
@@ -352,57 +457,69 @@ private fun QueueItemRow(
                             error = painterResource(R.drawable.app_icon_small),
                             contentDescription = track.title,
                             contentScale = ContentScale.Crop,
-                            modifier = Modifier.size(46.dp),
+                            modifier = Modifier.fillMaxSize(),
                         )
                     } else {
                         Icon(
                             painter = painterResource(R.drawable.app_icon_small),
                             contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
+                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f),
                             modifier = Modifier.size(24.dp),
                         )
                     }
                 }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.Center,
+            },
+            content = {
+                Text(
+                    text = track.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            supportingContent = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        text = track.title,
-                        fontSize = 14.sp,
-                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.SemiBold,
-                        color = if (isActive) MaterialTheme.colorScheme.primary else Color.White,
+                        text = track.artist,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        Text(
-                            text = track.artist,
-                            fontSize = 12.sp,
-                            color = Color.White.copy(alpha = 0.70f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
-                        CodecIcon(
-                            codec = track.codec,
-                            height = 9.dp,
-                            tint = Color.White.copy(alpha = 0.60f),
-                        )
-                    }
+                    TrackCodecBadges(
+                        track = track,
+                        height = 9.dp,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+                    )
                 }
-            }
-        }
+            },
+            trailingContent = dragHandle,
+        )
+    }
+}
 
-        if (reorderGestureArea != null) {
-            reorderGestureArea()
+@Composable
+private fun ReorderGripAffordance(
+    modifier: Modifier = Modifier,
+    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f),
+) {
+    Canvas(modifier = modifier.size(width = 14.dp, height = 20.dp)) {
+        val dotRadius = 1.7.dp.toPx()
+        val spacingY = 5.5.dp.toPx()
+        val spacingX = 5.5.dp.toPx()
+        val startX = (size.width - spacingX) / 2f
+        val startY = (size.height - (2 * spacingY)) / 2f
+
+        for (row in 0..2) {
+            val cy = startY + row * spacingY
+            drawCircle(color = tint, radius = dotRadius, center = Offset(startX, cy))
+            drawCircle(color = tint, radius = dotRadius, center = Offset(startX + spacingX, cy))
         }
     }
 }
