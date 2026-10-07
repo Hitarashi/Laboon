@@ -99,6 +99,13 @@ class LiquidGlassBackdropState {
     var rootOffset: Offset by mutableStateOf(Offset.Zero)
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
 
+    var invalidationToken by mutableLongStateOf(0L)
+        private set
+
+    fun invalidate() {
+        invalidationToken++
+    }
+
     fun addListener(listener: () -> Unit) {
         listeners.add(listener)
     }
@@ -121,7 +128,8 @@ fun rememberLiquidGlassBackdropState(): LiquidGlassBackdropState {
 
 fun Modifier.liquidGlassBackdropProducer(
     state: LiquidGlassBackdropState,
-    layer: GraphicsLayer
+    layer: GraphicsLayer,
+    backgroundColor: Color = Color.Unspecified,
 ): Modifier {
     return this
         .onGloballyPositioned { coordinates ->
@@ -129,7 +137,11 @@ fun Modifier.liquidGlassBackdropProducer(
             state.layer = layer
         }
         .drawWithContent {
+            val token = state.invalidationToken
             layer.record {
+                if (backgroundColor != Color.Unspecified) {
+                    drawRect(color = backgroundColor)
+                }
                 this@drawWithContent.drawContent()
             }
             drawLayer(layer)

@@ -66,6 +66,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -91,6 +92,7 @@ import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.shilpo.laboon.R
 import org.shilpo.laboon.auth.AuthSession
@@ -580,6 +582,24 @@ fun HomeScreen(
     }
     val albumBottomClearance = albumBottomInset + albumBottomChromeClearance
     val homeScrollState = rememberLazyListState()
+
+    LaunchedEffect(homeScrollState, liquidGlassBackdropState) {
+        snapshotFlow { homeScrollState.firstVisibleItemIndex to homeScrollState.firstVisibleItemScrollOffset }
+            .collect {
+                liquidGlassBackdropState.invalidate()
+            }
+    }
+
+    LaunchedEffect(currentTab) {
+        liquidGlassBackdropState.invalidate()
+        delay(50)
+        liquidGlassBackdropState.invalidate()
+        delay(200)
+        liquidGlassBackdropState.invalidate()
+        delay(200)
+        liquidGlassBackdropState.invalidate()
+    }
+
     val isHomeScrolled by remember {
         derivedStateOf {
             homeScrollState.firstVisibleItemIndex > 0 || homeScrollState.firstVisibleItemScrollOffset > 16
@@ -606,8 +626,9 @@ fun HomeScreen(
 
                         if (!isAlbumOverlayVisible) {
                             Modifier.liquidGlassBackdropProducer(
-                                liquidGlassBackdropState,
-                                liquidGlassBackdropLayer,
+                                state = liquidGlassBackdropState,
+                                layer = liquidGlassBackdropLayer,
+                                backgroundColor = MaterialTheme.colorScheme.background,
                             )
                         } else {
                             Modifier
@@ -655,6 +676,8 @@ fun HomeScreen(
                     )
 
                     MainTab.Search -> SearchScreen(
+                        backdropState = liquidGlassBackdropState,
+                        bottomClearance = albumBottomClearance,
                         searchFocusTrigger = searchFocusTrigger,
                         onTrackClick = { track ->
                             playbackManager.play(track)

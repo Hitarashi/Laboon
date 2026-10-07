@@ -22,9 +22,11 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -52,6 +54,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,6 +73,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.compose.LocalPlatformContext
@@ -97,9 +101,13 @@ import org.shilpo.laboon.search.SearchRepositoryImpl
 import org.shilpo.laboon.search.SearchResults
 import org.shilpo.laboon.search.SearchSuggestions
 import org.shilpo.laboon.ui.design.CodecIcon
+import org.shilpo.laboon.ui.design.FloatingCombinedClearance
+import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
 
 @Composable
 fun SearchScreen(
+    backdropState: LiquidGlassBackdropState? = null,
+    bottomClearance: Dp = FloatingCombinedClearance,
     onTrackClick: (HomeTrack) -> Unit = {},
     onAlbumClick: (HomeAlbum) -> Unit = {},
     onArtistClick: (HomeArtist) -> Unit = {},
@@ -297,6 +305,56 @@ fun SearchScreen(
 
     val showingSearchResults = searchRequest != null && searchRequest == query.trim()
 
+    val topResultsScrollState = rememberLazyListState()
+    val artistsScrollState = rememberLazyListState()
+    val albumsScrollState = rememberLazyListState()
+    val songsScrollState = rememberLazyListState()
+    val playlistsScrollState = rememberLazyListState()
+    val stationsScrollState = rememberLazyListState()
+    val musicVideosScrollState = rememberLazyListState()
+    val suggestionsScrollState = rememberLazyListState()
+    val historyScrollState = rememberLazyListState()
+
+    val activeScrollState = when {
+        query.isBlank() && (searchHistory.isNotEmpty() || trackHistory.isNotEmpty()) -> historyScrollState
+        showingSearchResults -> when (selectedFilter) {
+            SearchFilter.TOP_RESULTS -> topResultsScrollState
+            SearchFilter.ARTISTS -> artistsScrollState
+            SearchFilter.ALBUMS -> albumsScrollState
+            SearchFilter.SONGS -> songsScrollState
+            SearchFilter.PLAYLISTS -> playlistsScrollState
+            SearchFilter.STATIONS -> stationsScrollState
+            SearchFilter.MUSIC_VIDEOS -> musicVideosScrollState
+        }
+
+        else -> suggestionsScrollState
+    }
+
+    LaunchedEffect(activeScrollState, backdropState) {
+        if (backdropState == null) return@LaunchedEffect
+        snapshotFlow { activeScrollState.firstVisibleItemIndex to activeScrollState.firstVisibleItemScrollOffset }
+            .collect {
+                backdropState.invalidate()
+            }
+    }
+
+    LaunchedEffect(
+        results,
+        albumResults,
+        artistResults,
+        playlistResults,
+        stationResults,
+        musicVideoResults,
+        suggestions,
+        hints,
+        selectedFilter,
+        showingSearchResults,
+        query,
+        isSearching,
+    ) {
+        backdropState?.invalidate()
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -386,6 +444,16 @@ fun SearchScreen(
         Spacer(modifier = Modifier.height(8.dp))
 
         SearchBody(
+            topResultsScrollState = topResultsScrollState,
+            artistsScrollState = artistsScrollState,
+            albumsScrollState = albumsScrollState,
+            songsScrollState = songsScrollState,
+            playlistsScrollState = playlistsScrollState,
+            stationsScrollState = stationsScrollState,
+            musicVideosScrollState = musicVideosScrollState,
+            suggestionsScrollState = suggestionsScrollState,
+            historyScrollState = historyScrollState,
+            bottomClearance = bottomClearance,
             isSearching = isSearching,
             query = query,
             searchHistory = searchHistory,
@@ -437,6 +505,16 @@ fun SearchScreen(
 
 @Composable
 private fun SearchBody(
+    topResultsScrollState: LazyListState,
+    artistsScrollState: LazyListState,
+    albumsScrollState: LazyListState,
+    songsScrollState: LazyListState,
+    playlistsScrollState: LazyListState,
+    stationsScrollState: LazyListState,
+    musicVideosScrollState: LazyListState,
+    suggestionsScrollState: LazyListState,
+    historyScrollState: LazyListState,
+    bottomClearance: Dp,
     isSearching: Boolean,
     query: String,
     searchHistory: List<String>,
@@ -480,6 +558,8 @@ private fun SearchBody(
             isSearching -> SearchLoading()
             query.isBlank() && (searchHistory.isNotEmpty() || trackHistory.isNotEmpty()) ->
                 SearchHistoryList(
+                    state = historyScrollState,
+                    bottomClearance = bottomClearance,
                     history = searchHistory,
                     tracks = trackHistory,
                     onSelect = onSubmitSearch,
@@ -502,8 +582,12 @@ private fun SearchBody(
                             SearchEmptyResults(query = query, filter = selectedFilter)
                         } else {
                             LazyColumn(
+                                state = topResultsScrollState,
                                 modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(top = 8.dp, bottom = 160.dp),
+                                contentPadding = PaddingValues(
+                                    top = 8.dp,
+                                    bottom = bottomClearance + 16.dp
+                                ),
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
                                 if (artistResults.isNotEmpty()) {
@@ -649,8 +733,12 @@ private fun SearchBody(
                             SearchEmptyResults(query = query, filter = selectedFilter)
                         } else {
                             LazyColumn(
+                                state = artistsScrollState,
                                 modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(top = 8.dp, bottom = 160.dp),
+                                contentPadding = PaddingValues(
+                                    top = 8.dp,
+                                    bottom = bottomClearance + 16.dp
+                                ),
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
                                 items(artistResults, key = HomeArtist::id) { artist ->
@@ -668,8 +756,12 @@ private fun SearchBody(
                             SearchEmptyResults(query = query, filter = selectedFilter)
                         } else {
                             LazyColumn(
+                                state = albumsScrollState,
                                 modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(top = 8.dp, bottom = 160.dp),
+                                contentPadding = PaddingValues(
+                                    top = 8.dp,
+                                    bottom = bottomClearance + 16.dp
+                                ),
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
                                 items(albumResults, key = HomeAlbum::id) { album ->
@@ -687,8 +779,12 @@ private fun SearchBody(
                             SearchEmptyResults(query = query, filter = selectedFilter)
                         } else {
                             LazyColumn(
+                                state = songsScrollState,
                                 modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(top = 8.dp, bottom = 160.dp),
+                                contentPadding = PaddingValues(
+                                    top = 8.dp,
+                                    bottom = bottomClearance + 16.dp
+                                ),
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
                                 items(results, key = HomeTrack::id) { track ->
@@ -715,8 +811,12 @@ private fun SearchBody(
                             SearchEmptyResults(query = query, filter = selectedFilter)
                         } else {
                             LazyColumn(
+                                state = playlistsScrollState,
                                 modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(top = 8.dp, bottom = 160.dp),
+                                contentPadding = PaddingValues(
+                                    top = 8.dp,
+                                    bottom = bottomClearance + 16.dp
+                                ),
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
                                 items(playlistResults, key = HomePlaylist::id) { playlist ->
@@ -734,8 +834,12 @@ private fun SearchBody(
                             SearchEmptyResults(query = query, filter = selectedFilter)
                         } else {
                             LazyColumn(
+                                state = stationsScrollState,
                                 modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(top = 8.dp, bottom = 160.dp),
+                                contentPadding = PaddingValues(
+                                    top = 8.dp,
+                                    bottom = bottomClearance + 16.dp
+                                ),
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
                                 items(stationResults, key = HomeStation::id) { station ->
@@ -753,8 +857,12 @@ private fun SearchBody(
                             SearchEmptyResults(query = query, filter = selectedFilter)
                         } else {
                             LazyColumn(
+                                state = musicVideosScrollState,
                                 modifier = Modifier.fillMaxSize(),
-                                contentPadding = PaddingValues(top = 8.dp, bottom = 160.dp),
+                                contentPadding = PaddingValues(
+                                    top = 8.dp,
+                                    bottom = bottomClearance + 16.dp
+                                ),
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
                                 items(musicVideoResults, key = HomeTrack::id) { track ->
@@ -782,8 +890,9 @@ private fun SearchBody(
             hints.isEmpty() && suggestions.isEmpty() && albumSuggestions.isEmpty() && artistSuggestions.isEmpty() -> SearchNoSuggestions()
             else -> {
                 LazyColumn(
+                    state = suggestionsScrollState,
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(top = 8.dp, bottom = 160.dp),
+                    contentPadding = PaddingValues(top = 8.dp, bottom = bottomClearance + 16.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     if (hints.isNotEmpty()) {
@@ -1354,6 +1463,8 @@ private fun SearchHintRow(text: String, onClick: () -> Unit) {
 
 @Composable
 private fun SearchHistoryList(
+    state: LazyListState,
+    bottomClearance: Dp,
     history: List<String>,
     tracks: List<HomeTrack>,
     onSelect: (String) -> Unit,
@@ -1365,8 +1476,9 @@ private fun SearchHistoryList(
     onClear: () -> Unit,
 ) {
     LazyColumn(
+        state = state,
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 4.dp, bottom = 160.dp),
+        contentPadding = PaddingValues(top = 4.dp, bottom = bottomClearance + 16.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         item(key = "search_history_heading") {
