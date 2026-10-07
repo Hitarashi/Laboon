@@ -73,6 +73,7 @@ import org.shilpo.laboon.R
 import org.shilpo.laboon.auth.SessionStore
 import org.shilpo.laboon.auth.SharedPreferencesKeyValueStore
 import org.shilpo.laboon.home.HomeAlbum
+import org.shilpo.laboon.home.HomeArtist
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.home.TrackAvailability
 import org.shilpo.laboon.rip.RipTaskSnapshot
@@ -88,6 +89,7 @@ import org.shilpo.laboon.ui.design.CodecIcon
 fun SearchScreen(
     onTrackClick: (HomeTrack) -> Unit = {},
     onAlbumClick: (HomeAlbum) -> Unit = {},
+    onArtistClick: (HomeArtist) -> Unit = {},
     onPlayWithContext: ((HomeTrack, List<HomeTrack>) -> Unit)? = null,
     onPlayNext: ((HomeTrack) -> Unit)? = null,
     onAddToQueue: ((HomeTrack) -> Unit)? = null,
@@ -125,8 +127,10 @@ fun SearchScreen(
     var hints by remember { mutableStateOf<List<String>>(emptyList()) }
     var suggestions by remember { mutableStateOf<List<HomeTrack>>(emptyList()) }
     var albumSuggestions by remember { mutableStateOf<List<HomeAlbum>>(emptyList()) }
+    var artistSuggestions by remember { mutableStateOf<List<HomeArtist>>(emptyList()) }
     var results by remember { mutableStateOf<List<HomeTrack>>(emptyList()) }
     var albumResults by remember { mutableStateOf<List<HomeAlbum>>(emptyList()) }
+    var artistResults by remember { mutableStateOf<List<HomeArtist>>(emptyList()) }
 
     fun submitSearch(term: String = query.trim()) {
         if (term.isBlank()) return
@@ -141,8 +145,10 @@ fun SearchScreen(
         hints = emptyList()
         suggestions = emptyList()
         albumSuggestions = emptyList()
+        artistSuggestions = emptyList()
         results = emptyList()
         albumResults = emptyList()
+        artistResults = emptyList()
         focusManager.clearFocus()
     }
 
@@ -160,6 +166,7 @@ fun SearchScreen(
             hints = emptyList()
             suggestions = emptyList()
             albumSuggestions = emptyList()
+            artistSuggestions = emptyList()
             isSuggesting = false
             return@LaunchedEffect
         }
@@ -175,6 +182,8 @@ fun SearchScreen(
         val suggestionsResult = suggestionRequest.await()
         suggestions = suggestionsResult.tracks.distinctBy(HomeTrack::id).take(MAX_TOP_RESULTS)
         albumSuggestions = suggestionsResult.albums.distinctBy(HomeAlbum::id).take(MAX_TOP_RESULTS)
+        artistSuggestions =
+            suggestionsResult.artists.distinctBy(HomeArtist::id).take(MAX_TOP_RESULTS)
         isSuggesting = false
     }
 
@@ -185,6 +194,7 @@ fun SearchScreen(
         if (searchRequest == term) {
             results = found.tracks.distinctBy(HomeTrack::id)
             albumResults = found.albums.distinctBy(HomeAlbum::id)
+            artistResults = found.artists.distinctBy(HomeArtist::id)
             isSearching = false
         }
     }
@@ -239,10 +249,12 @@ fun SearchScreen(
                 hints = emptyList()
                 suggestions = emptyList()
                 albumSuggestions = emptyList()
+                artistSuggestions = emptyList()
                 if (it.trim() != searchRequest) {
                     searchRequest = null
                     results = emptyList()
                     albumResults = emptyList()
+                    artistResults = emptyList()
                 }
             },
             placeholder = {
@@ -271,8 +283,10 @@ fun SearchScreen(
                             hints = emptyList()
                             suggestions = emptyList()
                             albumSuggestions = emptyList()
+                            artistSuggestions = emptyList()
                             results = emptyList()
                             albumResults = emptyList()
+                            artistResults = emptyList()
                         },
                     ) {
                         Icon(
@@ -332,7 +346,7 @@ fun SearchScreen(
                     )
 
                 query.isBlank() -> SearchPlaceholder()
-                showingSearchResults && results.isEmpty() && albumResults.isEmpty() -> SearchEmptyResults(
+                showingSearchResults && results.isEmpty() && albumResults.isEmpty() && artistResults.isEmpty() -> SearchEmptyResults(
                     query
                 )
 
@@ -342,6 +356,25 @@ fun SearchScreen(
                         contentPadding = PaddingValues(top = 8.dp, bottom = 160.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
+                        if (artistResults.isNotEmpty()) {
+                            item(key = "artist_results_heading") {
+                                SuggestionHeading(text = "Artists")
+                            }
+                            item(key = "artist_results_row") {
+                                LazyRow(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentPadding = PaddingValues(horizontal = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    items(artistResults, key = HomeArtist::id) { artist ->
+                                        SearchArtistCard(
+                                            artist = artist,
+                                            onClick = { onArtistClick(artist) },
+                                        )
+                                    }
+                                }
+                            }
+                        }
                         if (albumResults.isNotEmpty()) {
                             item(key = "album_results_heading") {
                                 SuggestionHeading(text = "Albums")
@@ -363,7 +396,9 @@ fun SearchScreen(
                         }
                         if (results.isNotEmpty()) {
                             item(key = "song_results_heading") {
-                                SuggestionHeading(text = if (albumResults.isNotEmpty()) "Songs" else "Top results")
+                                val hasOtherResults =
+                                    albumResults.isNotEmpty() || artistResults.isNotEmpty()
+                                SuggestionHeading(text = if (hasOtherResults) "Songs" else "Top results")
                             }
                             items(results, key = HomeTrack::id) { track ->
                                 SearchTrackRow(
@@ -384,8 +419,8 @@ fun SearchScreen(
                     }
                 }
 
-                isSuggesting && hints.isEmpty() && suggestions.isEmpty() && albumSuggestions.isEmpty() -> SearchLoading()
-                hints.isEmpty() && suggestions.isEmpty() && albumSuggestions.isEmpty() -> SearchNoSuggestions()
+                isSuggesting && hints.isEmpty() && suggestions.isEmpty() && albumSuggestions.isEmpty() && artistSuggestions.isEmpty() -> SearchLoading()
+                hints.isEmpty() && suggestions.isEmpty() && albumSuggestions.isEmpty() && artistSuggestions.isEmpty() -> SearchNoSuggestions()
                 else -> {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
@@ -398,6 +433,20 @@ fun SearchScreen(
                             }
                             items(hints, key = { "hint:$it" }) { hint ->
                                 SearchHintRow(text = hint, onClick = { submitSearch(hint) })
+                            }
+                        }
+                        if (artistSuggestions.isNotEmpty()) {
+                            item(key = "artist_suggestions_heading") {
+                                SuggestionHeading(text = "Artists")
+                            }
+                            items(artistSuggestions, key = HomeArtist::id) { artist ->
+                                SearchArtistRow(
+                                    artist = artist,
+                                    onClick = {
+                                        submitSearch(artist.name)
+                                        onArtistClick(artist)
+                                    },
+                                )
                             }
                         }
                         if (albumSuggestions.isNotEmpty()) {
@@ -416,7 +465,9 @@ fun SearchScreen(
                         }
                         if (suggestions.isNotEmpty()) {
                             item(key = "top_results_heading") {
-                                SuggestionHeading(text = if (albumSuggestions.isNotEmpty()) "Songs" else "Top results")
+                                val hasOtherSuggestions =
+                                    albumSuggestions.isNotEmpty() || artistSuggestions.isNotEmpty()
+                                SuggestionHeading(text = if (hasOtherSuggestions) "Songs" else "Top results")
                             }
                             items(suggestions, key = HomeTrack::id) { track ->
                                 SearchTrackRow(
@@ -783,6 +834,134 @@ private fun SearchAlbumCard(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun SearchArtistRow(
+    artist: HomeArtist,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (!artist.imageUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalPlatformContext.current)
+                        .data(artist.imageUrl)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = artist.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Icon(
+                    painter = painterResource(R.drawable.app_icon_small),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 14.dp, end = 8.dp),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = artist.name,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "Artist",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SearchArtistCard(
+    artist: HomeArtist,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .width(104.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(96.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (!artist.imageUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalPlatformContext.current)
+                        .data(artist.imageUrl)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = artist.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Icon(
+                    painter = painterResource(R.drawable.app_icon_small),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.size(36.dp),
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = artist.name,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = "Artist",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
         )
     }
 }

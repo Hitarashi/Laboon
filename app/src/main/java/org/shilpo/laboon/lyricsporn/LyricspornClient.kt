@@ -33,11 +33,13 @@ data class LyricspornCatalogItem(
 data class LyricspornSearchResults(
     val songs: List<LyricspornCatalogItem> = emptyList(),
     val albums: List<LyricspornCatalogItem> = emptyList(),
+    val artists: List<LyricspornCatalogItem> = emptyList(),
 )
 
 data class LyricspornTopSuggestions(
     val songs: List<LyricspornCatalogItem> = emptyList(),
     val albums: List<LyricspornCatalogItem> = emptyList(),
+    val artists: List<LyricspornCatalogItem> = emptyList(),
 )
 
 data class LyricspornCatalogMatch(
@@ -91,7 +93,7 @@ object LyricspornClient {
         val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return LyricspornSearchResults()
         val query = encode(term.trim())
         val json = getJson(
-            "$baseUrl/catalog/search?term=$query&types=songs,albums&limit=${
+            "$baseUrl/catalog/search?term=$query&types=songs,albums,artists&limit=${
                 limit.coerceIn(
                     1,
                     25
@@ -108,7 +110,11 @@ object LyricspornClient {
             ?.toCatalogItems(300)
             .orEmpty()
             .filter { it.type == "album" && it.id.matches(APPLE_CATALOG_ID_PATTERN) }
-        return LyricspornSearchResults(songs = songs, albums = albums)
+        val artists = resultsObj.objOrNull("artists")?.arrOrNull("items")
+            ?.toCatalogItems(300)
+            .orEmpty()
+            .filter { it.type == "artist" && it.id.matches(APPLE_CATALOG_ID_PATTERN) }
+        return LyricspornSearchResults(songs = songs, albums = albums, artists = artists)
     }
 
     suspend fun getTrackLyrics(apiBaseUrl: String?, appleTrackId: String): JSONObject? {
@@ -187,12 +193,13 @@ object LyricspornClient {
         val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return LyricspornTopSuggestions()
         val query = encode(term.trim())
         val json = getJson(
-            "$baseUrl/catalog/search/suggestions?term=$query&kinds=topResults&types=songs,albums" +
+            "$baseUrl/catalog/search/suggestions?term=$query&kinds=topResults&types=songs,albums,artists" +
                     "&limit=${limit.coerceIn(1, 10)}&artworkSize=300",
         ) ?: return LyricspornTopSuggestions()
         val suggestions = json.arrOrNull("suggestions") ?: return LyricspornTopSuggestions()
         val songs = mutableListOf<LyricspornCatalogItem>()
         val albums = mutableListOf<LyricspornCatalogItem>()
+        val artists = mutableListOf<LyricspornCatalogItem>()
         for (index in 0 until suggestions.length()) {
             val suggestion = suggestions.objAtOrNull(index) ?: continue
             if (suggestion.optString("kind") != "topResults") continue
@@ -201,12 +208,60 @@ object LyricspornClient {
                 songs.add(item)
             } else if (item.type == "album" && item.id.matches(APPLE_CATALOG_ID_PATTERN)) {
                 albums.add(item)
+            } else if (item.type == "artist" && item.id.matches(APPLE_CATALOG_ID_PATTERN)) {
+                artists.add(item)
             }
         }
         return LyricspornTopSuggestions(
             songs = songs.distinctBy(LyricspornCatalogItem::id),
             albums = albums.distinctBy(LyricspornCatalogItem::id),
+            artists = artists.distinctBy(LyricspornCatalogItem::id),
         )
+    }
+
+    suspend fun getArtistDetails(
+        apiBaseUrl: String?,
+        appleArtistId: String,
+        artworkSize: Int = 600,
+    ): HttpOutcome<LyricspornArtist> {
+        val baseUrl = normalizeApiBaseUrl(apiBaseUrl)
+            ?: return HttpOutcome.Failure(
+                HttpError(HttpErrorKind.NETWORK, message = "Lyricsporn API is unavailable"),
+            )
+        val artistId = appleArtistId.takeIf { it.matches(APPLE_CATALOG_ID_PATTERN) }
+            ?: return HttpOutcome.Failure(
+                HttpError(HttpErrorKind.MALFORMED, message = "Invalid Apple Music artist ID"),
+            )
+        val url =
+            "$baseUrl/artists/$artistId?include=artwork,editorialNotes,topSongs,latestRelease,fullAlbums,singles,similarArtists" +
+                    "&limit=20&artworkSize=$artworkSize"
+        return when (val response = http.getJson(url.withCurrentStorefront())) {
+            is HttpOutcome.Failure -> response
+            is HttpOutcome.Success -> {
+                val artist = response.value.objOrNull("data")?.toLyricspornArtist(artworkSize)
+                if (artist != null) {
+                    HttpOutcome.Success(artist)
+                } else {
+                    HttpOutcome.Failure(
+                        HttpError(
+                            HttpErrorKind.MALFORMED,
+                            message = "Lyricsporn returned an invalid artist response",
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    suspend fun resolveArtistId(apiBaseUrl: String?, artistName: String): String? {
+        val trimmed = artistName.trim()
+        if (trimmed.isEmpty()) return null
+        val results = searchCatalog(apiBaseUrl, trimmed, limit = 5)
+        val normalized = trimmed.lowercase(Locale.ROOT)
+        return results.artists.firstOrNull {
+            it.name.trim().lowercase(Locale.ROOT) == normalized
+        }?.id
+            ?: results.artists.firstOrNull()?.id
     }
 
     suspend fun resolveTrackArtwork(
@@ -550,6 +605,57 @@ object LyricspornClient {
             ),
             tracks = tracks,
             otherVersions = otherVersions,
+        )
+    }
+
+    private fun JSONObject.toLyricspornArtist(artworkSize: Int): LyricspornArtist? {
+        val id = stringOrNull("id")?.takeIf { it.matches(APPLE_CATALOG_ID_PATTERN) }
+            ?: return null
+        val name = stringOrNull("name") ?: return null
+        if (stringOrNull("type") != "artist") return null
+
+        val collections = objOrNull("collections")
+        val topSongs = collections?.objOrNull("topSongs")?.arrOrNull("items")
+            ?.toCatalogItems(artworkSize)
+            .orEmpty()
+            .filter { it.type == "song" && it.id.isNumericAppleId() }
+
+        val latestRelease = collections?.objOrNull("latestRelease")?.arrOrNull("items")
+            ?.toCatalogItems(artworkSize)
+            ?.firstOrNull { it.type == "album" && it.id.matches(APPLE_CATALOG_ID_PATTERN) }
+
+        val fullAlbums = collections?.objOrNull("fullAlbums")?.arrOrNull("items")
+            ?.toCatalogItems(artworkSize)
+            .orEmpty()
+            .filter { it.type == "album" && it.id.matches(APPLE_CATALOG_ID_PATTERN) }
+
+        val singles = collections?.objOrNull("singles")?.arrOrNull("items")
+            ?.toCatalogItems(artworkSize)
+            .orEmpty()
+            .filter { it.type == "album" && it.id.matches(APPLE_CATALOG_ID_PATTERN) }
+
+        val similarArtists = collections?.objOrNull("similarArtists")?.arrOrNull("items")
+            ?.toCatalogItems(artworkSize)
+            .orEmpty()
+            .filter { it.type == "artist" && it.id.matches(APPLE_CATALOG_ID_PATTERN) }
+
+        val notes = objOrNull("editorialNotes")
+
+        return LyricspornArtist(
+            id = id,
+            name = name,
+            url = stringOrNull("url"),
+            artworkUrl = objOrNull("artwork")?.stringOrNull("url")?.albumArtworkUrl(artworkSize),
+            genres = arrOrNull("genres")?.stringValues().orEmpty(),
+            editorialNotes = preferredAlbumEditorialNotes(
+                standard = notes?.stringOrNull("standard"),
+                short = notes?.stringOrNull("short"),
+            ),
+            topSongs = topSongs,
+            latestRelease = latestRelease,
+            fullAlbums = fullAlbums,
+            singles = singles,
+            similarArtists = similarArtists,
         )
     }
 

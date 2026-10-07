@@ -90,7 +90,7 @@ class RipWebSocketClient(
         sentRipRequestIds.clear()
         pendingAlbumIds.clear()
         disconnectSocket()
-        _state.update { it.copy(wsStatus = RipWsStatus.DISCONNECTED) }
+        _state.update { it.copy(wsStatus = RipWsStatus.DISCONNECTED, pendingAlbumIds = emptySet()) }
     }
 
     private fun disconnectSocket() {
@@ -217,6 +217,7 @@ class RipWebSocketClient(
                         it.copy(
                             activeTasks = newTasks,
                             pendingTrackIds = it.pendingTrackIds - sourceTrackIds,
+                            pendingAlbumIds = pendingAlbumIds.toSet(),
                         )
                     }
                 }
@@ -242,10 +243,11 @@ class RipWebSocketClient(
                         } else {
                             listOf(updated) + current.activeTasks
                         }
-                        current.copy(activeTasks = newActive)
-                            .copy(
-                                pendingTrackIds = if (updated.isAlbum) current.pendingTrackIds else current.pendingTrackIds - updated.sourceTrackId
-                            )
+                        current.copy(
+                            activeTasks = newActive,
+                            pendingTrackIds = if (updated.isAlbum) current.pendingTrackIds else current.pendingTrackIds - updated.sourceTrackId,
+                            pendingAlbumIds = pendingAlbumIds.toSet(),
+                        )
                     }
                 }
 
@@ -284,6 +286,7 @@ class RipWebSocketClient(
                             pendingTrackIds = pendingRequest?.let {
                                 if (it.isAlbum) current.pendingTrackIds else current.pendingTrackIds - it.sourceTrackId
                             } ?: current.pendingTrackIds,
+                            pendingAlbumIds = pendingAlbumIds.toSet(),
                             errorMessage = null,
                         )
                     }
@@ -317,6 +320,7 @@ class RipWebSocketClient(
                             pendingTrackIds = failedRequest?.let {
                                 if (it.isAlbum) current.pendingTrackIds else current.pendingTrackIds - it.sourceTrackId
                             } ?: current.pendingTrackIds,
+                            pendingAlbumIds = pendingAlbumIds.toSet(),
                             errorMessage = message,
                         )
                     }
@@ -472,12 +476,14 @@ class RipWebSocketClient(
         pendingRipRequests[requestId] =
             PendingRipRequest(albumId, request.toString(), isAlbum = true)
         pendingAlbumIds.add(albumId)
+        _state.update { it.copy(pendingAlbumIds = pendingAlbumIds.toSet()) }
 
         if (!isRunning.get()) start()
         if (_state.value.wsStatus == RipWsStatus.ERROR) {
             pendingRipRequests.remove(requestId)
             sentRipRequestIds.remove(requestId)
             pendingAlbumIds.remove(albumId)
+            _state.update { it.copy(pendingAlbumIds = pendingAlbumIds.toSet()) }
             return false
         }
         if (_state.value.wsStatus == RipWsStatus.CONNECTED) {

@@ -122,7 +122,7 @@ fun AlbumDetailsScreen(
     onDownloadTrack: (HomeTrack) -> Unit,
     isDownloadPending: (HomeTrack) -> Boolean,
     onOpenAlbumVersion: (String) -> Unit,
-    onOpenArtist: (String) -> Unit,
+    onOpenArtist: (String, String?) -> Unit,
     onOpenRecordLabel: (String) -> Unit,
     modifier: Modifier = Modifier,
     isRefreshing: Boolean = false,
@@ -315,7 +315,7 @@ private fun AlbumContent(
     onDownloadTrack: (HomeTrack) -> Unit,
     isDownloadPending: (HomeTrack) -> Boolean,
     onOpenAlbumVersion: (String) -> Unit,
-    onOpenArtist: (String) -> Unit,
+    onOpenArtist: (String, String?) -> Unit,
     onOpenRecordLabel: (String) -> Unit,
     currentTrackId: String?,
     isPlaying: Boolean,
@@ -484,7 +484,7 @@ private fun AlbumHero(
     availableCount: Int,
     cachedFormats: List<String>,
     maxWidth: Dp,
-    onOpenArtist: (String) -> Unit,
+    onOpenArtist: (String, String?) -> Unit,
     onPlay: () -> Unit,
     onShuffle: () -> Unit,
 ) {
@@ -567,7 +567,7 @@ private fun AlbumTextDetails(
     cachedFormats: List<String>,
     totalDuration: String?,
     availableCount: Int,
-    onOpenArtist: (String) -> Unit,
+    onOpenArtist: (String, String?) -> Unit,
     onPlay: () -> Unit,
     onShuffle: () -> Unit,
     modifier: Modifier = Modifier,
@@ -611,7 +611,11 @@ private fun AlbumTextDetails(
                 Modifier.clickable(
                     role = Role.Button,
                     onClickLabel = "Open artist $artistName",
-                ) { onOpenArtist(artistName) }
+                ) {
+                    val appleArtistId = album.artistUrl?.substringAfterLast("/")
+                        ?.takeIf { it.isNotEmpty() && it.all(Char::isDigit) }
+                    onOpenArtist(artistName, appleArtistId)
+                }
             } else {
                 Modifier
             },

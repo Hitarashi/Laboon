@@ -35,6 +35,7 @@ data class HomeArtist(
     val name: String,
     val playCount: Long = 0,
     val imageUrl: String? = null,
+    val appleCatalogId: String? = null,
 )
 
 data class HomeAlbum(

@@ -9,6 +9,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.shilpo.laboon.auth.SessionStore
 import org.shilpo.laboon.home.HomeAlbum
+import org.shilpo.laboon.home.HomeArtist
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.lyricsporn.LyricspornCatalogItem
@@ -89,11 +90,13 @@ fun interface AlbumAvailabilityLookup {
 data class SearchResults(
     val tracks: List<HomeTrack> = emptyList(),
     val albums: List<HomeAlbum> = emptyList(),
+    val artists: List<HomeArtist> = emptyList(),
 )
 
 data class SearchSuggestions(
     val tracks: List<HomeTrack> = emptyList(),
     val albums: List<HomeAlbum> = emptyList(),
+    val artists: List<HomeArtist> = emptyList(),
 )
 
 interface SearchRepository {
@@ -117,7 +120,8 @@ class SearchRepositoryImpl(
             LyricspornClient.searchCatalog(apiBaseUrl, query, limit = MAX_SEARCH_RESULTS)
         val tracks = withAvailability(catalogResults.songs)
         val albums = catalogResults.albums.map { it.toHomeAlbum() }
-        SearchResults(tracks = tracks, albums = albums)
+        val artists = catalogResults.artists.map { it.toHomeArtist() }
+        SearchResults(tracks = tracks, albums = albums, artists = artists)
     }
 
     override suspend fun searchHints(query: String): List<String> =
@@ -137,7 +141,8 @@ class SearchRepositoryImpl(
             )
             val tracks = withAvailability(suggestions.songs)
             val albums = suggestions.albums.map { it.toHomeAlbum() }
-            SearchSuggestions(tracks = tracks, albums = albums)
+            val artists = suggestions.artists.map { it.toHomeArtist() }
+            SearchSuggestions(tracks = tracks, albums = albums, artists = artists)
         }
 
     private fun LyricspornCatalogItem.toHomeAlbum(): HomeAlbum =
@@ -146,6 +151,14 @@ class SearchRepositoryImpl(
             title = name,
             artist = artistName.orEmpty(),
             artworkUrl = artworkUrl,
+            appleCatalogId = id,
+        )
+
+    private fun LyricspornCatalogItem.toHomeArtist(): HomeArtist =
+        HomeArtist(
+            id = "apple_$id",
+            name = name,
+            imageUrl = artworkUrl,
             appleCatalogId = id,
         )
 

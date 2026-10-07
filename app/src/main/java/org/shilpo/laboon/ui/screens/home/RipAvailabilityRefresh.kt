@@ -8,6 +8,7 @@ import org.shilpo.laboon.home.TrackAvailability
 import org.shilpo.laboon.search.CachedTrackAvailability
 import org.shilpo.laboon.search.SearchRepository
 import org.shilpo.laboon.ui.screens.album.AlbumDetailsUiState
+import org.shilpo.laboon.ui.screens.artist.ArtistDetailsUiState
 
 internal fun HomeFeedState.withAvailability(
     availability: Map<String, CachedTrackAvailability>,
@@ -31,6 +32,19 @@ internal fun AlbumDetailsUiState.withAvailability(
     availability: Map<String, CachedTrackAvailability>,
 ): AlbumDetailsUiState = when (this) {
     is AlbumDetailsUiState.Loaded -> copy(tracks = TrackAvailability.apply(tracks, availability))
+    else -> this
+}
+
+internal fun ArtistDetailsUiState.withAvailability(
+    availability: Map<String, CachedTrackAvailability>,
+): ArtistDetailsUiState = when (this) {
+    is ArtistDetailsUiState.Loaded -> copy(
+        topSongs = TrackAvailability.apply(
+            topSongs,
+            availability
+        )
+    )
+
     else -> this
 }
 

@@ -283,5 +283,6 @@ data class RipVisualizerState(
     val wsStatus: RipWsStatus = RipWsStatus.DISCONNECTED,
     val activeTasks: List<RipTaskSnapshot> = emptyList(),
     val pendingTrackIds: Set<String> = emptySet(),
+    val pendingAlbumIds: Set<String> = emptySet(),
     val errorMessage: String? = null,
 )

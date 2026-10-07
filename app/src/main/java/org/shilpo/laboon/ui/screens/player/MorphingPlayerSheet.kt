@@ -195,6 +195,7 @@ fun MorphingPlayerSheet(
     onMoveUpNext: ((Int, Int) -> Unit)? = null,
     onTrackClick: ((HomeTrack) -> Unit)? = null,
     onOpenAlbum: (suspend (HomeTrack) -> Boolean)? = null,
+    onArtistClick: ((String) -> Unit)? = null,
     lyricsLines: List<LyricsLine> = emptyList(),
     lyricsLoading: Boolean = false,
     motionArtwork: LyricspornMotionArtwork? = null,
@@ -1108,6 +1109,19 @@ fun MorphingPlayerSheet(
                                         4.dp,
                                         progress
                                     ).coerceAtLeast(0.dp)
+                                )
+                                .then(
+                                    if (onArtistClick != null) {
+                                        Modifier.clickable(
+                                            enabled = progress > 0.6f,
+                                            onClickLabel = "Open artist ${track.artist}",
+                                        ) {
+                                            coroutineScope.launch {
+                                                progressAnimatable.animateTo(0f, settleSpec)
+                                                onArtistClick(track.artist)
+                                            }
+                                        }
+                                    } else Modifier
                                 )
                                 .basicMarquee(iterations = if (isPlaying) Int.MAX_VALUE else 0),
                         )

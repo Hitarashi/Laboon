@@ -29,6 +29,7 @@ enum class AutoRipSource {
     SEARCH,
     PLAYBACK_QUEUE,
     ALBUM_DETAILS,
+    ARTIST_DETAILS,
 }
 
 /**

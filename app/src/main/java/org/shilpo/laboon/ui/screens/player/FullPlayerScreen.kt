@@ -161,6 +161,7 @@ fun FullPlayerScreen(
     onMoveUpNext: ((Int, Int) -> Unit)? = null,
     onTrackClick: ((HomeTrack) -> Unit)? = null,
     onOpenAlbum: ((HomeTrack) -> Unit)? = null,
+    onArtistClick: ((String) -> Unit)? = null,
     lyricsLines: List<LyricsLine> = emptyList(),
     lyricsLoading: Boolean = false,
     switchingQualityFormat: String? = null,
@@ -324,6 +325,7 @@ fun FullPlayerScreen(
                             onSeek = onSeek,
                             onToggleShuffle = onToggleShuffle,
                             onCycleRepeatMode = onCycleRepeatMode,
+                            onArtistClick = onArtistClick,
                             onOpenLyrics = { openPanel(PlayerPanelTab.Lyrics) },
                             onOpenQueue = {
                                 openPanel(PlayerPanelTab.Queue)
@@ -697,6 +699,7 @@ private fun FullPlayerControls(
     onOpenQueue: () -> Unit,
     onAudioQualityClick: () -> Unit = {},
     onAudioQualityPositioned: ((Rect) -> Unit)? = null,
+    onArtistClick: ((String) -> Unit)? = null,
     audioBadgeAlpha: Float = 1f,
     isDark: Boolean = isSystemInDarkTheme(),
 ) {
@@ -728,6 +731,13 @@ private fun FullPlayerControls(
                 overflow = TextOverflow.Clip,
                 modifier = Modifier
                     .padding(top = 4.dp)
+                    .then(
+                        if (onArtistClick != null) {
+                            Modifier.clickable(
+                                onClickLabel = "Open artist ${track.artist}",
+                            ) { onArtistClick(track.artist) }
+                        } else Modifier
+                    )
                     .basicMarquee(),
             )
         }

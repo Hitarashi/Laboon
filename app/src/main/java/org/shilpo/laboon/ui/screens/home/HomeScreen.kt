@@ -52,12 +52,15 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -69,6 +72,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -77,6 +81,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
@@ -93,6 +98,8 @@ import org.shilpo.laboon.auth.SessionStore
 import org.shilpo.laboon.auth.SharedPreferencesKeyValueStore
 import org.shilpo.laboon.home.AlbumDetailsCache
 import org.shilpo.laboon.home.AlbumDetailsRepository
+import org.shilpo.laboon.home.ArtistDetailsCache
+import org.shilpo.laboon.home.ArtistDetailsRepository
 import org.shilpo.laboon.home.HomeAlbum
 import org.shilpo.laboon.home.HomeArtist
 import org.shilpo.laboon.home.HomeFeedCache
@@ -107,9 +114,14 @@ import org.shilpo.laboon.navigation.RouteDirection
 import org.shilpo.laboon.navigation.RouteEvent
 import org.shilpo.laboon.navigation.RouteState
 import org.shilpo.laboon.navigation.tabTransitionDirection
+import org.shilpo.laboon.playback.PlaybackManager
 import org.shilpo.laboon.playback.PlaybackManagerHolder
 import org.shilpo.laboon.playback.PlaybackPersistence
+import org.shilpo.laboon.playback.PlaybackState
+import org.shilpo.laboon.playback.QueueState
+import org.shilpo.laboon.rip.AutoRipCoordinator
 import org.shilpo.laboon.rip.AutoRipSource
+import org.shilpo.laboon.rip.RipConnectionHolder
 import org.shilpo.laboon.rip.RipConnectionHolderInstance
 import org.shilpo.laboon.search.SearchRepositoryImpl
 import org.shilpo.laboon.ui.design.FloatingCombinedClearance
@@ -136,11 +148,40 @@ import org.shilpo.laboon.ui.screens.album.AlbumRelatedPlaceholderScreen
 import org.shilpo.laboon.ui.screens.album.albumArtistDestination
 import org.shilpo.laboon.ui.screens.album.albumRecordLabelDestination
 import org.shilpo.laboon.ui.screens.album.toUiState
+import org.shilpo.laboon.ui.screens.artist.ArtistDetailsScreen
+import org.shilpo.laboon.ui.screens.artist.ArtistDetailsUiState
+import org.shilpo.laboon.ui.screens.artist.toUiState
 import org.shilpo.laboon.ui.screens.library.LibraryScreen
 import org.shilpo.laboon.ui.screens.player.MorphingPlayerSheet
 import org.shilpo.laboon.ui.screens.rip.RipVisualizerScreen
 import org.shilpo.laboon.ui.screens.search.SearchScreen
 import org.shilpo.laboon.ui.screens.settings.SettingsScreen
+
+data class ArtistDestination(
+    val name: String,
+    val appleArtistId: String? = null,
+)
+
+internal sealed interface OverlayDestination {
+    val key: String
+
+    data class Album(val appleAlbumId: String) : OverlayDestination {
+        override val key: String = "album_$appleAlbumId"
+    }
+
+    data class Artist(val destination: ArtistDestination) : OverlayDestination {
+        override val key: String = "artist_${destination.appleArtistId ?: destination.name}"
+    }
+
+    data class AlbumRelated(val destination: AlbumRelatedDestination) : OverlayDestination {
+        override val key: String = "related_${destination.identity}_${destination.title}"
+    }
+}
+
+internal data class OverlayEntry(
+    val id: Long,
+    val destination: OverlayDestination,
+)
 
 @Composable
 fun HomeScreen(
@@ -180,44 +221,50 @@ fun HomeScreen(
     val ripState by ripWsClient.state.collectAsState()
     val searchRepository = remember(sessionStore) { SearchRepositoryImpl(sessionStore) }
     var showRipVisualizer by rememberSaveable { mutableStateOf(false) }
-    var selectedAlbumId by remember { mutableStateOf<String?>(null) }
-    var selectedAlbumDestination by remember {
-        mutableStateOf<AlbumRelatedDestination?>(null)
+    var overlayStack by remember { mutableStateOf<List<OverlayEntry>>(emptyList()) }
+    var nextOverlayId by remember { mutableLongStateOf(1L) }
+    val artistDetailsRepository = remember(sessionStore, keyValueStore) {
+        ArtistDetailsRepository(sessionStore, ArtistDetailsCache(keyValueStore))
     }
-    var albumLoadAttempt by remember { mutableIntStateOf(0) }
-    var isRefreshingAlbum by remember { mutableStateOf(false) }
-    var albumDetailsState by remember {
-        mutableStateOf<AlbumDetailsUiState>(AlbumDetailsUiState.Loading)
-    }
-    val isAlbumOverlayVisible = selectedAlbumId != null || selectedAlbumDestination != null
+    val isAlbumOverlayVisible = overlayStack.isNotEmpty()
 
-    LaunchedEffect(selectedAlbumId, albumLoadAttempt) {
-        val appleAlbumId = selectedAlbumId ?: return@LaunchedEffect
-        isRefreshingAlbum = false
-        val cachedAlbum = albumDetailsRepository.getCachedAlbum(appleAlbumId)
-        if (cachedAlbum != null) {
-            albumDetailsState = cachedAlbum.toUiState()
-        } else {
-            albumDetailsState = AlbumDetailsUiState.Loading
-            albumDetailsState = albumDetailsRepository.getAlbum(appleAlbumId).toUiState()
+    val openArtist: (String, String?) -> Unit = { name, appleId ->
+        overlayStack = overlayStack + OverlayEntry(
+            id = nextOverlayId++,
+            destination = OverlayDestination.Artist(ArtistDestination(name, appleId)),
+        )
+    }
+    val popOverlay: () -> Unit = {
+        if (overlayStack.isNotEmpty()) {
+            overlayStack = overlayStack.dropLast(1)
         }
     }
+    val closeArtist: () -> Unit = { popOverlay() }
 
     val openAlbum: (String) -> Unit = { appleAlbumId ->
-        selectedAlbumDestination = null
-        selectedAlbumId = appleAlbumId
-        albumLoadAttempt += 1
+        overlayStack = overlayStack + OverlayEntry(
+            id = nextOverlayId++,
+            destination = OverlayDestination.Album(appleAlbumId),
+        )
     }
     val closeAlbum: () -> Unit = {
-        selectedAlbumDestination = null
-        selectedAlbumId = null
+        overlayStack = emptyList()
     }
-    val closeAlbumDestination: () -> Unit = { selectedAlbumDestination = null }
     val openAlbumArtist: (String) -> Unit = { name ->
-        selectedAlbumDestination = albumArtistDestination(name)
+        albumArtistDestination(name)?.let { dest ->
+            overlayStack = overlayStack + OverlayEntry(
+                id = nextOverlayId++,
+                destination = OverlayDestination.AlbumRelated(dest),
+            )
+        }
     }
     val openAlbumRecordLabel: (String) -> Unit = { name ->
-        selectedAlbumDestination = albumRecordLabelDestination(name)
+        albumRecordLabelDestination(name)?.let { dest ->
+            overlayStack = overlayStack + OverlayEntry(
+                id = nextOverlayId++,
+                destination = OverlayDestination.AlbumRelated(dest),
+            )
+        }
     }
     val onAlbumClick: (HomeAlbum) -> Unit = { album ->
         album.appleCatalogId
@@ -260,29 +307,6 @@ fun HomeScreen(
     LaunchedEffect(autoRipCoordinator, queueState.items) {
         autoRipCoordinator.observe(AutoRipSource.PLAYBACK_QUEUE, queueState.items)
     }
-    val albumTracks = remember(albumDetailsState) {
-        (albumDetailsState as? AlbumDetailsUiState.Loaded)?.tracks.orEmpty()
-    }
-    LaunchedEffect(autoRipCoordinator, albumTracks) {
-        autoRipCoordinator.observe(AutoRipSource.ALBUM_DETAILS, albumTracks)
-    }
-    val loadedAlbum = remember(albumDetailsState) {
-        (albumDetailsState as? AlbumDetailsUiState.Loaded)?.album?.let { album ->
-            listOf(
-                HomeAlbum(
-                    id = "apple_${album.id}",
-                    title = album.name,
-                    artist = album.artistName.orEmpty(),
-                    artworkUrl = album.artworkUrl,
-                    appleCatalogId = album.id,
-                )
-            )
-        }.orEmpty()
-    }
-    LaunchedEffect(autoRipCoordinator, loadedAlbum) {
-        autoRipCoordinator.observeAlbums(AutoRipSource.ALBUM_DETAILS, loadedAlbum)
-    }
-
     LaunchedEffect(ripConnection) {
         launch {
             ripConnection.completedRipTrackIds.collect { providerTrackId ->
@@ -291,23 +315,7 @@ fun HomeScreen(
                 if (availability.isEmpty()) return@collect
                 feedState = feedState.withAvailability(availability)
                 homeFeedCache.save(feedState)
-                albumDetailsState = albumDetailsState.withAvailability(availability)
                 playbackManager.queueManager.applyAvailability(availability)
-            }
-        }
-        launch {
-            ripConnection.completedRipAlbumIds.collect { completedAlbumId ->
-                val loadedState = albumDetailsState as? AlbumDetailsUiState.Loaded
-                val loadedAlbumId = loadedState?.album?.id ?: selectedAlbumId
-                if (loadedAlbumId == completedAlbumId) {
-                    val refreshedState =
-                        albumDetailsRepository.refreshAlbum(completedAlbumId).toUiState()
-                    if (refreshedState is AlbumDetailsUiState.Loaded ||
-                        albumDetailsState !is AlbumDetailsUiState.Loaded
-                    ) {
-                        albumDetailsState = refreshedState
-                    }
-                }
             }
         }
     }
@@ -496,24 +504,19 @@ fun HomeScreen(
         }
     }
 
-    val homeBackState = rememberPredictiveBackState(
-        enabled = state.canGoBackWithinHome && selectedAlbumId == null,
-        onBack = { onEvent(RouteEvent.BackPressed) },
-    )
-
-    val albumBackState = rememberPredictiveBackState(
-        enabled = selectedAlbumId != null && selectedAlbumDestination == null,
-        onBack = closeAlbum,
-    )
-
     val ripVisualizerBackState = rememberPredictiveBackState(
-        enabled = showRipVisualizer && selectedAlbumDestination == null,
+        enabled = showRipVisualizer,
         onBack = { showRipVisualizer = false },
     )
 
-    val albumRelatedBackState = rememberPredictiveBackState(
-        enabled = selectedAlbumDestination != null,
-        onBack = closeAlbumDestination,
+    val overlayBackState = rememberPredictiveBackState(
+        enabled = overlayStack.isNotEmpty() && !showRipVisualizer,
+        onBack = popOverlay,
+    )
+
+    val homeBackState = rememberPredictiveBackState(
+        enabled = state.canGoBackWithinHome && overlayStack.isEmpty() && !showRipVisualizer,
+        onBack = { onEvent(RouteEvent.BackPressed) },
     )
 
     val tabIsBackTarget = !showSettings && currentTab != MainTab.Home
@@ -614,6 +617,12 @@ fun HomeScreen(
                             playbackManager.play(track)
                         },
                         onDownloadTrack = { track -> ripWsClient.startRip(track) },
+                        onArtistClick = { artist ->
+                            openArtist(
+                                artist.name,
+                                artist.appleCatalogId
+                            )
+                        },
                         onAlbumClick = onAlbumClick,
                         lazyListState = homeScrollState,
                         modifier = Modifier.fillMaxSize(),
@@ -624,6 +633,12 @@ fun HomeScreen(
                             playbackManager.play(track)
                         },
                         onAlbumClick = onAlbumClick,
+                        onArtistClick = { artist ->
+                            openArtist(
+                                artist.name,
+                                artist.appleCatalogId
+                            )
+                        },
                         onPlayWithContext = { track, results ->
                             playbackManager.play(track, results)
                         },
@@ -661,7 +676,7 @@ fun HomeScreen(
         val density = LocalDensity.current
 
         AnimatedVisibility(
-            visible = currentTab == MainTab.Home && selectedAlbumId == null,
+            visible = currentTab == MainTab.Home && !isAlbumOverlayVisible,
             enter = fadeIn(animationSpec = motionScheme.defaultEffectsSpec()),
             exit = fadeOut(animationSpec = motionScheme.defaultEffectsSpec()),
             modifier = Modifier
@@ -682,66 +697,84 @@ fun HomeScreen(
             )
         }
 
-        selectedAlbumId?.let {
-            PredictiveBackSurface(
-                state = albumBackState,
-                spec = PredictiveBackSpec.HomeSettings,
-                active = true,
-            ) { albumSurface ->
-                AlbumDetailsScreen(
-                    state = albumDetailsState,
-                    bottomClearance = albumBottomClearance,
-                    isRefreshing = isRefreshingAlbum,
-                    currentTrackId = playbackState.currentTrack?.id,
-                    isPlaying = playbackState.isPlaying,
-                    onBack = closeAlbum,
-                    onRetry = { albumLoadAttempt += 1 },
-                    onRefresh = {
-                        val appleAlbumId = selectedAlbumId
-                        if (appleAlbumId != null && !isRefreshingAlbum) {
-
-                            autoRipCoordinator.invalidate(
-                                albumTracks.mapNotNull(HomeTrack::providerTrackId)
+        overlayStack.forEachIndexed { index, entry ->
+            val isTop = index == overlayStack.lastIndex
+            key(entry.id) {
+                PredictiveBackSurface(
+                    state = overlayBackState,
+                    spec = PredictiveBackSpec.HomeSettings,
+                    active = isTop,
+                ) { surfaceModifier ->
+                    when (val dest = entry.destination) {
+                        is OverlayDestination.Album -> {
+                            val isAlbumRipping = dest.appleAlbumId in ripState.pendingAlbumIds ||
+                                    ripState.activeTasks.any { it.isAlbum && it.sourceTrackId == dest.appleAlbumId }
+                            AlbumOverlayHost(
+                                appleAlbumId = dest.appleAlbumId,
+                                albumDetailsRepository = albumDetailsRepository,
+                                playbackManager = playbackManager,
+                                playbackState = playbackState,
+                                queueState = queueState,
+                                autoRipCoordinator = autoRipCoordinator,
+                                ripConnection = ripConnection,
+                                albumBottomClearance = albumBottomClearance,
+                                isTop = isTop,
+                                liquidGlassBackdropState = liquidGlassBackdropState,
+                                liquidGlassBackdropLayer = liquidGlassBackdropLayer,
+                                onBack = popOverlay,
+                                onOpenAlbumVersion = openAlbum,
+                                onOpenArtist = openArtist,
+                                onOpenRecordLabel = openAlbumRecordLabel,
+                                onDownloadTrack = { track -> ripWsClient.startRip(track) },
+                                isDownloadPending = { track ->
+                                    val id = track.providerTrackId?.takeIf(String::isNotBlank)
+                                        ?: track.id
+                                    (isAlbumRipping && !track.isPlayable) ||
+                                            id in ripState.pendingTrackIds ||
+                                            track.id in ripState.pendingTrackIds ||
+                                            ripState.activeTasks.any { it.sourceTrackId == id || it.sourceTrackId == track.id }
+                                },
+                                modifier = surfaceModifier.fillMaxSize(),
                             )
-                            coroutineScope.launch {
-                                isRefreshingAlbum = true
-                                try {
-                                    val refreshedState = albumDetailsRepository
-                                        .refreshAlbum(appleAlbumId)
-                                        .toUiState()
-                                    if (selectedAlbumId == appleAlbumId &&
-                                        (refreshedState is AlbumDetailsUiState.Loaded ||
-                                                albumDetailsState !is AlbumDetailsUiState.Loaded)
-                                    ) {
-                                        albumDetailsState = refreshedState
-                                    }
-
-                                    autoRipCoordinator.requestScan()
-                                } finally {
-                                    if (selectedAlbumId == appleAlbumId) {
-                                        isRefreshingAlbum = false
-                                    }
-                                }
-                            }
                         }
-                    },
-                    onStartPlayback = { track, contextTracks ->
-                        playbackManager.play(track, contextTracks = contextTracks)
-                    },
-                    onPlayNext = { track -> playbackManager.playNext(track) },
-                    onAddToQueue = { track -> playbackManager.addToQueue(track) },
-                    onDownloadTrack = { track -> ripWsClient.startRip(track) },
-                    isDownloadPending = { track -> ripState.pendingTrackIds.contains(track.id) },
-                    onOpenAlbumVersion = openAlbum,
-                    onOpenArtist = openAlbumArtist,
-                    onOpenRecordLabel = openAlbumRecordLabel,
-                    modifier = albumSurface
-                        .fillMaxSize()
-                        .liquidGlassBackdropProducer(
-                            liquidGlassBackdropState,
-                            liquidGlassBackdropLayer,
-                        ),
-                )
+
+                        is OverlayDestination.Artist -> {
+                            ArtistOverlayHost(
+                                destination = dest.destination,
+                                artistDetailsRepository = artistDetailsRepository,
+                                albumDetailsRepository = albumDetailsRepository,
+                                playbackManager = playbackManager,
+                                playbackState = playbackState,
+                                autoRipCoordinator = autoRipCoordinator,
+                                ripConnection = ripConnection,
+                                albumBottomClearance = albumBottomClearance,
+                                isTop = isTop,
+                                liquidGlassBackdropState = liquidGlassBackdropState,
+                                liquidGlassBackdropLayer = liquidGlassBackdropLayer,
+                                onBack = popOverlay,
+                                onOpenAlbum = openAlbum,
+                                onOpenArtist = openArtist,
+                                onDownloadTrack = { track -> ripWsClient.startRip(track) },
+                                isDownloadPending = { track ->
+                                    val id = track.providerTrackId?.takeIf(String::isNotBlank)
+                                        ?: track.id
+                                    id in ripState.pendingTrackIds ||
+                                            track.id in ripState.pendingTrackIds ||
+                                            ripState.activeTasks.any { it.sourceTrackId == id || it.sourceTrackId == track.id }
+                                },
+                                modifier = surfaceModifier.fillMaxSize(),
+                            )
+                        }
+
+                        is OverlayDestination.AlbumRelated -> {
+                            AlbumRelatedPlaceholderScreen(
+                                destination = dest.destination,
+                                onBack = popOverlay,
+                                modifier = surfaceModifier.fillMaxSize(),
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -855,6 +888,7 @@ fun HomeScreen(
                             true
                         }
                     },
+                    onArtistClick = { artistName -> openArtist(artistName, null) },
                     modifier = Modifier.fillMaxSize(),
                 )
             }
@@ -920,21 +954,6 @@ fun HomeScreen(
                 )
             }
         }
-
-        selectedAlbumDestination?.let { destination ->
-            PredictiveBackSurface(
-                state = albumRelatedBackState,
-                spec = PredictiveBackSpec.HomeSettings,
-                active = true,
-            ) { destinationSurface ->
-                AlbumRelatedPlaceholderScreen(
-                    destination = destination,
-                    onBack = closeAlbumDestination,
-                    modifier = destinationSurface.fillMaxSize(),
-                )
-            }
-        }
-
     }
 }
 
@@ -1474,4 +1493,319 @@ private fun HomeContent(
             }
         }
     }
+}
+
+@Composable
+private fun AlbumOverlayHost(
+    appleAlbumId: String,
+    albumDetailsRepository: AlbumDetailsRepository,
+    playbackManager: PlaybackManager,
+    playbackState: PlaybackState,
+    queueState: QueueState,
+    autoRipCoordinator: AutoRipCoordinator,
+    ripConnection: RipConnectionHolder?,
+    albumBottomClearance: Dp,
+    isTop: Boolean,
+    liquidGlassBackdropState: LiquidGlassBackdropState,
+    liquidGlassBackdropLayer: GraphicsLayer,
+    onBack: () -> Unit,
+    onOpenAlbumVersion: (String) -> Unit,
+    onOpenArtist: (String, String?) -> Unit,
+    onOpenRecordLabel: (String) -> Unit,
+    onDownloadTrack: (HomeTrack) -> Unit,
+    isDownloadPending: (HomeTrack) -> Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val coroutineScope = rememberCoroutineScope()
+    var albumLoadAttempt by remember(appleAlbumId) { mutableIntStateOf(0) }
+    var isRefreshingAlbum by remember(appleAlbumId) { mutableStateOf(false) }
+
+    val cachedInitial = remember(appleAlbumId) {
+        albumDetailsRepository.getCachedAlbum(appleAlbumId)?.toUiState()
+    }
+    var albumDetailsState by remember(appleAlbumId) {
+        mutableStateOf<AlbumDetailsUiState>(cachedInitial ?: AlbumDetailsUiState.Loading)
+    }
+
+    LaunchedEffect(appleAlbumId, albumLoadAttempt) {
+        if (albumDetailsState !is AlbumDetailsUiState.Loaded) {
+            val cached = albumDetailsRepository.getCachedAlbum(appleAlbumId)
+            if (cached != null) {
+                albumDetailsState = cached.toUiState()
+            }
+        }
+        val fetched = albumDetailsRepository.getAlbum(appleAlbumId).toUiState()
+        albumDetailsState = fetched
+    }
+
+    val albumTracks = remember(albumDetailsState) {
+        (albumDetailsState as? AlbumDetailsUiState.Loaded)?.tracks.orEmpty()
+    }
+    val loadedAlbum = remember(albumDetailsState) {
+        (albumDetailsState as? AlbumDetailsUiState.Loaded)?.album?.let { album ->
+            listOf(
+                HomeAlbum(
+                    id = "apple_${album.id}",
+                    title = album.name,
+                    artist = album.artistName.orEmpty(),
+                    artworkUrl = album.artworkUrl,
+                    appleCatalogId = album.id,
+                )
+            )
+        }.orEmpty()
+    }
+    LaunchedEffect(autoRipCoordinator, loadedAlbum) {
+        autoRipCoordinator.observeAlbums(AutoRipSource.ALBUM_DETAILS, loadedAlbum)
+    }
+    DisposableEffect(autoRipCoordinator, appleAlbumId) {
+        onDispose {
+            autoRipCoordinator.observeAlbums(AutoRipSource.ALBUM_DETAILS, emptyList())
+        }
+    }
+
+    if (ripConnection != null) {
+        LaunchedEffect(ripConnection, appleAlbumId) {
+            launch {
+                ripConnection.completedRipTrackIds.collect { providerTrackId ->
+                    val lookup = ripConnection.autoRip.refreshAvailabilityNow(providerTrackId)
+                    val availability = lookup.cached
+                    if (availability.isNotEmpty()) {
+                        albumDetailsState = albumDetailsState.withAvailability(availability)
+                    }
+                }
+            }
+            launch {
+                ripConnection.completedRipAlbumIds.collect { completedAlbumId ->
+                    val loadedState = albumDetailsState as? AlbumDetailsUiState.Loaded
+                    val currentAlbumId = loadedState?.album?.id ?: appleAlbumId
+                    if (currentAlbumId == completedAlbumId) {
+                        val refreshed =
+                            albumDetailsRepository.refreshAlbum(completedAlbumId).toUiState()
+                        if (refreshed is AlbumDetailsUiState.Loaded ||
+                            albumDetailsState !is AlbumDetailsUiState.Loaded
+                        ) {
+                            albumDetailsState = refreshed
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    val finalModifier = if (isTop) {
+        modifier.liquidGlassBackdropProducer(
+            liquidGlassBackdropState,
+            liquidGlassBackdropLayer,
+        )
+    } else modifier
+
+    AlbumDetailsScreen(
+        state = albumDetailsState,
+        bottomClearance = albumBottomClearance,
+        isRefreshing = isRefreshingAlbum,
+        currentTrackId = playbackState.currentTrack?.id,
+        isPlaying = playbackState.isPlaying,
+        onBack = onBack,
+        onRetry = { albumLoadAttempt += 1 },
+        onRefresh = {
+            if (!isRefreshingAlbum) {
+                autoRipCoordinator.invalidateAlbums(listOf(appleAlbumId))
+                autoRipCoordinator.invalidate(
+                    albumTracks.mapNotNull(HomeTrack::providerTrackId)
+                )
+                coroutineScope.launch {
+                    isRefreshingAlbum = true
+                    try {
+                        val refreshed =
+                            albumDetailsRepository.refreshAlbum(appleAlbumId).toUiState()
+                        if (refreshed is AlbumDetailsUiState.Loaded ||
+                            albumDetailsState !is AlbumDetailsUiState.Loaded
+                        ) {
+                            albumDetailsState = refreshed
+                        }
+                        autoRipCoordinator.requestScan()
+                    } finally {
+                        isRefreshingAlbum = false
+                    }
+                }
+            }
+        },
+        onStartPlayback = { track, contextTracks ->
+            playbackManager.play(track, contextTracks = contextTracks)
+        },
+        onPlayNext = { track -> playbackManager.playNext(track) },
+        onAddToQueue = { track -> playbackManager.addToQueue(track) },
+        onDownloadTrack = onDownloadTrack,
+        isDownloadPending = isDownloadPending,
+        onOpenAlbumVersion = onOpenAlbumVersion,
+        onOpenArtist = onOpenArtist,
+        onOpenRecordLabel = onOpenRecordLabel,
+        modifier = finalModifier,
+    )
+}
+
+@Composable
+private fun ArtistOverlayHost(
+    destination: ArtistDestination,
+    artistDetailsRepository: ArtistDetailsRepository,
+    albumDetailsRepository: AlbumDetailsRepository,
+    playbackManager: PlaybackManager,
+    playbackState: PlaybackState,
+    autoRipCoordinator: AutoRipCoordinator,
+    ripConnection: RipConnectionHolder?,
+    albumBottomClearance: Dp,
+    isTop: Boolean,
+    liquidGlassBackdropState: LiquidGlassBackdropState,
+    liquidGlassBackdropLayer: GraphicsLayer,
+    onBack: () -> Unit,
+    onOpenAlbum: (String) -> Unit,
+    onOpenArtist: (String, String?) -> Unit,
+    onDownloadTrack: (HomeTrack) -> Unit,
+    isDownloadPending: (HomeTrack) -> Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val coroutineScope = rememberCoroutineScope()
+    var artistLoadAttempt by remember(destination) { mutableIntStateOf(0) }
+    var isRefreshingArtist by remember(destination) { mutableStateOf(false) }
+
+    val cachedInitial = remember(destination) {
+        val appleId = destination.appleArtistId
+        if (appleId != null) {
+            artistDetailsRepository.getCachedArtist(appleId)?.toUiState()
+        } else null
+    }
+
+    var artistDetailsState by remember(destination) {
+        mutableStateOf<ArtistDetailsUiState>(cachedInitial ?: ArtistDetailsUiState.Loading)
+    }
+
+    LaunchedEffect(destination, artistLoadAttempt) {
+        val appleArtistId = destination.appleArtistId
+            ?: artistDetailsRepository.resolveArtistId(destination.name)
+        if (appleArtistId != null) {
+            if (artistDetailsState !is ArtistDetailsUiState.Loaded) {
+                val cached = artistDetailsRepository.getCachedArtist(appleArtistId)
+                if (cached != null) {
+                    artistDetailsState = cached.toUiState()
+                }
+            }
+            val result = artistDetailsRepository.getArtist(appleArtistId)
+            artistDetailsState = result.toUiState()
+        } else {
+            artistDetailsState = ArtistDetailsUiState.NotFound
+        }
+    }
+
+    val topSongs = remember(artistDetailsState) {
+        (artistDetailsState as? ArtistDetailsUiState.Loaded)?.topSongs.orEmpty()
+    }
+    LaunchedEffect(autoRipCoordinator, topSongs) {
+        autoRipCoordinator.observe(AutoRipSource.ARTIST_DETAILS, topSongs)
+    }
+    DisposableEffect(autoRipCoordinator, destination) {
+        onDispose {
+            autoRipCoordinator.observe(AutoRipSource.ARTIST_DETAILS, emptyList())
+        }
+    }
+    val allArtistAlbums = remember(artistDetailsState) {
+        (artistDetailsState as? ArtistDetailsUiState.Loaded)?.let { loaded ->
+            listOfNotNull(loaded.latestRelease) + loaded.albums + loaded.singles
+        }.orEmpty()
+    }
+
+    if (ripConnection != null) {
+        LaunchedEffect(ripConnection) {
+            launch {
+                ripConnection.completedRipTrackIds.collect { providerTrackId ->
+                    val lookup = ripConnection.autoRip.refreshAvailabilityNow(providerTrackId)
+                    val availability = lookup.cached
+                    if (availability.isNotEmpty()) {
+                        artistDetailsState = artistDetailsState.withAvailability(availability)
+                    }
+                }
+            }
+            launch {
+                ripConnection.completedRipAlbumIds.collect { completedAlbumId ->
+                    val loadedState = artistDetailsState as? ArtistDetailsUiState.Loaded
+                    if (loadedState != null) {
+                        val hasAlbum = allArtistAlbums.any {
+                            it.appleCatalogId == completedAlbumId ||
+                                    it.id == "apple_$completedAlbumId" ||
+                                    it.id == completedAlbumId
+                        }
+                        if (hasAlbum) {
+                            val appleArtistId = destination.appleArtistId
+                                ?: artistDetailsRepository.resolveArtistId(destination.name)
+                            if (appleArtistId != null) {
+                                val refreshed = artistDetailsRepository
+                                    .getArtist(appleArtistId, forceRefresh = true)
+                                    .toUiState()
+                                if (refreshed is ArtistDetailsUiState.Loaded) {
+                                    artistDetailsState = refreshed
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    val finalModifier = if (isTop) {
+        modifier.liquidGlassBackdropProducer(
+            liquidGlassBackdropState,
+            liquidGlassBackdropLayer,
+        )
+    } else modifier
+
+    ArtistDetailsScreen(
+        state = artistDetailsState,
+        bottomClearance = albumBottomClearance,
+        isRefreshing = isRefreshingArtist,
+        currentTrackId = playbackState.currentTrack?.id,
+        isPlaying = playbackState.isPlaying,
+        onBack = onBack,
+        onRetry = { artistLoadAttempt += 1 },
+        onRefresh = {
+            if (!isRefreshingArtist) {
+                autoRipCoordinator.invalidate(
+                    topSongs.mapNotNull(HomeTrack::providerTrackId)
+                )
+                coroutineScope.launch {
+                    isRefreshingArtist = true
+                    try {
+                        val appleArtistId = destination.appleArtistId
+                            ?: artistDetailsRepository.resolveArtistId(destination.name)
+                        if (appleArtistId != null) {
+                            val refreshed = artistDetailsRepository
+                                .getArtist(appleArtistId, forceRefresh = true)
+                                .toUiState()
+                            artistDetailsState = refreshed
+                            autoRipCoordinator.requestScan()
+                        }
+                    } finally {
+                        isRefreshingArtist = false
+                    }
+                }
+            }
+        },
+        onStartPlayback = { track, contextTracks ->
+            playbackManager.play(track, contextTracks = contextTracks)
+        },
+        onPlayNext = { track -> playbackManager.playNext(track) },
+        onAddToQueue = { track -> playbackManager.addToQueue(track) },
+        onDownloadTrack = onDownloadTrack,
+        isDownloadPending = isDownloadPending,
+        onOpenAlbum = onOpenAlbum,
+        onOpenTrackAlbum = { track ->
+            coroutineScope.launch {
+                val albumId = albumDetailsRepository.resolveAlbumIdForTrack(track)
+                if (albumId != null) {
+                    onOpenAlbum(albumId)
+                }
+            }
+        },
+        onOpenArtist = onOpenArtist,
+        modifier = finalModifier,
+    )
 }
