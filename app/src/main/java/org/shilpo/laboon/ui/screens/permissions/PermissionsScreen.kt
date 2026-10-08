@@ -2,6 +2,8 @@
 
 package org.shilpo.laboon.ui.screens.permissions
 
+import android.os.Build
+
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -48,11 +50,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import org.shilpo.laboon.R
-import org.shilpo.laboon.permissions.PermissionCatalogue
 import org.shilpo.laboon.permissions.PermissionKind
 import org.shilpo.laboon.permissions.PermissionSpec
 import org.shilpo.laboon.permissions.PermissionState
 import org.shilpo.laboon.permissions.missingRequiredPermissions
+import org.shilpo.laboon.permissions.permissionCatalogueForAndroidApi
 import org.shilpo.laboon.ui.design.ScreenHeadline
 import org.shilpo.laboon.ui.design.ScreenScaffold
 import org.shilpo.laboon.ui.design.SegmentedSection
@@ -65,9 +67,10 @@ internal fun PermissionsScreen(
     onContinue: () -> Unit = {},
 ) {
     val answers = remember(state) { mutableStateMapOf<String, Boolean>() }
+    val permissionCatalogue = remember { permissionCatalogueForAndroidApi(Build.VERSION.SDK_INT) }
 
     fun syncPermissionAnswers() {
-        PermissionCatalogue.forEach { spec -> answers[spec.id] = state.isSatisfied(spec) }
+        permissionCatalogue.forEach { spec -> answers[spec.id] = state.isSatisfied(spec) }
     }
 
     LaunchedEffect(state, permissionAnswersRevision) { syncPermissionAnswers() }
@@ -75,10 +78,10 @@ internal fun PermissionsScreen(
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { syncPermissionAnswers() }
 
     val interactiveSpecs =
-        remember { PermissionCatalogue.filter { it.kind != PermissionKind.Automatic } }
+        remember(permissionCatalogue) { permissionCatalogue.filter { it.kind != PermissionKind.Automatic } }
     val automaticSpecs =
-        remember { PermissionCatalogue.filter { it.kind == PermissionKind.Automatic } }
-    val missingRequired = missingRequiredPermissions(PermissionCatalogue) { answers[it.id] == true }
+        remember(permissionCatalogue) { permissionCatalogue.filter { it.kind == PermissionKind.Automatic } }
+    val missingRequired = missingRequiredPermissions(permissionCatalogue) { answers[it.id] == true }
     val canLeave = missingRequired.isEmpty()
 
     val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()

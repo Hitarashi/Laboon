@@ -278,6 +278,72 @@ fun LyricsScreen(
     onDismissShareDialog: () -> Unit = {},
     spectrum: SpectrumFrame = SpectrumFrame(),
 ) {
+    val theme = org.shilpo.laboon.theme.LocalVisualTheme.current
+    if (theme?.definition?.screens?.containsKey("lyrics") == true) {
+        var shareVisible by remember { mutableStateOf(false) }
+        org.shilpo.laboon.theme.ThemeRouteContent(
+            theme = theme, screenName = "lyrics", modifier = modifier.fillMaxSize(),
+            presentation = org.shilpo.laboon.theme.renderer.VisualThemePresentation(
+                values = mapOf(
+                    "track.title" to track.title,
+                    "track.artist" to track.artist,
+                    "track.artworkUrl" to track.artworkUrl.orEmpty(),
+                    "lyrics.loading" to lyricsLoading.toString(),
+                    "player.progress" to (if (durationMs > 0) currentPositionMs.toFloat() / durationMs else 0f).toString()
+                ),
+                collections = mapOf("lyrics.lines" to lyricsLines.mapIndexed { index, line ->
+                    mapOf(
+                        "lyrics.index" to index.toString(), "lyrics.text" to line.text,
+                        "lyrics.startMs" to line.startMs.toString(),
+                        "lyrics.active" to (currentPositionMs >= line.startMs && currentPositionMs < line.endMs).toString(),
+                        "lyrics.romanization" to line.romanization.orEmpty(),
+                    )
+                }),
+            ),
+            availableActions = setOf(
+                org.shilpo.laboon.theme.contract.VisualThemeAction.SEEK,
+                org.shilpo.laboon.theme.contract.VisualThemeAction.OPEN_LYRICS_SHARE
+            ),
+            onAction = { action, parameters ->
+                when (action) {
+                    org.shilpo.laboon.theme.contract.VisualThemeAction.SEEK -> parameters["lyrics.index"]?.toIntOrNull()
+                        ?.let(lyricsLines::getOrNull)?.let { line ->
+                            if (durationMs > 0) onSeek(
+                                (line.startMs.toFloat() / durationMs).coerceIn(
+                                    0f,
+                                    1f
+                                )
+                            )
+                        }
+
+                    org.shilpo.laboon.theme.contract.VisualThemeAction.OPEN_LYRICS_SHARE -> shareVisible =
+                        true
+
+                    else -> Unit
+                }
+            },
+            onSeek = onSeek, fallback = {},
+        )
+        if (shareVisible || displayOptions.showShareDialog) LyricsShareDialog(
+            track = track, lyricsLines = lyricsLines,
+            onDismissRequest = { shareVisible = false; onDismissShareDialog() },
+        )
+        return
+    }
+    if (theme?.definition?.screens?.containsKey("lyrics") != true) {
+        StockLyricsContent(
+            track = track,
+            lines = lyricsLines,
+            loading = lyricsLoading,
+            positionMs = currentPositionMs,
+            durationMs = durationMs,
+            onSeek = onSeek,
+            displayOptions = displayOptions,
+            onDismissShare = onDismissShareDialog,
+            modifier = modifier
+        )
+        return
+    }
     val coroutineScope = rememberCoroutineScope()
     val hasTiming = remember(lyricsLines) { lyricsLines.hasTiming() }
     val hasWordTimings = remember(lyricsLines) { lyricsLines.hasWordTimings() }

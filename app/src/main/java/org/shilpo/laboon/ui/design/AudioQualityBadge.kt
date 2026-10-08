@@ -79,7 +79,7 @@ fun AudioQualityBadge(
         else -> AudioQualityDetailState.Idle
     }
     val effectiveCodec = (if (!isStale) quality?.codec else null) ?: track?.codec ?: fallbackCodec
-    val normCodec = effectiveCodec?.trim()?.lowercase(Locale.getDefault())
+    val normCodec = effectiveCodec?.trim()?.lowercase(Locale.ROOT)
 
     val isHiRes = if (!isStale && quality != null) {
         quality.isHiRes
@@ -109,7 +109,7 @@ fun AudioQualityBadge(
             normCodec.contains("aac") || normCodec.contains("mp4a") -> "AAC"
             normCodec.contains("opus") -> "OPUS"
             normCodec.contains("mp3") || normCodec.contains("mpeg") -> "MP3"
-            else -> effectiveCodec.trim().uppercase(Locale.getDefault())
+            else -> effectiveCodec.trim().uppercase(Locale.ROOT)
         }
 
         else -> null

@@ -9,7 +9,6 @@ internal object PermissionIds {
     const val BT_CONNECT = "bt_connect"
     const val BT_SCAN = "bt_scan"
     const val BATTERY = "battery"
-    const val INSTALL = "install"
     const val NETWORK = "network"
     const val AUDIO_VIBE = "audio_vibe"
 }
@@ -61,15 +60,6 @@ internal val PermissionCatalogue: List<PermissionSpec> = listOf(
         isRequired = true,
     ),
     PermissionSpec(
-        id = PermissionIds.INSTALL,
-        manifestPermission = Manifest.permission.REQUEST_INSTALL_PACKAGES,
-        kind = PermissionKind.Settings,
-        titleRes = R.string.permissions_install_title,
-        descriptionRes = R.string.permissions_install_desc,
-        iconRes = R.drawable.ic_perm_install,
-        isRequired = true,
-    ),
-    PermissionSpec(
         id = PermissionIds.NETWORK,
         manifestPermission = Manifest.permission.INTERNET,
         kind = PermissionKind.Automatic,
@@ -92,6 +82,32 @@ internal val PermissionCatalogue: List<PermissionSpec> = listOf(
 internal fun requiredRuntimePermissions(
     catalogue: List<PermissionSpec> = PermissionCatalogue,
 ): List<PermissionSpec> = catalogue.filter { it.isRequired && it.kind == PermissionKind.Runtime }
+
+internal fun permissionCatalogueForAndroidApi(
+    androidApi: Int,
+    catalogue: List<PermissionSpec> = PermissionCatalogue,
+): List<PermissionSpec> = catalogue.mapNotNull { spec ->
+    when (spec.id) {
+        PermissionIds.STORAGE -> spec.copy(
+            manifestPermission = if (androidApi >= 33) {
+                Manifest.permission.READ_MEDIA_AUDIO
+            } else {
+                Manifest.permission.READ_EXTERNAL_STORAGE
+            },
+        )
+
+        PermissionIds.NOTIFICATIONS -> if (androidApi >= 33) {
+            spec
+        } else {
+            spec.copy(kind = PermissionKind.Settings)
+        }
+
+        PermissionIds.BT_CONNECT, PermissionIds.BT_SCAN ->
+            spec.takeIf { androidApi >= 31 }
+
+        else -> spec
+    }
+}
 
 internal fun missingRequiredPermissions(
     catalogue: List<PermissionSpec> = PermissionCatalogue,

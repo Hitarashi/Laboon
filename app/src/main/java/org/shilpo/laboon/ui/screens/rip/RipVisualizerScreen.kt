@@ -445,7 +445,7 @@ private fun LaneProgressIndicator(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            val normalizedStage = stage.lowercase(Locale.getDefault())
+            val normalizedStage = stage.lowercase(Locale.ROOT)
             val (stageIconRes, stageIconModifier) = when {
                 normalizedStage.contains("connect") -> {
                     R.drawable.ic_stage_link to Modifier.size(14.dp)
@@ -574,9 +574,9 @@ private fun LaneProgressIndicator(
                         !codec.equals("aac", ignoreCase = true) &&
                         !codec.startsWith("mp4a", ignoreCase = true)
                     ) {
-                        val displayCodec = when (codec.lowercase(Locale.getDefault())) {
+                        val displayCodec = when (codec.lowercase(Locale.ROOT)) {
                             "mp4a.40.2", "mp4a.40.5" -> "AAC"
-                            else -> codec.uppercase(Locale.getDefault())
+                            else -> codec.uppercase(Locale.ROOT)
                         }
                         Text(
                             text = displayCodec,

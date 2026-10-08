@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Hitarashi/Laboon/main/docs/visual-theme-manifest.schema.json",
+  "title": "Laboon visual theme manifest, contract 1",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "author",
+    "version",
+    "contractVersion",
+    "minimumAndroidApi",
+    "definitionAsset"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_.-]{2,127}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "author": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "contractVersion": {
+      "const": 1
+    },
+    "minimumAndroidApi": {
+      "type": "integer",
+      "minimum": 29
+    },
+    "definitionAsset": {
+      "type": "string",
+      "pattern": "^(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$"
+    }
+  },
+  "additionalProperties": false
+}

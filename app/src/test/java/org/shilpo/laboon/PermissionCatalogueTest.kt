@@ -1,5 +1,7 @@
 package org.shilpo.laboon
 
+import android.Manifest
+
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -12,6 +14,7 @@ import org.shilpo.laboon.permissions.PermissionSpec
 import org.shilpo.laboon.permissions.PermissionState
 import org.shilpo.laboon.permissions.canLeaveOnboarding
 import org.shilpo.laboon.permissions.missingRequiredPermissions
+import org.shilpo.laboon.permissions.permissionCatalogueForAndroidApi
 import org.shilpo.laboon.permissions.requiredRuntimePermissions
 import java.io.File
 
@@ -112,6 +115,37 @@ class PermissionCatalogueTest {
         val ids = PermissionCatalogue.map { it.id }
 
         assertEquals(ids.distinct(), ids)
+    }
+
+    @Test
+    fun api29UsesLegacyAudioPermissionAndNoRuntimeBluetoothOrNotificationRequest() {
+        val permissions = permissionCatalogueForAndroidApi(29)
+
+        assertEquals(
+            "android.permission.READ_EXTERNAL_STORAGE",
+            permissions.single { it.id == PermissionIds.STORAGE }.manifestPermission,
+        )
+        assertTrue(permissions.none { it.id == PermissionIds.BT_CONNECT || it.id == PermissionIds.BT_SCAN })
+        assertEquals(
+            PermissionKind.Settings,
+            permissions.single { it.id == PermissionIds.NOTIFICATIONS }.kind
+        )
+        assertFalse(permissions.any { it.manifestPermission == "android.permission.READ_MEDIA_AUDIO" })
+    }
+
+    @Test
+    fun api33UsesMediaAudioAndRuntimeNotificationPermissions() {
+        val permissions = permissionCatalogueForAndroidApi(33)
+
+        assertEquals(
+            Manifest.permission.READ_MEDIA_AUDIO,
+            permissions.single { it.id == PermissionIds.STORAGE }.manifestPermission,
+        )
+        assertEquals(
+            PermissionKind.Runtime,
+            permissions.single { it.id == PermissionIds.NOTIFICATIONS }.kind
+        )
+        assertTrue(permissions.any { it.id == PermissionIds.BT_CONNECT })
     }
 
     @Test

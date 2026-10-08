@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -73,6 +74,86 @@ fun QueueBottomSheet(
     discoveryStatus: DiscoveryStatus = DiscoveryStatus.IDLE,
     modifier: Modifier = Modifier,
 ) {
+    val theme = org.shilpo.laboon.theme.LocalVisualTheme.current
+    if (theme?.definition?.screens?.containsKey("queue") == true) {
+        val actions = setOf(
+            org.shilpo.laboon.theme.contract.VisualThemeAction.BACK,
+            org.shilpo.laboon.theme.contract.VisualThemeAction.PLAY_QUEUE_ENTRY,
+            org.shilpo.laboon.theme.contract.VisualThemeAction.REMOVE_QUEUE_ENTRY,
+            org.shilpo.laboon.theme.contract.VisualThemeAction.MOVE_QUEUE_ENTRY,
+            org.shilpo.laboon.theme.contract.VisualThemeAction.CLEAR_QUEUE,
+            org.shilpo.laboon.theme.contract.VisualThemeAction.TOGGLE_SHUFFLE,
+            org.shilpo.laboon.theme.contract.VisualThemeAction.CYCLE_REPEAT,
+            org.shilpo.laboon.theme.contract.VisualThemeAction.PROMOTE_AUTOPLAY,
+            org.shilpo.laboon.theme.contract.VisualThemeAction.RETRY_DISCOVERY
+        )
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = onDismiss,
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            org.shilpo.laboon.theme.ThemeRouteContent(
+                theme = theme, screenName = "queue", modifier = modifier.fillMaxSize(),
+                presentation = org.shilpo.laboon.theme.renderer.VisualThemePresentation(
+                    values = mapOf(
+                        "queue.count" to queueState.upNextCount.toString(),
+                        "queue.shuffle" to queueState.isShuffle.toString(),
+                        "queue.repeatMode" to queueState.repeatMode.name.lowercase(),
+                        "playback.isDiscovering" to isDiscovering.toString()
+                    ),
+                    collections = mapOf("queue" to queueState.playbackUpcomingEntries.mapIndexed { index, entry ->
+                        mapOf(
+                            "queue.entryId" to entry.id.toString(),
+                            "queue.index" to index.toString(),
+                            "queue.origin" to entry.origin.name.lowercase(),
+                            "track.id" to entry.track.id,
+                            "track.title" to entry.track.title,
+                            "track.artist" to entry.track.artist,
+                            "track.artworkUrl" to entry.track.artworkUrl.orEmpty(),
+                        )
+                    }),
+                ),
+                availableActions = actions,
+                onAction = { action, parameters ->
+                    val index = parameters["queue.index"]?.toIntOrNull()
+                        ?.takeIf { it in queueState.playbackUpcomingEntries.indices }
+                    val entryId = parameters["queue.entryId"]?.toLongOrNull()
+                        ?.takeIf { id -> queueState.playbackUpcomingEntries.any { it.id == id } }
+                    when (action) {
+                        org.shilpo.laboon.theme.contract.VisualThemeAction.BACK -> onDismiss()
+                        org.shilpo.laboon.theme.contract.VisualThemeAction.PLAY_QUEUE_ENTRY -> entryId?.let(
+                            onQueueEntryClick
+                        )
+
+                        org.shilpo.laboon.theme.contract.VisualThemeAction.REMOVE_QUEUE_ENTRY -> index?.let(
+                            onRemoveUpNext
+                        )
+
+                        org.shilpo.laboon.theme.contract.VisualThemeAction.MOVE_QUEUE_ENTRY -> {
+                            val to = when (parameters["queue.direction"]) {
+                                "up" -> index?.minus(1); "down" -> index?.plus(1); else -> null
+                            }
+                            if (index != null && to != null && to in queueState.playbackUpcomingEntries.indices) onMoveUpNext(
+                                index,
+                                to
+                            )
+                        }
+
+                        org.shilpo.laboon.theme.contract.VisualThemeAction.CLEAR_QUEUE -> onClearUpNext()
+                        org.shilpo.laboon.theme.contract.VisualThemeAction.TOGGLE_SHUFFLE -> onToggleShuffle()
+                        org.shilpo.laboon.theme.contract.VisualThemeAction.CYCLE_REPEAT -> onCycleRepeatMode()
+                        org.shilpo.laboon.theme.contract.VisualThemeAction.PROMOTE_AUTOPLAY -> entryId?.let(
+                            onPromoteAutoplay
+                        )
+
+                        org.shilpo.laboon.theme.contract.VisualThemeAction.RETRY_DISCOVERY -> onRetryDiscovery()
+                        else -> Unit
+                    }
+                },
+                fallback = {},
+            )
+        }
+        return
+    }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val upcomingEntries = queueState.playbackUpcomingEntries
     val forwardHistoryCount = queueState.forwardHistory.size

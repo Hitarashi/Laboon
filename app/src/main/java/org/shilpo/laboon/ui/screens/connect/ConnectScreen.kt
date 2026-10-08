@@ -29,7 +29,7 @@ import org.shilpo.laboon.ui.design.PrimaryActionZone
 import org.shilpo.laboon.ui.design.ScreenError
 import org.shilpo.laboon.ui.design.ScreenScaffold
 
-private fun openTelegramApp(context: Context) {
+internal fun openTelegramApp(context: Context) {
     val telegramIntent = Intent(Intent.ACTION_VIEW).apply {
         data = "tg://".toUri()
         flags = Intent.FLAG_ACTIVITY_NEW_TASK

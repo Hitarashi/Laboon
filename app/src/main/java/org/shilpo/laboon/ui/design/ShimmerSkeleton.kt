@@ -44,17 +44,22 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.shilpo.laboon.R
+import org.shilpo.laboon.theme.LocalVisualTheme
 
 @Composable
 fun frostedGlassBaseBrush(isDark: Boolean = isSystemInDarkTheme()): Brush {
     val surfaceContainerHigh = MaterialTheme.colorScheme.surfaceContainerHigh
     val surfaceContainerLow = MaterialTheme.colorScheme.surfaceContainerLow
-    return remember(isDark, surfaceContainerHigh, surfaceContainerLow) {
-        if (isDark) {
+    val extensionSelected = LocalVisualTheme.current != null
+    return remember(isDark, surfaceContainerHigh, surfaceContainerLow, extensionSelected) {
+        if (!extensionSelected) {
+            SolidColor(surfaceContainerHigh)
+        } else if (isDark) {
             Brush.verticalGradient(
                 colors = listOf(
                     Color.White.copy(alpha = 0.08f),
@@ -74,8 +79,12 @@ fun frostedGlassBaseBrush(isDark: Boolean = isSystemInDarkTheme()): Brush {
 
 @Composable
 fun frostedGlassBorderBrush(isDark: Boolean = isSystemInDarkTheme()): Brush {
-    return remember(isDark) {
-        if (isDark) {
+    val outline = MaterialTheme.colorScheme.outlineVariant
+    val extensionSelected = LocalVisualTheme.current != null
+    return remember(isDark, outline, extensionSelected) {
+        if (!extensionSelected) {
+            SolidColor(outline)
+        } else if (isDark) {
             Brush.verticalGradient(
                 colors = listOf(
                     Color.White.copy(alpha = 0.22f),
@@ -97,8 +106,18 @@ fun frostedGlassBorderBrush(isDark: Boolean = isSystemInDarkTheme()): Brush {
 
 @Composable
 fun frostedGlassGlintColors(isDark: Boolean = isSystemInDarkTheme()): List<Color> {
-    return remember(isDark) {
-        if (isDark) {
+    val primary = MaterialTheme.colorScheme.primary
+    val extensionSelected = LocalVisualTheme.current != null
+    return remember(isDark, primary, extensionSelected) {
+        if (!extensionSelected) {
+            listOf(
+                Color.Transparent,
+                primary.copy(alpha = 0.04f),
+                primary.copy(alpha = 0.10f),
+                primary.copy(alpha = 0.04f),
+                Color.Transparent,
+            )
+        } else if (isDark) {
             listOf(
                 Color.Transparent,
                 Color.White.copy(alpha = 0.05f),

@@ -10,6 +10,11 @@ import coil3.request.crossfade
 import okio.Path.Companion.toOkioPath
 
 class LaboonApplication : Application(), SingletonImageLoader.Factory {
+    override fun onCreate() {
+        super.onCreate()
+        org.shilpo.laboon.theme.VisualThemeCrashRecovery.install(this)
+    }
+
     override fun newImageLoader(context: PlatformContext): ImageLoader {
         val cacheDir = context.cacheDir.resolve("image_cache")
         return ImageLoader.Builder(context)

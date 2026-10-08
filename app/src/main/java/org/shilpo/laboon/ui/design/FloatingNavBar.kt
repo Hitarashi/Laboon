@@ -36,6 +36,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -53,6 +55,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import org.shilpo.laboon.navigation.MainTab
+import org.shilpo.laboon.theme.LocalVisualTheme
 import kotlin.math.roundToInt
 
 internal val NavigationBarMaxWidth = 420.dp
@@ -118,6 +121,34 @@ internal fun <T> FloatingNavigationBar(
     labelAlpha: Float = 1f,
     backdropState: LiquidGlassBackdropState? = null,
 ) {
+    if (LocalVisualTheme.current == null) {
+        NavigationBar(modifier = modifier.fillMaxWidth()) {
+            items.forEach { item ->
+                val selected = item.value == selectedItem
+                NavigationBarItem(
+                    selected = selected,
+                    onClick = { onItemSelected(item.value) },
+                    icon = {
+                        Icon(
+                            painter = painterResource(
+                                id = if (selected) item.iconFilled else item.iconOutlined,
+                            ),
+                            contentDescription = null,
+                            modifier = Modifier.alpha(iconAlpha.coerceIn(0f, 1f)),
+                        )
+                    },
+                    label = {
+                        Text(
+                            text = item.title,
+                            modifier = Modifier.alpha(labelAlpha.coerceIn(0f, 1f)),
+                        )
+                    },
+                )
+            }
+        }
+        return
+    }
+
     val motionScheme = MaterialTheme.motionScheme
     val isDark = isSystemInDarkTheme()
 

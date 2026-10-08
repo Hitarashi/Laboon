@@ -4,8 +4,10 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 
@@ -20,12 +22,14 @@ internal class AndroidPermissionState(
 ) : PermissionState {
 
     override fun isSatisfied(spec: PermissionSpec): Boolean = when (spec.id) {
+        PermissionIds.NOTIFICATIONS -> if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            NotificationManagerCompat.from(context).areNotificationsEnabled()
+        } else {
+            hasManifestPermission(spec)
+        }
+
         PermissionIds.BATTERY -> isIgnoringBatteryOptimizations()
-        PermissionIds.INSTALL -> context.packageManager.canRequestPackageInstalls()
-        else -> spec.manifestPermission?.let { permission ->
-            ContextCompat.checkSelfPermission(context, permission) ==
-                    PackageManager.PERMISSION_GRANTED
-        } ?: false
+        else -> hasManifestPermission(spec)
     }
 
     @SuppressLint("BatteryLife")
@@ -38,21 +42,35 @@ internal class AndroidPermissionState(
                 Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
             )
 
-            PermissionIds.INSTALL -> openSettings(
-                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
-                    data = "package:${context.packageName}".toUri()
-                },
-            )
+            PermissionIds.NOTIFICATIONS -> if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                openSettings(
+                    Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(
+                        Settings.EXTRA_APP_PACKAGE,
+                        context.packageName,
+                    ),
+                )
+            } else {
+                requestRuntime(spec)
+            }
 
             else -> {
-                val permission = spec.manifestPermission ?: return
                 when (spec.kind) {
-                    PermissionKind.Runtime -> requestRuntimePermission?.invoke(permission)
+                    PermissionKind.Runtime -> requestRuntime(spec)
                     PermissionKind.Settings -> openSettings()
                     PermissionKind.Automatic -> Unit
                 }
             }
         }
+    }
+
+    private fun hasManifestPermission(spec: PermissionSpec): Boolean =
+        spec.manifestPermission?.let { permission ->
+            ContextCompat.checkSelfPermission(context, permission) ==
+                    PackageManager.PERMISSION_GRANTED
+        } ?: false
+
+    private fun requestRuntime(spec: PermissionSpec) {
+        spec.manifestPermission?.let { permission -> requestRuntimePermission?.invoke(permission) }
     }
 
     private fun isIgnoringBatteryOptimizations(): Boolean {

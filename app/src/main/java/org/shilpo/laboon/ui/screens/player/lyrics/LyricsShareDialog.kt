@@ -132,6 +132,120 @@ fun LyricsShareDialog(
         selectedIndices.sorted().mapNotNull { vocalLines.getOrNull(it) }
     }
 
+    val theme = org.shilpo.laboon.theme.LocalVisualTheme.current
+    if (theme?.definition?.screens?.containsKey("lyricsShare") == true) {
+        Dialog(
+            onDismissRequest = onDismissRequest,
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            org.shilpo.laboon.theme.ThemeRouteContent(
+                theme = theme, screenName = "lyricsShare", modifier = Modifier.fillMaxSize(),
+                presentation = org.shilpo.laboon.theme.renderer.VisualThemePresentation(
+                    values = mapOf(
+                        "track.title" to track.title,
+                        "track.artist" to track.artist,
+                        "track.artworkUrl" to track.artworkUrl.orEmpty(),
+                        "share.selectedCount" to selectedLines.size.toString(),
+                        "share.busy" to isGeneratingImage.toString(),
+                        "share.mode" to if (selectedTab == 0) "card" else "text",
+                        "share.romanization" to includeRomanization.toString(),
+                        "share.translation" to includeTranslation.toString(),
+                        "share.hasRomanization" to hasRomanization.toString(),
+                        "share.hasTranslation" to hasTranslation.toString()
+                    ),
+                    collections = mapOf("share.lines" to vocalLines.mapIndexed { index, line ->
+                        mapOf(
+                            "lyrics.index" to index.toString(), "lyrics.text" to line.text,
+                            "lyrics.selected" to (index in selectedIndices).toString(),
+                        )
+                    }),
+                ),
+                availableActions = buildSet {
+                    add(org.shilpo.laboon.theme.contract.VisualThemeAction.BACK)
+                    add(org.shilpo.laboon.theme.contract.VisualThemeAction.TOGGLE_LYRIC_LINE)
+                    add(org.shilpo.laboon.theme.contract.VisualThemeAction.SET_LYRICS_SHARE_OPTION)
+                    if (selectedLines.isNotEmpty() && !isGeneratingImage) {
+                        add(org.shilpo.laboon.theme.contract.VisualThemeAction.COPY_LYRICS)
+                        add(org.shilpo.laboon.theme.contract.VisualThemeAction.SHARE_LYRICS)
+                    }
+                },
+                onAction = { action, parameters ->
+                    when (action) {
+                        org.shilpo.laboon.theme.contract.VisualThemeAction.BACK -> onDismissRequest()
+                        org.shilpo.laboon.theme.contract.VisualThemeAction.TOGGLE_LYRIC_LINE -> parameters["lyrics.index"]?.toIntOrNull()
+                            ?.takeIf { it in vocalLines.indices }?.let { index ->
+                                if (index in selectedIndices) {
+                                    if (selectedIndices.size > 1) selectedIndices.remove(index)
+                                } else if (selectedIndices.size < 6) selectedIndices.add(index)
+                            }
+
+                        org.shilpo.laboon.theme.contract.VisualThemeAction.SET_LYRICS_SHARE_OPTION -> when (parameters["share.option"]) {
+                            "mode" -> when (parameters["share.value"]) {
+                                "card" -> selectedTab = 0; "text" -> selectedTab = 1
+                            }
+
+                            "romanization" -> if (hasRomanization) includeRomanization =
+                                !includeRomanization
+
+                            "translation" -> if (hasTranslation) includeTranslation =
+                                !includeTranslation
+                        }
+
+                        org.shilpo.laboon.theme.contract.VisualThemeAction.COPY_LYRICS -> copyLyricsToClipboard(
+                            context,
+                            track,
+                            selectedLines,
+                            includeRomanization,
+                            includeTranslation
+                        )
+
+                        org.shilpo.laboon.theme.contract.VisualThemeAction.SHARE_LYRICS -> if (selectedLines.isNotEmpty() && !isGeneratingImage) {
+                            if (selectedTab == 1) {
+                                shareLyricsAsText(
+                                    context,
+                                    track,
+                                    selectedLines,
+                                    includeRomanization,
+                                    includeTranslation
+                                )
+                                onDismissRequest()
+                            } else {
+                                isGeneratingImage = true
+                                coroutineScope.launch {
+                                    try {
+                                        shareLyricsCardBitmap(
+                                            context,
+                                            renderCardBitmap(
+                                                context,
+                                                track,
+                                                selectedLines,
+                                                includeRomanization,
+                                                includeTranslation
+                                            )
+                                        )
+                                        onDismissRequest()
+                                    } catch (error: Exception) {
+                                        Toast.makeText(
+                                            context,
+                                            "Failed to generate card: ${error.message}",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    } finally {
+                                        isGeneratingImage = false
+                                    }
+                                }
+                            }
+                        }
+
+                        else -> Unit
+                    }
+                },
+                fallback = {},
+            )
+        }
+        return
+    }
+
     Dialog(
         onDismissRequest = onDismissRequest,
         properties = DialogProperties(usePlatformDefaultWidth = false),

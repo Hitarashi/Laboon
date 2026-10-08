@@ -6,6 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -16,6 +17,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.unit.dp
+import org.shilpo.laboon.theme.LocalVisualTheme
 import java.util.Locale
 
 val SoftTextShadow = Shadow(
@@ -40,6 +42,12 @@ fun Modifier.playerSheetBackground(
     baseColor: Color = Color(0xFF141416),
     isBlurEnabled: Boolean = false,
 ): Modifier {
+    if (LocalVisualTheme.current == null) {
+        return this
+            .clip(MaterialTheme.shapes.extraLarge)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+    }
+
     val animatedBaseColor by animateColorAsState(
         targetValue = baseColor,
         animationSpec = tween(durationMillis = 500, easing = FastOutSlowInEasing),

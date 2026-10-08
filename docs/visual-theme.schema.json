@@ -1,0 +1,522 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Hitarashi/Laboon/main/docs/visual-theme.schema.json",
+  "title": "Laboon visual theme contract 1",
+  "$defs": {
+    "assetPath": {
+      "type": "string",
+      "pattern": "^(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$"
+    },
+    "manifest": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "author",
+        "version",
+        "contractVersion",
+        "minimumAndroidApi",
+        "definitionAsset"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.-]{2,127}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "author": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "contractVersion": {
+          "const": 1
+        },
+        "minimumAndroidApi": {
+          "type": "integer",
+          "minimum": 29
+        },
+        "definitionAsset": {
+          "$ref": "#/$defs/assetPath"
+        }
+      },
+      "additionalProperties": false
+    },
+    "node": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "box",
+            "column",
+            "row",
+            "overlay",
+            "scroll",
+            "horizontalScroll",
+            "lazyColumn",
+            "lazyRow",
+            "lazyGrid",
+            "spacer",
+            "text",
+            "textField",
+            "metadata",
+            "icon",
+            "artwork",
+            "image",
+            "button",
+            "iconButton",
+            "control",
+            "surface",
+            "progress",
+            "drawing",
+            "flowRow",
+            "hostControl",
+            "backdrop"
+          ]
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "properties": {
+            "asset": {
+              "$ref": "#/$defs/assetPath"
+            },
+            "visibleBinding": {
+              "type": "string",
+              "description": "Render the node only while this presentation binding is true."
+            },
+            "action": {
+              "enum": [
+                "back",
+                "continue",
+                "openTelegram",
+                "connectLastFm",
+                "connectListenBrainz",
+                "requestPermission",
+                "openSettings",
+                "openSettingsCategory",
+                "openHome",
+                "openSearch",
+                "openLibrary",
+                "playPause",
+                "openPlayer",
+                "playTrack",
+                "playNext",
+                "addToQueue",
+                "openAlbum",
+                "openArtist",
+                "ripTrack",
+                "toggleShuffle",
+                "cycleRepeat",
+                "previousTrack",
+                "nextTrack",
+                "seek",
+                "openQueue",
+                "openLyrics",
+                "openAudioInfo",
+                "openLyricsShare",
+                "toggleLyricLine",
+                "setLyricsShareOption",
+                "copyLyrics",
+                "shareLyrics",
+                "refresh",
+                "retry",
+                "dismissPlayer",
+                "openThemePicker",
+                "previewTheme",
+                "applyTheme",
+                "restoreDefault",
+                "signOut",
+                "selectAudioQuality",
+                "search",
+                "openVisualizer",
+                "cancelRipTask",
+                "playQueueEntry",
+                "removeQueueEntry",
+                "moveQueueEntry",
+                "clearQueue",
+                "promoteAutoplay",
+                "retryDiscovery",
+                "openProjectLink",
+                "openContributorProfile",
+                "copyBuildInfo"
+              ]
+            },
+            "gestureAction": {
+              "enum": [
+                "back",
+                "continue",
+                "openTelegram",
+                "connectLastFm",
+                "connectListenBrainz",
+                "requestPermission",
+                "openSettings",
+                "openSettingsCategory",
+                "openHome",
+                "openSearch",
+                "openLibrary",
+                "playPause",
+                "openPlayer",
+                "playTrack",
+                "playNext",
+                "addToQueue",
+                "openAlbum",
+                "openArtist",
+                "ripTrack",
+                "toggleShuffle",
+                "cycleRepeat",
+                "previousTrack",
+                "nextTrack",
+                "seek",
+                "openQueue",
+                "openLyrics",
+                "openAudioInfo",
+                "openLyricsShare",
+                "toggleLyricLine",
+                "setLyricsShareOption",
+                "copyLyrics",
+                "shareLyrics",
+                "refresh",
+                "retry",
+                "dismissPlayer",
+                "openThemePicker",
+                "previewTheme",
+                "applyTheme",
+                "restoreDefault",
+                "signOut",
+                "selectAudioQuality",
+                "search",
+                "openVisualizer",
+                "cancelRipTask",
+                "playQueueEntry",
+                "removeQueueEntry",
+                "moveQueueEntry",
+                "clearQueue",
+                "promoteAutoplay",
+                "retryDiscovery",
+                "openProjectLink",
+                "openContributorProfile",
+                "copyBuildInfo"
+              ]
+            }
+          }
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/node"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "option": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "title",
+            "type",
+            "defaultValue"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "type": {
+              "const": "switch"
+            },
+            "defaultValue": {
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "title",
+            "type",
+            "defaultValue",
+            "choices"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "type": {
+              "const": "choice"
+            },
+            "defaultValue": {
+              "type": "string"
+            },
+            "choices": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "maxLength": 1024
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "title",
+            "type",
+            "defaultValue",
+            "minimum",
+            "maximum"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,63}$"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "type": {
+              "const": "slider"
+            },
+            "defaultValue": {
+              "type": "string",
+              "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+            },
+            "minimum": {
+              "type": "number"
+            },
+            "maximum": {
+              "type": "number"
+            },
+            "step": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "keyframeAnimation": {
+      "type": "object",
+      "required": [
+        "durationMs",
+        "frames"
+      ],
+      "properties": {
+        "durationMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "frames": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": [
+              "fraction",
+              "progress"
+            ],
+            "properties": {
+              "fraction": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "progress": {
+                "type": "number",
+                "minimum": -1,
+                "maximum": 2
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "required": [
+    "schemaVersion"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "lightColors": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$"
+      }
+    },
+    "darkColors": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$"
+      }
+    },
+    "shapeDp": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 128
+      }
+    },
+    "typography": {
+      "type": "object",
+      "maxProperties": 64,
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "fontAsset": {
+            "$ref": "#/$defs/assetPath"
+          },
+          "sizeSp": {
+            "type": "number",
+            "minimum": 8,
+            "maximum": 96
+          },
+          "weight": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 900
+          },
+          "letterSpacingSp": {
+            "type": "number",
+            "minimum": -2,
+            "maximum": 12
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "motion": {
+      "type": "object",
+      "properties": {
+        "durationScale": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "springDampingRatio": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 2
+        },
+        "springStiffness": {
+          "type": "number",
+          "minimum": 50,
+          "maximum": 2000
+        },
+        "keyframes": {
+          "type": "object",
+          "maxProperties": 32,
+          "additionalProperties": {
+            "$ref": "#/$defs/keyframeAnimation"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "effects": {
+      "type": "object",
+      "maxProperties": 16,
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "shaderAsset"
+        ],
+        "properties": {
+          "shaderAsset": {
+            "$ref": "#/$defs/assetPath"
+          },
+          "uniforms": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "screens": {
+      "type": "object",
+      "maxProperties": 64,
+      "additionalProperties": {
+        "$ref": "#/$defs/node"
+      }
+    },
+    "options": {
+      "type": "array",
+      "maxItems": 32,
+      "items": {
+        "$ref": "#/$defs/option"
+      }
+    },
+    "colorSource": {
+      "enum": [
+        "system",
+        "artwork"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

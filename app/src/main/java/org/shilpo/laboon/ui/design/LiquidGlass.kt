@@ -5,6 +5,8 @@ import android.graphics.ColorMatrixColorFilter
 import android.graphics.RenderEffect
 import android.graphics.RuntimeShader
 import android.graphics.Shader
+import android.os.Build
+import androidx.annotation.RequiresApi
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,58 +42,10 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import org.shilpo.laboon.theme.LocalVisualTheme
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.max
 import kotlin.math.min
-
-private const val LIQUID_GLASS_SHADER_SRC = """
-uniform shader img;
-
-uniform float2 resolution;
-uniform float2 center;
-uniform float2 size;
-uniform float4 radius;
-uniform float thickness;
-uniform float refract_index;
-uniform float refract_intensity;
-uniform float4 foreground_color_premultiplied;
-
-half sdfRect(half2 p, half4 r) {
-  r.xy = (p.x > 0.0) ? r.xy : r.zw;
-  r.x  = (p.y > 0.0) ? r.x  : r.y;
-  half2 q = abs(p) - size + r.x;
-  return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r.x;
-}
-
-half4 srcOver(half4 src, half4 dst) {
-    half3 outRGB = (src.rgb + dst.rgb * (1.0 - src.a));
-    float outA = src.a + (1.0 - src.a) * dst.a;
-    return half4(outRGB, outA);
-}
-
-half4 main(in float2 fragCoord) {
-  half2 p = fragCoord - center;
-  half sd = sdfRect(p, radius);
-  half2 uv = fragCoord;
-  if (sd < 0.0) {
-    half sdX = sdfRect(p + half2(1.0, 0.0), radius);
-    half sdY = sdfRect(p + half2(0.0, 1.0), radius);
-
-    half n_cos = max(thickness + sd, 0.0) / thickness;
-    half n_cos2 = n_cos * n_cos;
-    half n_sin = sqrt(1.0 - n_cos2);
-    half3 normal = normalize(half3((sdX - sd) * n_cos, (sdY - sd) * n_cos, n_sin));
-
-    half3 refract_vec = refract(half3(0.0, 0.0, -1.0), normal, 1.0 / refract_index);
-    half h = sd < -thickness ? thickness : sqrt(sd * (-2.0 * thickness - sd));
-    half refract_length = (h + 8.0 * thickness) / -refract_vec.z;
-
-    uv += refract_vec.xy * refract_length * refract_intensity;
-  }
-
-  return srcOver(half4(foreground_color_premultiplied), img.eval(uv));
-}
-"""
 
 @Stable
 class LiquidGlassBackdropState {
@@ -126,11 +80,15 @@ fun rememberLiquidGlassBackdropState(): LiquidGlassBackdropState {
     return remember { LiquidGlassBackdropState() }
 }
 
+@Composable
 fun Modifier.liquidGlassBackdropProducer(
     state: LiquidGlassBackdropState,
     layer: GraphicsLayer,
     backgroundColor: Color = Color.Unspecified,
 ): Modifier {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+        LocalVisualTheme.current?.definition?.effects?.containsKey("glassSurface") != true
+    ) return this
     return this
         .onGloballyPositioned { coordinates ->
             state.rootOffset = coordinates.positionInRoot()
@@ -150,7 +108,10 @@ fun Modifier.liquidGlassBackdropProducer(
 }
 
 @Composable
-fun LiquidGlassSurface(
+@RequiresApi(Build.VERSION_CODES.TIRAMISU)
+internal fun LiquidGlassRuntimeSurface(
+    shaderSource: String,
+    shaderUniforms: Map<String, Float>,
     modifier: Modifier = Modifier,
     backdropState: LiquidGlassBackdropState? = null,
     shape: Shape = RoundedCornerShape(32.dp),
@@ -169,7 +130,7 @@ fun LiquidGlassSurface(
     val density = LocalDensity.current
     val isDark = isSystemInDarkTheme()
     val glassLayer = rememberGraphicsLayer()
-    val shader = remember { RuntimeShader(LIQUID_GLASS_SHADER_SRC) }
+    val shader = remember(shaderSource) { runCatching { RuntimeShader(shaderSource) }.getOrNull() }
 
     var myOffset by remember { mutableStateOf(Offset.Zero) }
     var invalidationTick by remember { mutableLongStateOf(0L) }
@@ -199,10 +160,16 @@ fun LiquidGlassSurface(
     var cachedTint by remember { mutableStateOf(Color.Unspecified) }
     var cachedAlpha by remember { mutableStateOf(-1f) }
     var cachedRefractIntensity by remember { mutableStateOf(-1f) }
-    var cachedComposeEffect by remember {
+    var cachedUniforms by remember(shaderUniforms) { mutableStateOf<Map<String, Float>>(emptyMap()) }
+    var cachedComposeEffect by remember(shader) {
         mutableStateOf<androidx.compose.ui.graphics.RenderEffect?>(
             null
         )
+    }
+
+    if (shader == null) {
+        Box(modifier = modifier.clip(shape)) { content() }
+        return
     }
 
     Box(
@@ -234,6 +201,7 @@ fun LiquidGlassSurface(
                         cachedTopRadius != clampedTop || cachedBottomRadius != clampedBottom ||
                         cachedThickness != actualThickness || cachedTint != tintColor || cachedAlpha != tintAlpha ||
                         cachedRefractIntensity != effectiveRefract
+                        || cachedUniforms != shaderUniforms
                     ) {
                         cachedWidth = w
                         cachedHeight = h
@@ -243,6 +211,7 @@ fun LiquidGlassSurface(
                         cachedTint = tintColor
                         cachedAlpha = tintAlpha
                         cachedRefractIntensity = effectiveRefract
+                        cachedUniforms = shaderUniforms
 
                         shader.setFloatUniform("resolution", w, h)
                         shader.setFloatUniform("center", w / 2f, h / 2f)
@@ -257,6 +226,9 @@ fun LiquidGlassSurface(
                         shader.setFloatUniform("thickness", actualThickness)
                         shader.setFloatUniform("refract_index", refractIndex)
                         shader.setFloatUniform("refract_intensity", effectiveRefract)
+                        shaderUniforms.forEach { (name, value) ->
+                            runCatching { shader.setFloatUniform(name, value) }
+                        }
 
                         val a = tintAlpha
                         shader.setFloatUniform(

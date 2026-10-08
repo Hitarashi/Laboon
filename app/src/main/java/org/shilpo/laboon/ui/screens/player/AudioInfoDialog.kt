@@ -79,6 +79,62 @@ internal fun AudioInfoDialog(
     modifier: Modifier = Modifier,
     onProgress: ((Float) -> Unit)? = null,
 ) {
+    val theme = org.shilpo.laboon.theme.LocalVisualTheme.current
+    if (theme?.definition?.screens?.containsKey("audioInfo") == true) {
+        if (!isOpen) return
+        BackHandler(onBack = onDismiss)
+        LaunchedEffect(isOpen) { onProgress?.invoke(1f) }
+        val details = pipeline ?: AudioPipelineDetails()
+        org.shilpo.laboon.theme.ThemeRouteContent(
+            theme = theme,
+            screenName = "audioInfo",
+            presentation = org.shilpo.laboon.theme.renderer.VisualThemePresentation(
+                values = mapOf(
+                    "track.title" to track?.title.orEmpty(),
+                    "track.artist" to track?.artist.orEmpty(),
+                    "track.artworkUrl" to track?.artworkUrl.orEmpty(),
+                    "audio.codec" to details.trackCodec.orEmpty(),
+                    "audio.container" to details.container.orEmpty(),
+                    "audio.bitDepth" to details.bitDepth.orEmpty(),
+                    "audio.sampleRateHz" to details.sampleRateHz?.toString().orEmpty(),
+                    "audio.bitrateKbps" to details.bitrateKbps?.toString().orEmpty(),
+                    "audio.channels" to details.channelCount?.toString().orEmpty(),
+                    "audio.decoder" to details.decoderName.orEmpty(),
+                    "audio.outputEngine" to details.outputEngine,
+                    "audio.device" to details.deviceName,
+                    "audio.protocol" to details.deviceProtocol.orEmpty(),
+                    "audio.latencyMs" to details.latencyMs?.toString().orEmpty(),
+                    "audio.resampled" to details.isResampled.toString(),
+                )
+            ),
+            availableActions = setOf(org.shilpo.laboon.theme.contract.VisualThemeAction.BACK),
+            onAction = { _, _ -> onDismiss() }, modifier = modifier.fillMaxSize(), fallback = {},
+        )
+        return
+    }
+    if (theme?.definition?.screens?.containsKey("audioInfo") != true) {
+        if (!isOpen) return
+        LaunchedEffect(isOpen) { onProgress?.invoke(1f) }
+        val details = pipeline ?: AudioPipelineDetails()
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Audio pipeline") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    track?.let { Text(it.title, style = MaterialTheme.typography.titleMedium) }
+                    Text("${details.trackCodec.orEmpty()} · ${details.bitDepth.orEmpty()} bit · ${details.sampleRateHz ?: 0} Hz")
+                    Text("${details.container.orEmpty()} · ${details.bitrateKbps ?: 0} kbps")
+                    Text("Decoder: ${details.decoderName.orEmpty()}")
+                    Text(details.outputEngine)
+                    Text(details.deviceName)
+                    Text("Output: ${details.outputSampleRateHz ?: 0} Hz · ${details.channelCount ?: 0} channels")
+                    Text("Latency: ${details.latencyMs ?: 0} ms")
+                }
+            },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Close") } },
+        )
+        return
+    }
     val animatable = remember { Animatable(0f) }
     var dialogSize by remember { mutableStateOf<IntSize?>(null) }
     var boxBounds by remember { mutableStateOf<Rect?>(null) }

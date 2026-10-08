@@ -4,7 +4,6 @@ package org.shilpo.laboon.ui.screens.settings
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -13,7 +12,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -60,13 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -80,18 +72,11 @@ import org.shilpo.laboon.ui.design.AppCardShape
 import org.shilpo.laboon.ui.design.ScreenScaffold
 import org.shilpo.laboon.ui.design.UserAvatar
 import org.shilpo.laboon.ui.design.userDisplayName
-
 import org.shilpo.laboon.ui.screens.about.AboutScreen
 
 /**
  * Display theme options for Laboon.
  */
-enum class ThemeMode(val label: String, val shortLabel: String) {
-    SYSTEM("Follow System", "System"),
-    LIGHT("Light Mode", "Light"),
-    DARK("Dark Mode", "Dark"),
-}
-
 /**
  * Settings category destinations in Laboon.
  */
@@ -129,16 +114,13 @@ enum class SettingsCategory(
         ),
     ),
     APPEARANCE(
-        title = "Appearance & Customization",
-        subtitle = "Dynamic artwork colors, Liquid Glass blur & OLED black",
+        title = "Appearance & Themes",
+        subtitle = "Material 3 Expressive and installed visual extensions",
         iconRes = R.drawable.ic_appearance_palette,
         plannedFeatures = listOf(
-            "Material 3 Expressive dynamic color palette engine",
-            "Dynamic artwork theming (extract accents from playing track)",
-            "Liquid Glass blur intensity, frosted diffusion & fallback toggles",
-            "OLED pure black background mode for AMOLED screens",
-            "Expressive spring animation stiffness and motion scheme tuning",
-            "Custom app icons and typography scaling",
+            "Built-in Material 3 Expressive theme",
+            "Separately installed visual extensions",
+            "Extension-specific appearance options and restore-default control",
         ),
     ),
     SERVICES(
@@ -179,6 +161,12 @@ enum class SettingsCategory(
     ),
 }
 
+internal val SettingsCategory.contractId: String
+    get() = name.lowercase()
+
+internal fun settingsCategoryFromContractId(id: String?): SettingsCategory? =
+    id?.let { raw -> SettingsCategory.entries.firstOrNull { it.contractId == raw } }
+
 private val TopBarOuterVerticalPadding = 8.dp
 private val TopBarInnerVerticalPadding = 6.dp
 private val TopBarNavButtonHeight = 48.dp
@@ -191,12 +179,32 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onDisconnect: () -> Unit,
     modifier: Modifier = Modifier,
+    openThemeSelection: Boolean = false,
+    onThemeSelectionOpened: () -> Unit = {},
+    initialCategoryId: String? = null,
+    onCategoryChanged: (String?) -> Unit = {},
 ) {
-    var activeCategory by remember { mutableStateOf<SettingsCategory?>(null) }
+    var activeCategory by remember(initialCategoryId, openThemeSelection) {
+        mutableStateOf(
+            settingsCategoryFromContractId(initialCategoryId)
+                ?: if (openThemeSelection) SettingsCategory.APPEARANCE else null,
+        )
+    }
+
+    fun setActiveCategory(category: SettingsCategory?) {
+        activeCategory = category
+        onCategoryChanged(category?.contractId)
+    }
+    androidx.compose.runtime.LaunchedEffect(openThemeSelection) {
+        if (openThemeSelection) onThemeSelectionOpened()
+    }
+    androidx.compose.runtime.LaunchedEffect(initialCategoryId) {
+        if (initialCategoryId != null) onCategoryChanged(initialCategoryId)
+    }
 
     // Intercept hardware/system back gestures to return to main settings hub
     BackHandler(enabled = activeCategory != null) {
-        activeCategory = null
+        setActiveCategory(null)
     }
 
     AnimatedContent(
@@ -232,21 +240,25 @@ fun SettingsScreen(
                 SettingsHubScreen(
                     session = session,
                     onBack = onBack,
-                    onSelectCategory = { activeCategory = it },
+                    onSelectCategory = ::setActiveCategory,
                     onDisconnect = onDisconnect,
                 )
             }
 
             SettingsCategory.ABOUT -> {
                 AboutScreen(
-                    onBack = { activeCategory = null },
+                    onBack = { setActiveCategory(null) },
                 )
+            }
+
+            SettingsCategory.APPEARANCE -> {
+                VisualThemeSettingsScreen(onBack = { setActiveCategory(null) })
             }
 
             else -> {
                 SettingsComingSoonScreen(
                     category = category,
-                    onBack = { activeCategory = null },
+                    onBack = { setActiveCategory(null) },
                 )
             }
         }
@@ -265,8 +277,6 @@ private fun SettingsHubScreen(
 ) {
     val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val bottomInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    var selectedThemeMode by remember { mutableStateOf(ThemeMode.SYSTEM) }
-
     ScreenScaffold(
         topBar = {
             SettingsTopAppBar(
@@ -373,11 +383,6 @@ private fun SettingsHubScreen(
                         modifier = Modifier.padding(start = 8.dp, bottom = 2.dp),
                     )
 
-                    ThemeModeSelectorCard(
-                        selectedMode = selectedThemeMode,
-                        onModeSelected = { selectedThemeMode = it },
-                    )
-
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
@@ -455,230 +460,6 @@ private fun SettingsHubScreen(
                         style = MaterialTheme.typography.titleMediumEmphasized,
                     )
                 }
-            }
-        }
-    }
-}
-
-/**
- * Interactive M3 Expressive Theme Mode selector card (System, Light, Dark).
- */
-@Composable
-private fun ThemeModeSelectorCard(
-    selectedMode: ThemeMode,
-    onModeSelected: (ThemeMode) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Card(
-        modifier = modifier.fillMaxWidth(),
-        shape = AppCardShape,
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainer,
-        ),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Column {
-                    Text(
-                        text = "Theme Mode",
-                        style = MaterialTheme.typography.titleMediumEmphasized,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        text = "Light, Dark, or Match System",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
-                ) {
-                    Text(
-                        text = selectedMode.shortLabel,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                    )
-                }
-            }
-
-            // 3-Option Segmented Selector
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.6f))
-                    .padding(4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                ThemeMode.entries.forEach { mode ->
-                    val isSelected = mode == selectedMode
-                    val interactionSource = remember { MutableInteractionSource() }
-                    val isPressed by interactionSource.collectIsPressedAsState()
-
-                    val scale by animateFloatAsState(
-                        targetValue = if (isPressed) 0.95f else 1f,
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioMediumBouncy,
-                            stiffness = Spring.StiffnessLow,
-                        ),
-                        label = "themeSegmentScale",
-                    )
-
-                    val containerColor by animateColorAsState(
-                        targetValue = if (isSelected) {
-                            MaterialTheme.colorScheme.primaryContainer
-                        } else {
-                            Color.Transparent
-                        },
-                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                        label = "themeSegmentBg",
-                    )
-
-                    val contentColor by animateColorAsState(
-                        targetValue = if (isSelected) {
-                            MaterialTheme.colorScheme.onPrimaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                        label = "themeSegmentContent",
-                    )
-
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .graphicsLayer {
-                                scaleX = scale
-                                scaleY = scale
-                            }
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(containerColor)
-                            .clickable(
-                                interactionSource = interactionSource,
-                                indication = null,
-                                onClick = { onModeSelected(mode) },
-                            )
-                            .padding(vertical = 10.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            ThemeModeIcon(
-                                mode = mode,
-                                tint = contentColor,
-                            )
-                            Text(
-                                text = mode.shortLabel,
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                color = contentColor,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
- * Procedural Vector Graphics for Theme Modes: Sun (Light), Moon (Dark), and Auto/Split (System).
- */
-@Composable
-private fun ThemeModeIcon(
-    mode: ThemeMode,
-    tint: Color,
-    modifier: Modifier = Modifier,
-) {
-    Canvas(modifier = modifier.size(18.dp)) {
-        val sizePx = size.minDimension
-        val strokeWidth = 1.6.dp.toPx()
-        when (mode) {
-            ThemeMode.LIGHT -> {
-                // Central sun circle
-                drawCircle(
-                    color = tint,
-                    radius = sizePx * 0.25f,
-                    style = Stroke(width = strokeWidth),
-                )
-                // 8 sun rays
-                val rayLength = sizePx * 0.11f
-                val rayInnerRadius = sizePx * 0.36f
-                for (i in 0 until 8) {
-                    val angle = Math.toRadians((i * 45).toDouble())
-                    val startX = (center.x + rayInnerRadius * kotlin.math.cos(angle)).toFloat()
-                    val startY = (center.y + rayInnerRadius * kotlin.math.sin(angle)).toFloat()
-                    val endX =
-                        (center.x + (rayInnerRadius + rayLength) * kotlin.math.cos(angle)).toFloat()
-                    val endY =
-                        (center.y + (rayInnerRadius + rayLength) * kotlin.math.sin(angle)).toFloat()
-                    drawLine(
-                        color = tint,
-                        start = Offset(startX, startY),
-                        end = Offset(endX, endY),
-                        strokeWidth = strokeWidth,
-                        cap = StrokeCap.Round,
-                    )
-                }
-            }
-
-            ThemeMode.DARK -> {
-                // Crescent Moon path
-                val r = sizePx * 0.40f
-                val path = Path().apply {
-                    arcTo(
-                        rect = Rect(center.x - r, center.y - r, center.x + r, center.y + r),
-                        startAngleDegrees = -70f,
-                        sweepAngleDegrees = 200f,
-                        forceMoveTo = true,
-                    )
-                    arcTo(
-                        rect = Rect(
-                            center.x - r * 0.45f,
-                            center.y - r * 0.85f,
-                            center.x + r * 1.05f,
-                            center.y + r * 0.85f
-                        ),
-                        startAngleDegrees = 110f,
-                        sweepAngleDegrees = -160f,
-                        forceMoveTo = false,
-                    )
-                    close()
-                }
-                drawPath(path = path, color = tint)
-            }
-
-            ThemeMode.SYSTEM -> {
-                // Half-filled split circle for auto/system
-                val r = sizePx * 0.40f
-                drawCircle(
-                    color = tint,
-                    radius = r,
-                    style = Stroke(width = strokeWidth),
-                )
-                drawArc(
-                    color = tint,
-                    startAngle = 90f,
-                    sweepAngle = 180f,
-                    useCenter = true,
-                    topLeft = Offset(center.x - r, center.y - r),
-                    size = Size(r * 2, r * 2),
-                )
             }
         }
     }
@@ -1020,7 +801,7 @@ private fun SettingsComingSoonScreen(
  * Top app bar with rounded elevated surface.
  */
 @Composable
-private fun SettingsTopAppBar(
+internal fun SettingsTopAppBar(
     title: String,
     onBack: () -> Unit,
 ) {

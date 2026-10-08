@@ -30,7 +30,7 @@ android {
 
     defaultConfig {
         applicationId = "org.shilpo.laboon"
-        minSdk = 33
+        minSdk = 29
         targetSdk = 37
         versionCode = 4
         versionName = "0.0.4"
@@ -82,6 +82,8 @@ android {
 }
 
 dependencies {
+    implementation(project(":theme-contract"))
+    implementation(project(":theme-renderer"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.core.splashscreen)
     implementation(libs.androidx.activity.compose)

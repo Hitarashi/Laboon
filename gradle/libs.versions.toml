@@ -47,4 +47,5 @@ media3-ffmpeg-decoder = { module = "org.jellyfin.media3:media3-ffmpeg-decoder", 
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

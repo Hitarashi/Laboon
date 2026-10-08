@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ripple
@@ -28,6 +29,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.shilpo.laboon.R
+import org.shilpo.laboon.theme.LocalVisualTheme
 
 @Composable
 fun LiquidGlassPlayButton(
@@ -41,6 +43,22 @@ fun LiquidGlassPlayButton(
     size: Dp = 38.dp,
     iconSize: Dp = 19.dp,
 ) {
+    if (LocalVisualTheme.current == null) {
+        FilledIconButton(
+            onClick = onClick,
+            modifier = modifier,
+            enabled = enabled,
+        ) {
+            Icon(
+                painter = painterResource(
+                    id = iconRes ?: if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play,
+                ),
+                contentDescription = contentDescription,
+            )
+        }
+        return
+    }
+
     val isDark = isSystemInDarkTheme()
     val motionScheme = MaterialTheme.motionScheme
     val contentColor = MaterialTheme.colorScheme.onSurface

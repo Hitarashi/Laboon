@@ -26,4 +26,5 @@ dependencyResolutionManagement {
 
 rootProject.name = "Laboon"
 include(":app")
-
+include(":theme-contract")
+include(":theme-renderer")

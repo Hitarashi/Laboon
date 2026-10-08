@@ -55,6 +55,7 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Matrix
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asComposePath
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -81,6 +82,7 @@ import kotlinx.coroutines.launch
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.playback.ArtworkUrlHelper
+import org.shilpo.laboon.theme.LocalVisualTheme
 import kotlin.math.abs
 
 private val CookieMorph = Morph(MaterialShapes.Circle, MaterialShapes.Cookie12Sided)
@@ -204,21 +206,30 @@ fun MiniPlayer(
         }
     }
 
-    val miniPlayerShape = RoundedCornerShape(
-        topStart = 28.dp,
-        topEnd = 28.dp,
-        bottomStart = 12.dp,
-        bottomEnd = 12.dp,
-    )
-    val artworkShape = CircleShape
+    val hasVisualExtension = LocalVisualTheme.current != null
+    val miniPlayerShape: Shape = if (hasVisualExtension) {
+        RoundedCornerShape(
+            topStart = 28.dp,
+            topEnd = 28.dp,
+            bottomStart = 12.dp,
+            bottomEnd = 12.dp,
+        )
+    } else {
+        MaterialTheme.shapes.large
+    }
+    val artworkShape: Shape = if (hasVisualExtension) CircleShape else MaterialTheme.shapes.medium
 
     val isDark = isSystemInDarkTheme()
-    val controlIconTint = if (isDark) {
+    val controlIconTint = if (!hasVisualExtension) {
+        MaterialTheme.colorScheme.onSurface
+    } else if (isDark) {
         Color.White
     } else {
         Color.Black.copy(alpha = 0.85f)
     }
-    val pillGradient = Brush.verticalGradient(
+    val pillGradient = if (!hasVisualExtension) {
+        SolidColor(MaterialTheme.colorScheme.surfaceContainerHigh)
+    } else Brush.verticalGradient(
         colors = if (isDark) {
             listOf(
                 Color.White.copy(alpha = 0.12f),
@@ -231,7 +242,9 @@ fun MiniPlayer(
             )
         },
     )
-    val borderBrush = Brush.verticalGradient(
+    val borderBrush = if (!hasVisualExtension) {
+        SolidColor(MaterialTheme.colorScheme.outlineVariant)
+    } else Brush.verticalGradient(
         colors = if (isDark) {
             listOf(
                 Color.White.copy(alpha = 0.22f),
@@ -246,7 +259,9 @@ fun MiniPlayer(
             )
         },
     )
-    val playButtonGradient = Brush.verticalGradient(
+    val playButtonGradient = if (!hasVisualExtension) {
+        SolidColor(MaterialTheme.colorScheme.primaryContainer)
+    } else Brush.verticalGradient(
         colors = if (isDark) {
             listOf(
                 Color.White.copy(alpha = 0.18f),
@@ -259,7 +274,9 @@ fun MiniPlayer(
             )
         },
     )
-    val playButtonBorderBrush = Brush.verticalGradient(
+    val playButtonBorderBrush = if (!hasVisualExtension) {
+        SolidColor(MaterialTheme.colorScheme.outlineVariant)
+    } else Brush.verticalGradient(
         colors = if (isDark) {
             listOf(
                 Color.White.copy(alpha = 0.22f),
@@ -763,4 +780,3 @@ private fun PlayPauseButton(
         }
     }
 }
-

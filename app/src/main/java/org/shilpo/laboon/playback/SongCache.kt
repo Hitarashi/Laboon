@@ -1,11 +1,14 @@
 package org.shilpo.laboon.playback
 
 import android.content.Context
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import java.io.File
 
+@OptIn(markerClass = [UnstableApi::class])
 object SongCache {
     private const val MAX_CACHE_BYTES = 1024L * 1024L * 1024L
     private val lock = Any()
