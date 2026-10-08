@@ -28,6 +28,7 @@ internal fun LiquidGlassSurface(
     refractIntensity: Float = 0.75f,
     thicknessDp: Dp = 11.dp,
     shadowElevation: Dp = 8.dp,
+    showBottomRefractionEdge: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val theme = LocalVisualTheme.current
@@ -80,6 +81,7 @@ internal fun LiquidGlassSurface(
             refractIntensity = refractIntensity,
             thicknessDp = thicknessDp,
             shadowElevation = shadowElevation,
+            showBottomRefractionEdge = showBottomRefractionEdge,
             content = content,
         )
     } else {

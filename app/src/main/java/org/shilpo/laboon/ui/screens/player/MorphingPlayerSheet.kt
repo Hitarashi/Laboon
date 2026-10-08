@@ -33,6 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.graphics.shapes.Morph
@@ -48,6 +49,9 @@ import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.playback.RepeatMode
 import org.shilpo.laboon.playback.SpectrumFrame
 import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
+import org.shilpo.laboon.ui.design.MiniPlayerSpacing
+import org.shilpo.laboon.ui.design.NavigationBarBottomPadding
+import org.shilpo.laboon.ui.design.NavigationBarHeight
 import org.shilpo.laboon.ui.design.painterResource
 
 private const val SettleDurationMs = 400
@@ -134,6 +138,11 @@ fun MorphingPlayerSheet(
     motionArtwork: LyricspornMotionArtwork? = null,
     onRequestMotionArtwork: (() -> Unit)? = null,
 ) {
+    val collapsedBottomChromeClearance = lerp(
+        start = NavigationBarHeight + NavigationBarBottomPadding + MiniPlayerSpacing,
+        stop = MiniPlayerSpacing,
+        fraction = albumDockProgress.coerceIn(0f, 1f),
+    )
     StockPlayerSheet(
         track = track,
         isPlaying = isPlaying,
@@ -155,6 +164,8 @@ fun MorphingPlayerSheet(
         onRepeat = onCycleRepeatMode,
         onDismiss = onDismiss,
         onExpansionChange = onExpansionProgressChange,
+        collapsedBottomChromeClearance = collapsedBottomChromeClearance,
+        navigationBarHiddenProgress = albumDockProgress,
         queueState = queueState,
         onRemove = onRemoveUpNext,
         onMove = onMoveUpNext,

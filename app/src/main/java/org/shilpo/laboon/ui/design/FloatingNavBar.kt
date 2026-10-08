@@ -158,17 +158,22 @@ internal fun <T> FloatingNavigationBar(
                     .fillMaxWidth()
                     .height(PixelNavigationBarHeight),
             ) {
+                val pixelTopCornerRadius by animateDpAsState(
+                    targetValue = if (hasMiniPlayerAbove) PixelPlayerFacingCornerRadius else PixelPlayerOuterCornerRadius,
+                    animationSpec = tween(durationMillis = 300),
+                    label = "pixelNavTopCornerRadius",
+                )
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     shape = RoundedCornerShape(
-                        topStart = PixelPlayerFacingCornerRadius,
-                        topEnd = PixelPlayerFacingCornerRadius,
+                        topStart = pixelTopCornerRadius,
+                        topEnd = pixelTopCornerRadius,
                         bottomStart = PixelPlayerOuterCornerRadius,
                         bottomEnd = PixelPlayerOuterCornerRadius,
                     ),
                     color = MaterialTheme.colorScheme.surfaceContainer,
                     tonalElevation = 0.dp,
-                    shadowElevation = 8.dp,
+                    shadowElevation = 0.dp,
                 ) {}
                 Row(
                     modifier = Modifier.fillMaxSize(),
@@ -353,7 +358,9 @@ internal fun <T> FloatingNavigationBar(
             cornerRadius = 35.dp,
             topRadius = topRadius,
             bottomRadius = bottomRadius,
-            shadowElevation = 8.dp,
+            refractIntensity = 0f,
+            showBottomRefractionEdge = false,
+            shadowElevation = 0.dp,
         ) {
             BoxWithConstraints(
                 modifier = Modifier

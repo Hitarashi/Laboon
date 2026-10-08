@@ -76,6 +76,8 @@ object LyricspornClient {
     private val motionArtworkCache = ConcurrentHashMap<String, LyricspornMotionArtwork>()
     private val trackDetailsCache = ConcurrentHashMap<String, LyricspornTrackDetails>()
     private val trackDetailsLocks = ConcurrentHashMap<String, Mutex>()
+    private val trackGenresCache = ConcurrentHashMap<String, List<String>>()
+    private val trackGenresLocks = ConcurrentHashMap<String, Mutex>()
     private val artworkPermits = Semaphore(MAX_ARTWORK_LOOKUPS)
 
     fun normalizeApiBaseUrl(value: String?): String? {
@@ -163,6 +165,30 @@ object LyricspornClient {
         val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return null
         val trackId = appleTrackId.takeIf { it.isNumericAppleId() } ?: return null
         return getTrackDetails(baseUrl, trackId)?.albumName
+    }
+
+    internal suspend fun getTrackGenres(
+        apiBaseUrl: String?,
+        appleTrackId: String,
+    ): List<String> {
+        val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return emptyList()
+        val trackId = appleTrackId.takeIf { it.isNumericAppleId() && it.length <= 20 }
+            ?: return emptyList()
+        val cacheKey = "$baseUrl:${currentStorefront()}:track-genres:$trackId"
+        trackGenresCache[cacheKey]?.let { return it }
+        val lock = trackGenresLocks[cacheKey] ?: synchronized(trackGenresLocks) {
+            trackGenresLocks[cacheKey] ?: Mutex().also { trackGenresLocks[cacheKey] = it }
+        }
+        return lock.withLock {
+            trackGenresCache[cacheKey]?.let { return@withLock it }
+            val track = getJson("$baseUrl/tracks/$trackId")?.objOrNull("track")
+                ?: return@withLock emptyList()
+            track.arrOrNull("genres")?.stringValues()
+                .orEmpty()
+                .map(String::trim)
+                .filter(String::isNotEmpty)
+                .also { trackGenresCache[cacheKey] = it }
+        }
     }
 
     suspend fun getAlbumDetails(

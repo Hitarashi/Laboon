@@ -5,6 +5,7 @@ package org.shilpo.laboon
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.content.Intent
+import android.graphics.Path
 import android.os.Build
 import android.os.Bundle
 import android.view.View
@@ -21,14 +22,11 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.material3.Button
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -50,8 +48,10 @@ import androidx.compose.ui.unit.dp
 import androidx.core.animation.doOnEnd
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.shilpo.laboon.auth.AuthClient
 import org.shilpo.laboon.auth.OnboardingProgress
 import org.shilpo.laboon.auth.SessionStore
@@ -71,6 +71,9 @@ import org.shilpo.laboon.permissions.canLeaveOnboarding
 import org.shilpo.laboon.permissions.permissionCatalogueForAndroidApi
 import org.shilpo.laboon.playback.PlaybackPersistence
 import org.shilpo.laboon.rip.RipConnectionHolderInstance
+import org.shilpo.laboon.splash.Overlay
+import org.shilpo.laboon.splash.Tuning
+import org.shilpo.laboon.splash.VectorLoader
 import org.shilpo.laboon.theme.LaboonExpressiveTheme
 import org.shilpo.laboon.theme.LocalVisualTheme
 import org.shilpo.laboon.theme.LocalVisualThemeController
@@ -94,6 +97,7 @@ private const val ROUTE_STATE_KEY = "org.shilpo.laboon.routeState"
 class MainActivity : ComponentActivity() {
 
     private var isReady = false
+    private var splashVectorPath by mutableStateOf<Path?>(null)
     private lateinit var sessionStore: SessionStore
     private lateinit var authClient: AuthClient
     private lateinit var onboardingProgress: OnboardingProgress
@@ -201,12 +205,19 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        isReady = true
+        lifecycleScope.launch(Dispatchers.Default) {
+            val path = VectorLoader.loadPath(this@MainActivity, R.drawable.about_splash)
+            withContext(Dispatchers.Main) {
+                splashVectorPath = path
+                isReady = true
+            }
+        }
 
         handleAuthIntent(intent)
 
         setContent {
             val context = LocalContext.current
+            val isDarkTheme = isSystemInDarkTheme()
             val themeController = remember(context) { VisualThemeController(context) }
             val themeCatalog by themeController.state.collectAsState()
             LaunchedEffect(themeController, themeCatalogRefreshKey) { themeController.refresh() }
@@ -340,9 +351,10 @@ class MainActivity : ComponentActivity() {
                         var splashDone by remember { mutableStateOf(false) }
                         LaunchedEffect(selectedTheme?.manifest?.id, splashDone) {
                             if (splashDone) return@LaunchedEffect
-                            val customSplash =
-                                "splash" in selectedTheme?.definition?.screens.orEmpty()
-                            delay(if (customSplash) 2_500L else 900L)
+                            if ("splash" !in selectedTheme?.definition?.screens.orEmpty()) {
+                                return@LaunchedEffect
+                            }
+                            delay(2_500L)
                             contentVisible = true
                             splashDone = true
                         }
@@ -372,7 +384,8 @@ class MainActivity : ComponentActivity() {
                                         .graphicsLayer {
                                             alpha = contentAlpha
                                             translationY =
-                                                (1f - contentAlpha) * 24.dp.toPx()
+                                                (1f - contentAlpha) *
+                                                    Tuning.Default.reveal.RISE_DP.dp.toPx()
                                         },
                                     transitionSpec = {
                                         val isBackNav =
@@ -642,49 +655,12 @@ class MainActivity : ComponentActivity() {
                                     },
                                     modifier = Modifier.fillMaxSize(),
                                 ) {
-                                    Surface(
-                                        modifier = Modifier.fillMaxSize(),
-                                        color = MaterialTheme.colorScheme.scrim.copy(alpha = 0.24f),
-                                    ) {
-                                        Box(
-                                            modifier = Modifier.fillMaxSize(),
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            Surface(
-                                                modifier = Modifier
-                                                    .widthIn(max = 360.dp)
-                                                    .padding(24.dp),
-                                                shape = MaterialTheme.shapes.extraLarge,
-                                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                                tonalElevation = 6.dp,
-                                            ) {
-                                                Column(
-                                                    modifier = Modifier.padding(28.dp),
-                                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                                                ) {
-                                                    Text(
-                                                        text = getString(R.string.app_name),
-                                                        style = MaterialTheme.typography.headlineLarge,
-                                                        color = MaterialTheme.colorScheme.onSurface,
-                                                    )
-                                                    Text(
-                                                        text = getString(R.string.welcome_tagline),
-                                                        style = MaterialTheme.typography.bodyLarge,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    )
-                                                    Button(
-                                                        onClick = {
-                                                            contentVisible = true
-                                                            splashDone = true
-                                                        },
-                                                    ) {
-                                                        Text("Continue")
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                                    Overlay(
+                                        isDark = isDarkTheme,
+                                        customVectorPath = splashVectorPath,
+                                        onBurstStart = { contentVisible = true },
+                                        onDismiss = { splashDone = true },
+                                    )
                                 }
                             }
                             if (selectedTheme != null) {

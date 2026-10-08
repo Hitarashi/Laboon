@@ -72,7 +72,14 @@ internal fun HomeContent(
     onLoadWeeklyPicks: () -> Unit = {},
     onPlayMix: (List<HomeTrack>) -> Unit = {},
     onTrackClick: (HomeTrack) -> Unit = {},
+    onPlayDailyMixTrack: (HomeTrack, List<HomeTrack>) -> Unit = { track, _ -> onTrackClick(track) },
+    onPlayNextTrack: (HomeTrack) -> Unit = {},
+    onAddTrackToQueue: (HomeTrack) -> Unit = {},
     onDownloadTrack: (HomeTrack) -> Unit = {},
+    onLoadTrackGenres: suspend (HomeTrack) -> List<String> = { emptyList() },
+    currentTrackId: String? = null,
+    isPlaying: Boolean = false,
+    onOpenDailyMix: () -> Unit = {},
     onArtistClick: (HomeArtist) -> Unit = {},
     onAlbumClick: (HomeAlbum) -> Unit = {},
 ) {
@@ -118,19 +125,23 @@ internal fun HomeContent(
                     HomeEmptyMix(onSearch = { onNavigate(MainTab.Search) }, onOpenSettings = onOpenSettings)
                 }
             }
-            item(key = "recommended", contentType = "recommendations") {
+            item(key = "daily_mix", contentType = "daily_mix") {
                 HomeFeedSection(
-                    title = stringResource(R.string.home_recommended),
+                    title = stringResource(R.string.home_daily_mix),
                     status = feedState.recommended.status,
                     hasItems = feedState.recommended.items.isNotEmpty(),
                     onRetry = onRefresh,
                 ) {
-                    HomeRecommendationPanel(
-                        title = stringResource(R.string.home_recommended),
-                        subtitle = stringResource(R.string.home_recommended_subtitle),
+                    HomeDailyMixPanel(
                         tracks = feedState.recommended.items,
-                        onTrackClick = onTrackClick,
+                        currentTrackId = currentTrackId,
+                        isPlaying = isPlaying,
+                        onPlayTrack = onPlayDailyMixTrack,
+                        onPlayNext = onPlayNextTrack,
+                        onAddToQueue = onAddTrackToQueue,
                         onDownloadTrack = onDownloadTrack,
+                        onLoadTrackGenres = onLoadTrackGenres,
+                        onOpenDailyMix = onOpenDailyMix,
                     )
                 }
             }
@@ -320,19 +331,23 @@ private fun HomeFeedSection(
 
 @Composable
 private fun HomeEmptyMix(onSearch: () -> Unit, onOpenSettings: () -> Unit) {
+    val titleStyle = rememberYourMixTitleStyle()
+    val subtitleStyle = rememberYourMixSubtitleStyle()
     Column(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 28.dp, vertical = 40.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         Text(
-            stringResource(R.string.home_your_mix),
-            style = MaterialTheme.typography.displayMediumEmphasized,
+            text = stringResource(R.string.home_your_mix),
+            style = titleStyle,
+            color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.semantics { heading() },
         )
         Text(
-            stringResource(R.string.home_mix_empty),
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            text = stringResource(R.string.home_mix_empty),
+            style = subtitleStyle,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+            modifier = Modifier.padding(start = 8.dp),
         )
         FilledTonalButton(onClick = onSearch) { Text(stringResource(R.string.home_find_music)) }
         TextButton(onClick = onOpenSettings) { Text(stringResource(R.string.home_connect_listening)) }

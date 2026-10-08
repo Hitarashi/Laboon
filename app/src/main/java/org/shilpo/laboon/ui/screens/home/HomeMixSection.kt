@@ -35,6 +35,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.ExperimentalTextApi
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -95,6 +100,53 @@ internal fun HomeMixSection(
     }
 }
 
+@OptIn(ExperimentalTextApi::class)
+@Composable
+internal fun rememberYourMixTitleStyle(): TextStyle {
+    return remember {
+        TextStyle(
+            fontFamily = FontFamily(
+                Font(
+                    resId = R.font.gsans_flex_full,
+                    variationSettings = FontVariation.Settings(
+                        FontVariation.weight(636),
+                        FontVariation.width(152f),
+                        FontVariation.Setting("ROND", 50f),
+                        FontVariation.Setting("XTRA", 520f),
+                        FontVariation.Setting("YOPQ", 90f),
+                        FontVariation.Setting("YTLC", 505f),
+                    ),
+                ),
+            ),
+            fontWeight = FontWeight(760),
+            fontSize = 64.sp,
+            lineHeight = 62.sp,
+        )
+    }
+}
+
+@OptIn(ExperimentalTextApi::class)
+@Composable
+internal fun rememberYourMixSubtitleStyle(): TextStyle {
+    return remember {
+        TextStyle(
+            fontFamily = FontFamily(
+                Font(
+                    resId = R.font.gsans_flex_full,
+                    variationSettings = FontVariation.Settings(
+                        FontVariation.weight(FontWeight.Normal.weight),
+                        FontVariation.Setting("ROND", 100f),
+                    ),
+                ),
+            ),
+            fontWeight = FontWeight.Normal,
+            fontSize = 14.sp,
+            lineHeight = 20.sp,
+            letterSpacing = 0.25.sp,
+        )
+    }
+}
+
 @Composable
 private fun HomeMixHeader(
     tracks: List<HomeTrack>,
@@ -103,6 +155,8 @@ private fun HomeMixHeader(
     canShuffle: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val titleStyle = rememberYourMixTitleStyle()
+    val subtitleStyle = rememberYourMixSubtitleStyle()
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -113,32 +167,18 @@ private fun HomeMixHeader(
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
                 text = stringResource(R.string.home_your_mix),
-                style = MaterialTheme.typography.displayLargeEmphasized.copy(
-                    fontSize = 64.sp,
-                    lineHeight = 62.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                ),
+                style = titleStyle,
                 color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.widthIn(max = 280.dp),
+                modifier = Modifier,
             )
             if (isLoading && tracks.isEmpty()) {
                 androidx.compose.material3.LoadingIndicator()
-            } else if (tracks.isNotEmpty()) {
-                Text(
-                    text = stringResource(
-                        R.string.home_mix_now_playing,
-                        tracks.first().title,
-                        tracks.first().artist,
-                    ),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                )
             } else {
                 Text(
                     text = stringResource(R.string.home_your_mix_subtitle),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = subtitleStyle,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(start = 8.dp),
                 )
             }
         }

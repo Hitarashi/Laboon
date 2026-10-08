@@ -92,6 +92,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import coil3.compose.AsyncImage
@@ -210,6 +211,10 @@ internal sealed interface OverlayDestination {
     data class RecordLabel(val destination: RecordLabelDestination) : OverlayDestination {
         override val key: String = "label_${destination.appleLabelId ?: destination.name}"
     }
+
+    data object DailyMix : OverlayDestination {
+        override val key: String = "daily_mix"
+    }
 }
 
 internal data class OverlayEntry(
@@ -301,6 +306,12 @@ fun HomeScreen(
         overlayStack = overlayStack + OverlayEntry(
             id = nextOverlayId++,
             destination = OverlayDestination.Album(appleAlbumId),
+        )
+    }
+    val openDailyMix: () -> Unit = {
+        overlayStack = overlayStack + OverlayEntry(
+            id = nextOverlayId++,
+            destination = OverlayDestination.DailyMix,
         )
     }
     val closeAlbum: () -> Unit = {
@@ -660,6 +671,7 @@ fun HomeScreen(
         overlayStack.lastOrNull()?.destination is OverlayDestination.Album -> "album"
         overlayStack.lastOrNull()?.destination is OverlayDestination.Artist -> "artist"
         overlayStack.lastOrNull()?.destination is OverlayDestination.RecordLabel -> "label"
+        overlayStack.lastOrNull()?.destination is OverlayDestination.DailyMix -> "dailyMix"
         activeTrack != null && playerExpansionProgress > 0.55f -> "player"
         currentTab == MainTab.Search -> "search"
         currentTab == MainTab.Library -> "library"
@@ -1681,7 +1693,16 @@ fun HomeScreen(
                             onTrackClick = { track ->
                                 playbackManager.play(track)
                             },
+                            onPlayDailyMixTrack = { track, contextTracks ->
+                                playbackManager.play(track, contextTracks = contextTracks)
+                            },
+                            onPlayNextTrack = playbackManager::playNext,
+                            onAddTrackToQueue = playbackManager::addToQueue,
                             onDownloadTrack = { track -> ripWsClient.startRip(track) },
+                            onLoadTrackGenres = albumDetailsRepository::getGenresForTrack,
+                            currentTrackId = activeTrack?.id,
+                            isPlaying = activeIsPlaying,
+                            onOpenDailyMix = openDailyMix,
                             onArtistClick = { artist ->
                                 openArtist(
                                     artist.name,
@@ -1858,49 +1879,44 @@ fun HomeScreen(
                                     modifier = surfaceModifier.fillMaxSize(),
                                 )
                             }
+
+                            is OverlayDestination.DailyMix -> {
+                                HomeDailyMixScreen(
+                                    tracks = feedState.recommended.items,
+                                    currentTrackId = activeTrack?.id,
+                                    isPlaying = activeIsPlaying,
+                                    bottomClearance = albumBottomClearance,
+                                    onBack = popOverlay,
+                                    onPlayTrack = { track, contextTracks ->
+                                        playbackManager.play(track, contextTracks = contextTracks)
+                                    },
+                                    onPlayAll = { tracks ->
+                                        tracks.firstOrNull()?.let { track ->
+                                            playbackManager.play(track, contextTracks = tracks)
+                                        }
+                                    },
+                                    onShuffle = { tracks ->
+                                        val shuffledTracks = tracks.shuffled()
+                                        shuffledTracks.firstOrNull()?.let { track ->
+                                            playbackManager.play(track, contextTracks = shuffledTracks)
+                                        }
+                                    },
+                                    onPlayNext = playbackManager::playNext,
+                                    onAddToQueue = playbackManager::addToQueue,
+                                    onLoadTrackGenres = albumDetailsRepository::getGenresForTrack,
+                                    onDownloadTrack = { track -> ripWsClient.startRip(track) },
+                                )
+                            }
                         }
                     }
                 }
-            }
-
-            albumChromeTransition.AnimatedVisibility(
-                visible = { albumOpen -> !albumOpen },
-                enter = slideInVertically(
-                    animationSpec = motionScheme.defaultSpatialSpec(),
-                    initialOffsetY = { it },
-                ) + fadeIn(animationSpec = motionScheme.defaultEffectsSpec()),
-                exit = slideOutVertically(
-                    animationSpec = motionScheme.defaultSpatialSpec(),
-                    targetOffsetY = { it },
-                ) + fadeOut(animationSpec = motionScheme.defaultEffectsSpec()),
-                modifier = Modifier.align(Alignment.BottomCenter),
-            ) {
-                FloatingNavBar(
-                    selectedTab = currentTab,
-                    onTabSelected = {
-                        closeAlbum()
-                        if (it == MainTab.Search && currentTab == MainTab.Search) {
-                            searchFocusTrigger++
-                        } else {
-                            onEvent(RouteEvent.TabSelected(it))
-                        }
-                    },
-                    hasMiniPlayerAbove = activeTrack != null && !isAlbumOverlayVisible,
-                    backdropState = liquidGlassBackdropState,
-                    modifier = Modifier
-                        .navigationBarsPadding()
-                        .padding(start = 16.dp, end = 16.dp, bottom = NavigationBarBottomPadding)
-                        .graphicsLayer {
-                            translationY =
-                                with(density) { (playerExpansionProgress * 120.dp.toPx()) }
-                        },
-                )
             }
 
             AnimatedVisibility(
                 visible = activeTrack != null,
                 enter = fadeIn(animationSpec = motionScheme.defaultEffectsSpec()),
                 exit = fadeOut(animationSpec = motionScheme.defaultEffectsSpec()),
+                modifier = Modifier.zIndex(0f),
             ) {
                 activeTrack?.let { track ->
                     MorphingPlayerSheet(
@@ -1992,6 +2008,42 @@ fun HomeScreen(
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
+            }
+
+            albumChromeTransition.AnimatedVisibility(
+                visible = { albumOpen -> !albumOpen },
+                enter = slideInVertically(
+                    animationSpec = motionScheme.defaultSpatialSpec(),
+                    initialOffsetY = { it },
+                ) + fadeIn(animationSpec = motionScheme.defaultEffectsSpec()),
+                exit = slideOutVertically(
+                    animationSpec = motionScheme.defaultSpatialSpec(),
+                    targetOffsetY = { it },
+                ) + fadeOut(animationSpec = motionScheme.defaultEffectsSpec()),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .zIndex(1f),
+            ) {
+                FloatingNavBar(
+                    selectedTab = currentTab,
+                    onTabSelected = {
+                        closeAlbum()
+                        if (it == MainTab.Search && currentTab == MainTab.Search) {
+                            searchFocusTrigger++
+                        } else {
+                            onEvent(RouteEvent.TabSelected(it))
+                        }
+                    },
+                    hasMiniPlayerAbove = activeTrack != null && !isAlbumOverlayVisible,
+                    backdropState = liquidGlassBackdropState,
+                    modifier = Modifier
+                        .navigationBarsPadding()
+                        .padding(start = 16.dp, end = 16.dp, bottom = NavigationBarBottomPadding)
+                        .graphicsLayer {
+                            translationY =
+                                with(density) { (playerExpansionProgress * 120.dp.toPx()) }
+                        },
+                )
             }
 
             if (showSettings || showRipVisualizer || scrimAlpha > 0.01f) {

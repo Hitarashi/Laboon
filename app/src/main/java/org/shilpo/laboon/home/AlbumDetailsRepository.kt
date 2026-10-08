@@ -9,6 +9,7 @@ import org.shilpo.laboon.net.HttpErrorKind
 import org.shilpo.laboon.net.HttpOutcome
 import org.shilpo.laboon.search.SearchRepository
 import org.shilpo.laboon.search.SearchRepositoryImpl
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
 sealed interface AlbumDetailsResult {
@@ -85,6 +86,17 @@ class AlbumDetailsRepository(
 
             null
         }
+
+    internal suspend fun getGenresForTrack(track: HomeTrack): List<String> {
+        val trackId = track.providerTrackId?.takeIf {
+            it.isNotBlank() && it.all(Char::isDigit) && it.length <= 20
+        } ?: return emptyList()
+        val apiBaseUrl = sessionStore.getSession()?.lyricspornApiUrl ?: return emptyList()
+        return LyricspornClient.getTrackGenres(apiBaseUrl, trackId)
+            .map(String::trim)
+            .filter { it.isNotEmpty() && !it.equals("Music", ignoreCase = true) }
+            .distinctBy { it.lowercase(Locale.ROOT) }
+    }
 
     fun getCachedAlbum(appleAlbumId: String): AlbumDetailsResult.Success? {
         val cacheKey = albumCacheKey(appleAlbumId)

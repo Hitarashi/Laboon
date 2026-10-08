@@ -125,6 +125,7 @@ internal fun LiquidGlassRuntimeSurface(
     refractIntensity: Float = 0.75f,
     thicknessDp: Dp = 11.dp,
     shadowElevation: Dp = 8.dp,
+    showBottomRefractionEdge: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     val density = LocalDensity.current
@@ -298,7 +299,7 @@ internal fun LiquidGlassRuntimeSurface(
                         )
                     }
 
-                    if (clampedBottom > 0.5f) {
+                    if (showBottomRefractionEdge && clampedBottom > 0.5f) {
                         val bottomStrokeColor =
                             if (isDark) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.08f)
                         val strokeBottomBrush = Brush.verticalGradient(
