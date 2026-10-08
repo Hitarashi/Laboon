@@ -28,10 +28,14 @@ object TrackAvailability {
                 track
             } else {
                 val preferred = availability.preferredCodec
+                val preferredTrackId = availability.playbackTrackId
                 val next = track.copy(
                     isCached = true,
-                    codec = preferred ?: track.codec,
-                    backendTrackId = availability.playbackTrackId ?: track.backendTrackId,
+                    streamUrl = track.streamUrl.takeIf {
+                        preferredTrackId != null && preferredTrackId == track.backendTrackId
+                    },
+                    codec = preferred,
+                    backendTrackId = preferredTrackId,
                     availableFormats = availability.formats,
                     availableVariants = availability.variants,
                 )

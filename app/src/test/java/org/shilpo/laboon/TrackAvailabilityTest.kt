@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Test
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.home.TrackAvailability
@@ -108,5 +109,30 @@ class TrackAvailabilityTest {
         val twice = TrackAvailability.apply(once, mapOf("111" to availability("alac")))
 
         assertEquals(once, twice)
+    }
+
+    @Test
+    fun `a verdict without a supported default clears a stale Dolby playback selection`() {
+        val staleDolbyTrack = track("111").copy(
+            isCached = true,
+            codec = "ec-3",
+            backendTrackId = 9,
+            streamUrl = "https://example.test/stale-dolby-stream",
+        )
+        val unsupportedDolby = CachedTrackAvailability(
+            variants = listOf(TrackFormatVariant(format = "ec-3", backendTrackId = 9)),
+            preferredCodec = null,
+            playbackTrackId = null,
+        )
+
+        val updated = TrackAvailability.apply(
+            listOf(staleDolbyTrack),
+            mapOf("111" to unsupportedDolby),
+        ).single()
+
+        assertNull(updated.codec)
+        assertNull(updated.backendTrackId)
+        assertNull(updated.streamUrl)
+        assertEquals(listOf("ec-3"), updated.availableFormats)
     }
 }

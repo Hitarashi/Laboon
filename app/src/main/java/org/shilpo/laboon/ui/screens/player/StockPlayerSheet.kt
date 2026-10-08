@@ -1,58 +1,57 @@
 @file:OptIn(
     androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
     androidx.compose.material3.ExperimentalMaterial3Api::class,
-    androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class
+    androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class,
 )
 
 package org.shilpo.laboon.ui.screens.player
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.keyframes
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.basicMarquee
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.FilterChip
+import androidx.compose.material3.ButtonGroup
+import androidx.compose.material3.ButtonGroupDefaults
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LoadingIndicator
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberSliderState
-import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -60,11 +59,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
@@ -73,32 +75,43 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import coil3.compose.AsyncImage
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.lyrics.LyricsLine
+import org.shilpo.laboon.lyricsporn.LyricspornMotionArtwork
 import org.shilpo.laboon.playback.AudioQualityInfo
 import org.shilpo.laboon.playback.DiscoveryStatus
 import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.playback.RepeatMode
 import org.shilpo.laboon.theme.LocalVisualTheme
 import org.shilpo.laboon.theme.renderer.materialSymbolPainterResource
-import org.shilpo.laboon.ui.design.painterResource
+import org.shilpo.laboon.ui.design.theme.RoundedSans
 import org.shilpo.laboon.ui.design.MiniPlayerHeight
-import org.shilpo.laboon.ui.design.PixelPlayerFacingCornerRadius
-import org.shilpo.laboon.ui.design.PixelMiniPlayerHeight
-import org.shilpo.laboon.ui.design.PixelPlayerOuterCornerRadius
 import org.shilpo.laboon.ui.design.NavigationBarMaxWidth
+import org.shilpo.laboon.ui.design.PixelMiniPlayerHeight
+import org.shilpo.laboon.ui.design.PixelPlayerFacingCornerRadius
+import org.shilpo.laboon.ui.design.PixelPlayerOuterCornerRadius
 import org.shilpo.laboon.ui.screens.player.lyrics.LyricsScreen
 import org.shilpo.laboon.ui.screens.queue.QueueBottomSheet
 
-/** Built-in presentation uses Material components and their expressive motion scheme. */
+private const val MotionArtworkRequestProgress = 0.97f
+private const val MotionArtworkDisplayProgress = 0.96f
+
+/** One sheet owns both player states, so its content, bounds, and drag stay in sync. */
 @Composable
 internal fun StockPlayerSheet(
     track: HomeTrack, isPlaying: Boolean, isBuffering: Boolean, progress: Float,
@@ -113,6 +126,7 @@ internal fun StockPlayerSheet(
     onRetry: (() -> Unit)?, isDiscovering: Boolean, discoveryStatus: DiscoveryStatus,
     onAlbum: (suspend (HomeTrack) -> Boolean)?, onArtist: ((String) -> Unit)?,
     lyrics: List<LyricsLine>, lyricsLoading: Boolean,
+    motionArtwork: LyricspornMotionArtwork?, onRequestMotionArtwork: (() -> Unit)?,
     collapsedBottomChromeClearance: Dp,
     navigationBarHiddenProgress: Float,
     modifier: Modifier = Modifier,
@@ -121,57 +135,156 @@ internal fun StockPlayerSheet(
     var panel by rememberSaveable { mutableStateOf("player") }
     var queueVisible by rememberSaveable { mutableStateOf(false) }
     var audioVisible by rememberSaveable { mutableStateOf(false) }
+    var moreOptionsVisible by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val usesPixelPlayerChrome = LocalVisualTheme.current == null
     val miniPlayerHeight = if (usesPixelPlayerChrome) PixelMiniPlayerHeight else MiniPlayerHeight
-    val expansionProgress by animateFloatAsState(
-        targetValue = if (expanded) 1f else 0f,
-        animationSpec = tween(durationMillis = 255, easing = FastOutSlowInEasing),
-        label = "playerSheetExpansion",
-    )
-    SideEffect { onExpansionChange?.invoke(expansionProgress) }
-    BackHandler(enabled = expanded) {
-        expanded = false
-        panel = "player"
-    }
-
-    val configuration = LocalConfiguration.current
     val density = LocalDensity.current
     val hapticFeedback = LocalHapticFeedback.current
+    val configuration = LocalConfiguration.current
     val screenWidthPx = remember(configuration, density) {
         with(density) { configuration.screenWidthDp.dp.toPx() }
     }
-    val offsetAnimatableX = remember { Animatable(0f) }
-    val offsetAnimatableY = remember { Animatable(0f) }
-
+    val horizontalOffset = remember { Animatable(0f) }
     val miniDismissGestureHandler = rememberMiniPlayerDismissGestureHandler(
         scope = scope,
         density = density,
         hapticFeedback = hapticFeedback,
-        offsetAnimatable = offsetAnimatableX,
+        offsetAnimatable = horizontalOffset,
         screenWidthPx = screenWidthPx,
         onDismissPlaylistAndShowUndo = onDismiss,
         onDismissStarted = {},
         onPrevious = onPrevious,
         onNext = onNext,
     )
-
-    val miniVerticalGestureHandler = rememberMiniPlayerVerticalDragGestureHandler(
-        scope = scope,
-        density = density,
-        hapticFeedback = hapticFeedback,
-        offsetAnimatable = offsetAnimatableY,
-        onExpand = { expanded = true },
-        onDismiss = onDismiss,
-    )
-
     val navigationBarInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val defaultSheetAnimation = remember {
+        tween<Float>(durationMillis = 255, easing = FastOutSlowInEasing)
+    }
 
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val collapsedBottomInset = navigationBarInset + collapsedBottomChromeClearance
-        val sheetBottomInset = lerp(collapsedBottomInset, 0.dp, expansionProgress)
+        val collapsedHorizontalGutter = if (usesPixelPlayerChrome) 22.dp else 16.dp
+        val collapsedY = with(density) {
+            (maxHeight - miniPlayerHeight - collapsedBottomInset).coerceAtLeast(0.dp).toPx()
+        }
+        val expansionFraction = remember(collapsedY) {
+            Animatable(if (expanded) 1f else 0f)
+        }
+        val currentOnRequestMotionArtwork = rememberUpdatedState(onRequestMotionArtwork)
+        LaunchedEffect(track.id, expansionFraction) {
+            snapshotFlow { expansionFraction.value }
+                .first { it >= MotionArtworkRequestProgress }
+            currentOnRequestMotionArtwork.value?.invoke()
+        }
+        val sheetTranslationY = remember(collapsedY) {
+            Animatable(if (expanded) 0f else collapsedY)
+        }
+        val motionController = remember(collapsedY, expansionFraction, sheetTranslationY) {
+            PlayerSheetMotionController(
+                translationY = sheetTranslationY,
+                expansionFraction = expansionFraction,
+                collapsedY = collapsedY,
+            )
+        }
+        val overshootScaleY = remember { Animatable(1f) }
+        val verticalDragHandler = remember(
+            density,
+            motionController,
+            expansionFraction,
+            sheetTranslationY,
+            collapsedY,
+            queueState != null,
+        ) {
+            PlayerSheetVerticalDragGestureHandler(
+                scope = scope,
+                densityProvider = { density },
+                motionController = motionController,
+                expansionFraction = expansionFraction,
+                translationY = sheetTranslationY,
+                expandedYProvider = { 0f },
+                collapsedYProvider = { collapsedY },
+                miniHeightPxProvider = { with(density) { miniPlayerHeight.toPx() } },
+                queueGestureBottomExclusionPxProvider = {
+                    with(density) { maxOf(20.dp, navigationBarInset + 8.dp).toPx() }
+                },
+                currentStateProvider = {
+                    if (expanded) PlayerSheetTargetState.EXPANDED else PlayerSheetTargetState.COLLAPSED
+                },
+                onOpenQueueSheet = { if (queueState != null) queueVisible = true },
+                onAnimateSheet = { targetExpanded, animationSpec, initialVelocity ->
+                    motionController.animateTo(
+                        targetExpanded = targetExpanded,
+                        animationSpec = animationSpec ?: defaultSheetAnimation,
+                        initialVelocity = initialVelocity,
+                    )
+                },
+                onExpandSheetState = {
+                    expanded = true
+                    scope.launch { animateExpansionOvershoot(overshootScaleY) }
+                },
+                onCollapseSheetState = {
+                    expanded = false
+                    panel = "player"
+                },
+                onCollapseSquash = { startingScale ->
+                    overshootScaleY.snapTo(startingScale)
+                    overshootScaleY.animateTo(
+                        targetValue = 1f,
+                        animationSpec = spring(
+                            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+                            stiffness = androidx.compose.animation.core.Spring.StiffnessVeryLow,
+                        ),
+                    )
+                },
+            )
+        }
+
+        fun animatePlayerSheet(targetExpanded: Boolean) {
+            expanded = targetExpanded
+            if (!targetExpanded) panel = "player"
+            scope.launch {
+                coroutineScope {
+                    launch {
+                        motionController.animateTo(
+                            targetExpanded = targetExpanded,
+                            animationSpec = defaultSheetAnimation,
+                        )
+                    }
+                    launch {
+                        if (targetExpanded) {
+                            animateExpansionOvershoot(overshootScaleY)
+                        } else {
+                            overshootScaleY.snapTo(0.96f)
+                            overshootScaleY.animateTo(
+                                targetValue = 1f,
+                                animationSpec = spring(
+                                    dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy,
+                                    stiffness = androidx.compose.animation.core.Spring.StiffnessLow,
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        val expansionProgress = expansionFraction.value
+        SideEffect { onExpansionChange?.invoke(expansionProgress) }
+        BackHandler(
+            enabled = !moreOptionsVisible &&
+                (expanded || expansionProgress > 0.01f || panel != "player"),
+        ) {
+            if (panel != "player") {
+                panel = "player"
+            } else {
+                animatePlayerSheet(false)
+            }
+        }
+
         val sheetHeight = lerp(miniPlayerHeight, maxHeight, expansionProgress)
-        val horizontalGutter = lerp(if (usesPixelPlayerChrome) 22.dp else 16.dp, 0.dp, expansionProgress)
+        val gestureHostHeight = maxHeight
+        val horizontalGutter = lerp(collapsedHorizontalGutter, 0.dp, expansionProgress)
         val maxSheetWidth = lerp(NavigationBarMaxWidth, maxWidth, expansionProgress)
         val collapsedBottomRadius = if (usesPixelPlayerChrome) {
             lerp(
@@ -184,358 +297,368 @@ internal fun StockPlayerSheet(
         }
         val topCornerRadius = lerp(PixelPlayerOuterCornerRadius, 0.dp, expansionProgress)
         val bottomCornerRadius = lerp(collapsedBottomRadius, 0.dp, expansionProgress)
-
-        Surface(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = sheetBottomInset)
-                .padding(horizontal = horizontalGutter)
-                .widthIn(max = maxSheetWidth)
-                .fillMaxWidth()
-                .height(sheetHeight)
-                .graphicsLayer {
-                    translationX = offsetAnimatableX.value
-                    translationY = offsetAnimatableY.value * (1f - expansionProgress)
-                }
-                .miniPlayerDismissHorizontalGesture(
-                    enabled = expansionProgress <= 0.01f,
-                    handler = miniDismissGestureHandler,
-                )
-                .miniPlayerVerticalDragGesture(
-                    enabled = expansionProgress <= 0.01f,
-                    handler = miniVerticalGestureHandler,
-                )
-                .clickable(
-                    enabled = expansionProgress <= 0.01f,
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    role = Role.Button,
-                    onClickLabel = stringResource(R.string.player_open),
-                    onClick = { expanded = true },
-                ),
-            shape = if (usesPixelPlayerChrome) {
-                RoundedCornerShape(
-                    topStart = topCornerRadius,
-                    topEnd = topCornerRadius,
-                    bottomStart = bottomCornerRadius,
-                    bottomEnd = bottomCornerRadius,
-                )
-            } else {
-                RoundedCornerShape(
-                    topStart = topCornerRadius,
-                    topEnd = topCornerRadius,
-                    bottomStart = bottomCornerRadius,
-                    bottomEnd = bottomCornerRadius,
-                )
-            },
-            color = if (usesPixelPlayerChrome) {
-                androidx.compose.ui.graphics.lerp(
-                    MaterialTheme.colorScheme.primaryContainer,
-                    MaterialTheme.colorScheme.surfaceContainerLow,
-                    expansionProgress,
-                )
-            } else {
-                MaterialTheme.colorScheme.surfaceContainerHigh
-            },
+        // Pixel Player keeps a full-height input layer offset to the sheet's current top edge.
+        // That leaves the Home feed above a collapsed mini-player outside the gesture hit region.
+        Box(
+            modifier = Modifier.fillMaxSize(),
         ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                if (expansionProgress > 0f) {
-                    ExpandedPlayerContent(
-                        track = track,
-                        isPlaying = isPlaying,
-                        isBuffering = isBuffering,
-                        progress = progress,
-                        currentPositionMs = currentPositionMs,
-                        durationMs = durationMs,
-                        audioQuality = audioQuality,
-                        switchingQualityFormat = switchingQualityFormat,
-                        onQualityVariantSelected = onQualityVariantSelected,
-                        isShuffle = isShuffle,
-                        repeatMode = repeatMode,
-                        canSkipPrevious = canSkipPrevious,
-                        onPlayPause = onPlayPause,
-                        onPrevious = onPrevious,
-                        onNext = onNext,
-                        onSeek = onSeek,
-                        onShuffle = onShuffle,
-                        onRepeat = onRepeat,
-                        onCollapse = { expanded = false; panel = "player" },
-                        onDismiss = { expanded = false; onDismiss() },
-                        panel = panel,
-                        onPanelChange = { panel = it },
-                        queueVisible = { queueVisible = true },
-                        audioVisible = { audioVisible = true },
-                        onAlbum = onAlbum,
-                        onArtist = onArtist,
-                        lyrics = lyrics,
-                        lyricsLoading = lyricsLoading,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                alpha = ((expansionProgress - 0.08f) / 0.42f).coerceIn(0f, 1f)
-                            },
-                    )
-                }
-                if (expansionProgress < 0.5f) {
-                    Row(
+            Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
+                    .offset { IntOffset(0, sheetTranslationY.value.roundToInt()) }
                     .fillMaxWidth()
-                    .height(miniPlayerHeight)
-                    .padding(
-                        start = if (usesPixelPlayerChrome) 10.dp else 12.dp,
-                        end = if (usesPixelPlayerChrome) 8.dp else 12.dp,
+                    .height(gestureHostHeight)
+                    .miniPlayerDismissHorizontalGesture(
+                        enabled = !expanded,
+                        handler = miniDismissGestureHandler,
                     )
-                    .graphicsLayer {
-                        alpha = (1f - expansionProgress * 2f).coerceIn(0f, 1f)
-                    },
-                verticalAlignment = Alignment.CenterVertically,
+                    .playerSheetVerticalDragGesture(
+                        enabled = true,
+                        handler = verticalDragHandler,
+                    ),
             ) {
-                AsyncImage(
-                    model = track.artworkUrl,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
+                Surface(
                     modifier = Modifier
-                        .size(if (usesPixelPlayerChrome) 44.dp else 48.dp)
-                        .clip(if (usesPixelPlayerChrome) CircleShape else MaterialTheme.shapes.medium),
-                )
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(
-                            start = 12.dp,
-                            end = if (usesPixelPlayerChrome) 0.dp else 12.dp,
+                        .align(Alignment.TopCenter)
+                        .padding(horizontal = horizontalGutter)
+                        .widthIn(max = maxSheetWidth)
+                        .fillMaxWidth()
+                        .height(sheetHeight)
+                        .graphicsLayer {
+                            translationX = horizontalOffset.value
+                            scaleY = overshootScaleY.value
+                            transformOrigin = TransformOrigin(0.5f, 1f)
+                        }
+                        .clickable(
+                            enabled = !expanded,
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            role = Role.Button,
+                            onClickLabel = stringResource(R.string.player_open),
+                            onClick = { animatePlayerSheet(true) },
                         ),
-                    verticalArrangement = Arrangement.Center,
+                    shape = RoundedCornerShape(
+                        topStart = topCornerRadius,
+                        topEnd = topCornerRadius,
+                        bottomStart = bottomCornerRadius,
+                        bottomEnd = bottomCornerRadius,
+                    ),
+                    color = if (usesPixelPlayerChrome) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surfaceContainerHigh
+                    },
                 ) {
-                    val titleStyle = if (usesPixelPlayerChrome) {
-                        MaterialTheme.typography.titleSmall.copy(
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            letterSpacing = (-0.2).sp,
-                        )
-                    } else {
-                        MaterialTheme.typography.titleSmall
-                    }
-                    val artistStyle = if (usesPixelPlayerChrome) {
-                        MaterialTheme.typography.bodySmall.copy(
-                            fontSize = 13.sp,
-                            letterSpacing = 0.sp,
-                        )
-                    } else {
-                        MaterialTheme.typography.bodySmall
-                    }
-                    Text(
-                        text = track.title,
-                        style = titleStyle,
-                        color = if (usesPixelPlayerChrome) {
-                            MaterialTheme.colorScheme.onPrimaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        },
-                        maxLines = 1,
-                        modifier = Modifier.basicMarquee(iterations = if (isPlaying) Int.MAX_VALUE else 0),
-                    )
-                    Text(
-                        text = track.artist,
-                        style = artistStyle,
-                        color = if (usesPixelPlayerChrome) {
-                            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f)
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        maxLines = 1,
-                        modifier = Modifier.basicMarquee(iterations = if (isPlaying) Int.MAX_VALUE else 0),
-                    )
-                }
-                if (usesPixelPlayerChrome) {
-                    val playButtonCorner by animateDpAsState(
-                        targetValue = if (isPlaying) 10.dp else 18.dp,
-                        animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
-                        label = "miniPlayerPlayButtonCorner",
-                    )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Box(
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        ExpandedPlayerContent(
+                            track = track,
+                            useRoundedTypography = usesPixelPlayerChrome,
+                            isPlaying = isPlaying,
+                            isBuffering = isBuffering,
+                            currentPositionMs = currentPositionMs,
+                            durationMs = durationMs,
+                            audioQuality = audioQuality,
+                            switchingQualityFormat = switchingQualityFormat,
+                            onQualityVariantSelected = onQualityVariantSelected,
+                            isShuffle = isShuffle,
+                            repeatMode = repeatMode,
+                            canSkipPrevious = canSkipPrevious,
+                            onPlayPause = onPlayPause,
+                            onPrevious = onPrevious,
+                            onNext = onNext,
+                            onSeek = onSeek,
+                            onShuffle = onShuffle,
+                            onRepeat = onRepeat,
+                            onCollapse = { animatePlayerSheet(false) },
+                            onOpenMoreOptions = { moreOptionsVisible = true },
+                            panel = panel,
+                            onPanelChange = { panel = it },
+                            queueVisible = { queueVisible = true },
+                            audioVisible = { audioVisible = true },
+                            onAlbum = onAlbum,
+                            onArtist = onArtist,
+                            lyrics = lyrics,
+                            lyricsLoading = lyricsLoading,
+                            motionArtwork = motionArtwork,
+                            queueState = queueState,
+                            onTrack = onTrack,
+                            expansionProgress = expansionProgress,
                             modifier = Modifier
-                                .size(48.dp)
-                                .clickable(
-                                    role = Role.Button,
-                                    onClickLabel = stringResource(R.string.player_previous),
-                                    enabled = canSkipPrevious,
-                                    onClick = onPrevious,
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                                    .background(
-                                        if (canSkipPrevious) {
-                                            MaterialTheme.colorScheme.onPrimary
-                                        } else {
-                                            MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.38f)
-                                        },
-                                    ),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    painter = materialSymbolPainterResource(
-                                        name = "skip_previous",
-                                        slot = "playback.previous",
-                                    ),
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary.copy(
-                                        alpha = if (canSkipPrevious) 1f else 0.38f,
-                                    ),
-                                    modifier = Modifier.size(22.dp),
-                                )
-                            }
-                        }
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clickable(
-                                    role = Role.Button,
-                                    onClickLabel = stringResource(
-                                        if (isPlaying) R.string.player_pause else R.string.player_play,
-                                    ),
-                                    enabled = durationMs > 0L,
-                                    onClick = onPlayPause,
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(RoundedCornerShape(playButtonCorner))
-                                    .background(
-                                        if (durationMs > 0L) {
-                                            MaterialTheme.colorScheme.primary
-                                        } else {
-                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.38f)
-                                        },
-                                    ),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                            if (isBuffering) {
-                                LoadingIndicator(
-                                    modifier = Modifier.size(22.dp),
-                                    color = MaterialTheme.colorScheme.onPrimary,
-                                )
-                            } else {
-                                Icon(
-                                    painter = materialSymbolPainterResource(
-                                    name = if (isPlaying) "pause" else "play_arrow",
-                                    slot = if (isPlaying) "playback.pause" else "playback.play",
-                                ),
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onPrimary,
-                                    modifier = Modifier.size(22.dp),
-                                )
-                            }
-                        }
-                        }
-                        val canSkipNext = queueState?.hasNext == true
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clickable(
-                                    role = Role.Button,
-                                    onClickLabel = stringResource(R.string.player_next),
-                                    enabled = canSkipNext,
-                                    onClick = onNext,
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                                    .background(
-                                        if (canSkipNext) {
-                                            MaterialTheme.colorScheme.onPrimary
-                                        } else {
-                                            MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.38f)
-                                        },
-                                    ),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Icon(
-                                    painter = materialSymbolPainterResource(
-                                        name = "skip_next",
-                                        slot = "playback.skip",
-                                    ),
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary.copy(
-                                        alpha = if (canSkipNext) 1f else 0.38f,
-                                    ),
-                                    modifier = Modifier.size(22.dp),
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    FilledIconButton(
-                        onClick = onPlayPause,
-                        modifier = Modifier.size(48.dp),
-                        enabled = durationMs > 0L,
-                    ) {
-                        Icon(
-                            painter = painterResource(
-                                if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play,
-                            ),
-                            contentDescription = if (isPlaying) "Pause" else "Play",
-                            modifier = Modifier.size(28.dp),
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    val contentAlpha = ((expansionProgress - 0.25f) / 0.75f).coerceIn(0f, 1f)
+                                    alpha = contentAlpha
+                                    translationY = with(density) {
+                                        lerp(24.dp, 0.dp, contentAlpha).toPx()
+                                    }
+                                }
+                                .zIndex(if (expansionProgress >= 0.5f) 1f else 0f),
                         )
-                    }
-                    IconButton(
-                        onClick = onNext,
-                        modifier = Modifier.size(48.dp),
-                        enabled = queueState?.hasNext == true,
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_skip),
-                            contentDescription = "Next",
-                            modifier = Modifier.size(28.dp),
+
+                        MiniPlayerContent(
+                            track = track,
+                            isPlaying = isPlaying,
+                            durationMs = durationMs,
+                            canSkipPrevious = canSkipPrevious,
+                            canSkipNext = queueState?.hasNext == true,
+                            isInteractive = expansionProgress <= 0.01f,
+                            isPixelChrome = usesPixelPlayerChrome,
+                            onPlayPause = onPlayPause,
+                            onPrevious = onPrevious,
+                            onNext = onNext,
+                            onOpen = { animatePlayerSheet(true) },
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .fillMaxWidth()
+                                .height(miniPlayerHeight)
+                                .padding(
+                                    start = if (usesPixelPlayerChrome) 10.dp else 12.dp,
+                                    end = if (usesPixelPlayerChrome) 8.dp else 12.dp,
+                                )
+                                .graphicsLayer {
+                                    alpha = (1f - expansionProgress * 2f).coerceIn(0f, 1f)
+                                }
+                                .zIndex(if (expansionProgress < 0.5f) 1f else 0f),
                         )
-                    }
-                }
-            }
                 }
             }
         }
     }
-    if (queueVisible && queueState != null) QueueBottomSheet(
-        queueState = queueState,
-        onDismiss = { queueVisible = false },
-        onTrackClick = { onTrack?.invoke(it) },
-        onRemoveUpNext = { onRemove?.invoke(it) },
-        onMoveUpNext = { from, to -> onMove?.invoke(from, to) },
-        onClearUpNext = { onClear?.invoke() },
-        onToggleShuffle = onShuffle,
-        onCycleRepeatMode = onRepeat,
-        onQueueEntryClick = { onQueueEntry?.invoke(it) },
-        onPromoteAutoplay = { onPromote?.invoke(it) },
-        onRetryDiscovery = { onRetry?.invoke() },
-        isDiscovering = isDiscovering,
-        discoveryStatus = discoveryStatus,
+    }
+
+    if (queueVisible && queueState != null) {
+        QueueBottomSheet(
+            queueState = queueState,
+            onDismiss = { queueVisible = false },
+            onTrackClick = { onTrack?.invoke(it) },
+            onRemoveUpNext = { onRemove?.invoke(it) },
+            onMoveUpNext = { from, to -> onMove?.invoke(from, to) },
+            onClearUpNext = { onClear?.invoke() },
+            onToggleShuffle = onShuffle,
+            onCycleRepeatMode = onRepeat,
+            onQueueEntryClick = { onQueueEntry?.invoke(it) },
+            onPromoteAutoplay = { onPromote?.invoke(it) },
+            onRetryDiscovery = { onRetry?.invoke() },
+            isDiscovering = isDiscovering,
+            discoveryStatus = discoveryStatus,
+        )
+    }
+    if (audioVisible) {
+        AudioInfoDialog(
+            isOpen = true,
+            onDismiss = { audioVisible = false },
+            pipeline = audioQuality?.pipelineDetails,
+            track = track,
+            durationMs = durationMs,
+        )
+    }
+    if (moreOptionsVisible) {
+        ModalBottomSheet(
+            onDismissRequest = { moreOptionsVisible = false },
+        ) {
+            Spacer(modifier = Modifier.height(96.dp))
+        }
+    }
+}
+
+private suspend fun animateExpansionOvershoot(scale: Animatable<Float, androidx.compose.animation.core.AnimationVector1D>) {
+    scale.snapTo(1f)
+    scale.animateTo(
+        targetValue = 1f,
+        animationSpec = keyframes {
+            durationMillis = 250
+            1f at 0
+            1.05f at 125
+            1f at 250
+        },
     )
-    if (audioVisible) AudioInfoDialog(
-        isOpen = true, onDismiss = { audioVisible = false },
-        pipeline = audioQuality?.pipelineDetails, track = track, durationMs = durationMs
-    )
+}
+
+@Composable
+private fun MiniPlayerContent(
+    track: HomeTrack,
+    isPlaying: Boolean,
+    durationMs: Long,
+    canSkipPrevious: Boolean,
+    canSkipNext: Boolean,
+    isInteractive: Boolean,
+    isPixelChrome: Boolean,
+    onPlayPause: () -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onOpen: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.clickable(
+            enabled = isInteractive,
+            interactionSource = remember { MutableInteractionSource() },
+            indication = null,
+            role = Role.Button,
+            onClickLabel = stringResource(R.string.player_open),
+            onClick = onOpen,
+        ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AsyncImage(
+            model = track.artworkUrl,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(if (isPixelChrome) 44.dp else 48.dp)
+                .clip(if (isPixelChrome) CircleShape else MaterialTheme.shapes.medium),
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 12.dp, end = if (isPixelChrome) 0.dp else 12.dp),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = track.title,
+                style = if (isPixelChrome) {
+                    MaterialTheme.typography.titleSmall.copy(
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = (-0.2).sp,
+                    )
+                } else MaterialTheme.typography.titleSmall,
+                color = if (isPixelChrome) MaterialTheme.colorScheme.onPrimaryContainer
+                else MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                modifier = Modifier.basicMarquee(iterations = if (isPlaying) Int.MAX_VALUE else 0),
+            )
+            Text(
+                text = track.artist,
+                style = if (isPixelChrome) {
+                    MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, letterSpacing = 0.sp)
+                } else MaterialTheme.typography.bodySmall,
+                color = if (isPixelChrome) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f)
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                modifier = Modifier.basicMarquee(iterations = if (isPlaying) Int.MAX_VALUE else 0),
+            )
+        }
+        if (isPixelChrome) {
+            MiniPlayerSymbolButton(
+                icon = "skip_previous",
+                slot = "playback.previous",
+                label = stringResource(R.string.player_previous),
+                enabled = isInteractive && canSkipPrevious,
+                isPrimary = false,
+                onClick = onPrevious,
+            )
+            MiniPlayerSymbolButton(
+                icon = if (isPlaying) "pause" else "play_arrow",
+                slot = if (isPlaying) "playback.pause" else "playback.play",
+                label = stringResource(if (isPlaying) R.string.player_pause else R.string.player_play),
+                enabled = isInteractive && durationMs > 0L,
+                isPrimary = true,
+                onClick = onPlayPause,
+            )
+            MiniPlayerSymbolButton(
+                icon = "skip_next",
+                slot = "playback.skip",
+                label = stringResource(R.string.player_next),
+                enabled = isInteractive && canSkipNext,
+                isPrimary = false,
+                onClick = onNext,
+            )
+        } else {
+            FilledIconButton(onClick = onPlayPause, modifier = Modifier.size(48.dp), enabled = isInteractive && durationMs > 0L) {
+                Icon(
+                    painter = materialSymbolPainterResource(
+                        if (isPlaying) "pause" else "play_arrow",
+                        if (isPlaying) "playback.pause" else "playback.play",
+                        filled = true,
+                    ),
+                    contentDescription = stringResource(if (isPlaying) R.string.player_pause else R.string.player_play),
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+            IconButton(onClick = onNext, modifier = Modifier.size(48.dp), enabled = isInteractive && canSkipNext) {
+                Icon(
+                    painter = materialSymbolPainterResource(
+                        "skip_next",
+                        "playback.skip",
+                        filled = true,
+                    ),
+                    contentDescription = stringResource(R.string.player_next),
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MiniPlayerSymbolButton(
+    icon: String,
+    slot: String,
+    label: String,
+    enabled: Boolean,
+    isPrimary: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clickable(
+                enabled = enabled,
+                role = Role.Button,
+                onClickLabel = label,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(if (isPrimary) RoundedCornerShape(18.dp) else CircleShape)
+                .background(
+                    if (isPrimary) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onPrimary.copy(alpha = if (enabled) 1f else 0.38f),
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = materialSymbolPainterResource(name = icon, slot = slot, filled = true),
+                contentDescription = null,
+                tint = if (isPrimary) MaterialTheme.colorScheme.onPrimary
+                else MaterialTheme.colorScheme.primary.copy(alpha = if (enabled) 1f else 0.38f),
+                modifier = Modifier.size(22.dp),
+            )
+        }
+    }
+}
+
+private data class PlayerCarouselItem(val entryId: Long?, val track: HomeTrack)
+
+internal fun <T> playerCarouselItemAtOrNull(items: List<T>, index: Int): T? = items.getOrNull(index)
+
+private fun buildPlayerCarouselItems(track: HomeTrack, queueState: QueueState?): List<PlayerCarouselItem> {
+    val entries = queueState?.let { state ->
+        val historyEnd = (state.historyCursor + 1).coerceIn(0, state.history.size)
+        state.history.take(historyEnd) + state.playbackUpcomingEntries
+    }.orEmpty()
+    val items = entries.map { PlayerCarouselItem(it.id, it.track) }
+    val currentEntryId = queueState?.currentEntry?.id
+    return when {
+        items.isEmpty() -> listOf(PlayerCarouselItem(currentEntryId, track))
+        currentEntryId != null && items.none { it.entryId == currentEntryId } ->
+            listOf(PlayerCarouselItem(currentEntryId, track)) + items
+        currentEntryId == null && items.none { it.track.id == track.id } ->
+            listOf(PlayerCarouselItem(null, track)) + items
+        else -> items
+    }
 }
 
 @Composable
 private fun ExpandedPlayerContent(
     track: HomeTrack,
+    useRoundedTypography: Boolean,
     isPlaying: Boolean,
     isBuffering: Boolean,
-    progress: Float,
     currentPositionMs: Long,
     durationMs: Long,
     audioQuality: AudioQualityInfo?,
@@ -551,7 +674,7 @@ private fun ExpandedPlayerContent(
     onShuffle: () -> Unit,
     onRepeat: () -> Unit,
     onCollapse: () -> Unit,
-    onDismiss: () -> Unit,
+    onOpenMoreOptions: () -> Unit,
     panel: String,
     onPanelChange: (String) -> Unit,
     queueVisible: () -> Unit,
@@ -560,77 +683,32 @@ private fun ExpandedPlayerContent(
     onArtist: ((String) -> Unit)?,
     lyrics: List<LyricsLine>,
     lyricsLoading: Boolean,
+    motionArtwork: LyricspornMotionArtwork?,
+    queueState: QueueState?,
+    onTrack: ((HomeTrack) -> Unit)?,
+    expansionProgress: Float,
     modifier: Modifier = Modifier,
 ) {
-    val scope = rememberCoroutineScope()
-    val seekSliderState = rememberSliderState(
-        value = progress.coerceIn(0f, 1f),
-        trackRange = 0f..1f,
-    )
-    LaunchedEffect(progress) {
-        seekSliderState.value = progress.coerceIn(0f, 1f)
+    val isLandscape = LocalConfiguration.current.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    val contentModifier = if (isLandscape && panel != "lyrics") {
+        modifier.statusBarsPadding().navigationBarsPadding()
+    } else {
+        modifier.navigationBarsPadding()
     }
 
-    Column(
-        modifier = modifier
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp),
-        ) {
-            IconButton(
-                onClick = onCollapse,
-                modifier = Modifier.align(Alignment.CenterStart),
-            ) {
-                Icon(
-                    painter = materialSymbolPainterResource(
-                        name = "keyboard_arrow_down",
-                        slot = "player.collapse",
-                    ),
-                    contentDescription = "Collapse player",
-                    modifier = Modifier.size(24.dp),
-                )
-            }
-            Text(
-                text = "NOW PLAYING",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.align(Alignment.Center),
+    Column(modifier = contentModifier) {
+        if (!isLandscape || panel == "lyrics") {
+            FullPlayerToolbar(
+                title = if (panel == "lyrics") "LYRICS" else "NOW PLAYING",
+                useRoundedTypography = useRoundedTypography,
+                expansionProgress = expansionProgress,
+                isLyrics = panel == "lyrics",
+                onCollapse = onCollapse,
+                onBackToPlayer = { onPanelChange("player") },
+                onOpenMoreOptions = onOpenMoreOptions,
             )
-            Row(
-                modifier = Modifier.align(Alignment.CenterEnd),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = queueVisible) {
-                    Icon(
-                        painter = materialSymbolPainterResource(
-                            name = "queue_music",
-                            slot = "player.queue",
-                        ),
-                        contentDescription = "Queue",
-                        modifier = Modifier.size(24.dp),
-                    )
-                }
-                IconButton(onClick = audioVisible) {
-                    Icon(
-                        painter = materialSymbolPainterResource(
-                            name = "graphic_eq",
-                            slot = "player.audio_info",
-                        ),
-                        contentDescription = "Audio information",
-                        modifier = Modifier.size(24.dp),
-                    )
-                }
-            }
         }
 
-        Spacer(Modifier.height(16.dp))
         if (panel == "lyrics") {
             LyricsScreen(
                 track = track,
@@ -641,142 +719,539 @@ private fun ExpandedPlayerContent(
                 onSeek = onSeek,
                 isPlaying = isPlaying,
                 modifier = Modifier
+                    .weight(1f)
                     .fillMaxWidth()
-                    .height(520.dp),
+                    .padding(horizontal = 24.dp),
             )
-            TextButton(onClick = { onPanelChange("player") }) { Text("Back to player") }
-        } else {
-            AsyncImage(
-                model = track.artworkUrl,
-                contentDescription = track.title,
-                contentScale = ContentScale.Crop,
+        } else if (isLandscape) {
+            Row(
                 modifier = Modifier
+                    .weight(1f)
                     .fillMaxWidth()
-                    .widthIn(max = 420.dp)
-                    .aspectRatio(1f)
-                    .clip(MaterialTheme.shapes.extraLarge),
-            )
-            Spacer(Modifier.height(24.dp))
-            Text(
-                text = track.title,
-                style = MaterialTheme.typography.headlineSmall,
-                maxLines = 2,
-            )
-            TextButton(onClick = { onArtist?.invoke(track.artist) }) {
-                Text(track.artist)
-            }
-            track.album?.let { album ->
-                TextButton(onClick = {
-                    scope.launch { onAlbum?.invoke(track) }
-                }) { Text(album) }
-            }
-            if (isBuffering) LoadingIndicator()
-            Slider(
-                state = seekSliderState,
-                onValueChange = { value ->
-                    seekSliderState.value = value
-                    onSeek(value)
-                },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = durationMs > 0L,
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(
-                    "${currentPositionMs / 1000}s",
-                    style = MaterialTheme.typography.labelMedium,
-                )
-                Text(
-                    "${durationMs / 1000}s",
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                    .padding(horizontal = 24.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = onPrevious, enabled = canSkipPrevious) {
-                    Icon(
-                        painter = materialSymbolPainterResource(
-                            name = "skip_previous",
-                            slot = "playback.previous",
-                        ),
-                        contentDescription = "Previous",
-                        modifier = Modifier.size(28.dp),
+                FullPlayerAlbumCarousel(
+                    track = track,
+                    isPlaying = isPlaying,
+                    queueState = queueState,
+                    onTrack = onTrack,
+                    onAlbum = onAlbum,
+                    motionArtwork = motionArtwork,
+                    expansionProgress = expansionProgress,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .graphicsLayer {
+                            alpha = fullPlayerSectionAlpha(expansionProgress, 0.08f)
+                        },
+                )
+                Spacer(modifier = Modifier.width(9.dp))
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.SpaceEvenly,
+                ) {
+                    FullPlayerSongMetadata(
+                        track = track,
+                        useRoundedTypography = useRoundedTypography,
+                        isPlaying = isPlaying,
+                        onArtist = onArtist,
+                        onLyrics = { onPanelChange("lyrics") },
+                        onQueue = queueVisible,
+                        modifier = Modifier.graphicsLayer {
+                            alpha = fullPlayerSectionAlpha(expansionProgress, 0.20f)
+                        },
+                    )
+                    PlayerSeekBar(
+                        track = track,
+                        isPlaying = isPlaying,
+                        isBuffering = isBuffering,
+                        currentPositionMs = currentPositionMs,
+                        durationMs = durationMs,
+                        audioQuality = audioQuality,
+                        switchingQualityFormat = switchingQualityFormat,
+                        onQualityVariantSelected = onQualityVariantSelected,
+                        onSeek = onSeek,
+                        onAudioQualityClick = audioVisible,
+                        isDark = androidx.compose.foundation.isSystemInDarkTheme(),
+                        activeTrackColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        inactiveTrackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f),
+                        thumbColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        timeTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        timeTextFontFamily = if (useRoundedTypography) RoundedSans else null,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 70.dp)
+                            .graphicsLayer {
+                                alpha = fullPlayerSectionAlpha(expansionProgress, 0.08f)
+                            },
+                    )
+                    FullPlayerPlaybackControls(
+                        isPlaying = isPlaying,
+                        isBuffering = isBuffering,
+                        canSkipPrevious = canSkipPrevious,
+                        canSkipNext = queueState?.hasNext == true,
+                        isShuffle = isShuffle,
+                        repeatMode = repeatMode,
+                        onPrevious = onPrevious,
+                        onPlayPause = onPlayPause,
+                        onNext = onNext,
+                        onShuffle = onShuffle,
+                        onRepeat = onRepeat,
+                        expansionProgress = expansionProgress,
+                        modifier = Modifier.graphicsLayer {
+                            alpha = fullPlayerSectionAlpha(expansionProgress, 0.42f)
+                        },
                     )
                 }
-                FilledIconButton(
-                    onClick = onPlayPause,
-                    modifier = Modifier.size(64.dp),
-                    enabled = durationMs > 0L,
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceAround,
+            ) {
+                FullPlayerAlbumCarousel(
+                    track = track,
+                    isPlaying = isPlaying,
+                    queueState = queueState,
+                    onTrack = onTrack,
+                    onAlbum = onAlbum,
+                    motionArtwork = motionArtwork,
+                    expansionProgress = expansionProgress,
+                    modifier = Modifier.graphicsLayer {
+                        alpha = fullPlayerSectionAlpha(expansionProgress, 0.08f)
+                    },
+                )
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .graphicsLayer {
+                            alpha = fullPlayerSectionAlpha(expansionProgress, 0.20f)
+                        },
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    FullPlayerSongMetadata(
+                        track = track,
+                        useRoundedTypography = useRoundedTypography,
+                        isPlaying = isPlaying,
+                        onArtist = onArtist,
+                        onLyrics = { onPanelChange("lyrics") },
+                        onQueue = queueVisible,
+                    )
+                    PlayerSeekBar(
+                        track = track,
+                        isPlaying = isPlaying,
+                        isBuffering = isBuffering,
+                        currentPositionMs = currentPositionMs,
+                        durationMs = durationMs,
+                        audioQuality = audioQuality,
+                        switchingQualityFormat = switchingQualityFormat,
+                        onQualityVariantSelected = onQualityVariantSelected,
+                        onSeek = onSeek,
+                        onAudioQualityClick = audioVisible,
+                        isDark = androidx.compose.foundation.isSystemInDarkTheme(),
+                        activeTrackColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        inactiveTrackColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f),
+                        thumbColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        timeTextColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        timeTextFontFamily = if (useRoundedTypography) RoundedSans else null,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 70.dp)
+                            .graphicsLayer {
+                                alpha = fullPlayerSectionAlpha(expansionProgress, 0.08f)
+                            },
+                    )
+                }
+
+                FullPlayerPlaybackControls(
+                    isPlaying = isPlaying,
+                    isBuffering = isBuffering,
+                    canSkipPrevious = canSkipPrevious,
+                    canSkipNext = queueState?.hasNext == true,
+                    isShuffle = isShuffle,
+                    repeatMode = repeatMode,
+                    onPrevious = onPrevious,
+                    onPlayPause = onPlayPause,
+                    onNext = onNext,
+                    onShuffle = onShuffle,
+                    onRepeat = onRepeat,
+                    expansionProgress = expansionProgress,
+                    modifier = Modifier.graphicsLayer {
+                        alpha = fullPlayerSectionAlpha(expansionProgress, 0.42f)
+                    },
+                )
+            }
+        }
+    }
+}
+
+private fun fullPlayerSectionAlpha(expansionProgress: Float, startThreshold: Float): Float =
+    ((expansionProgress - startThreshold) / (1f - startThreshold).coerceAtLeast(0.001f))
+        .coerceIn(0f, 1f)
+
+@Composable
+private fun FullPlayerPlaybackControls(
+    isPlaying: Boolean,
+    isBuffering: Boolean,
+    canSkipPrevious: Boolean,
+    canSkipNext: Boolean,
+    isShuffle: Boolean,
+    repeatMode: RepeatMode,
+    onPrevious: () -> Unit,
+    onPlayPause: () -> Unit,
+    onNext: () -> Unit,
+    onShuffle: () -> Unit,
+    onRepeat: () -> Unit,
+    expansionProgress: Float,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        FullPlayerTransportControls(
+            isPlaying = isPlaying,
+            isBuffering = isBuffering,
+            canSkipPrevious = canSkipPrevious,
+            canSkipNext = canSkipNext,
+            onPrevious = onPrevious,
+            onPlayPause = onPlayPause,
+            onNext = onNext,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+        )
+        Spacer(modifier = Modifier.height(14.dp))
+        FullPlayerToggleRow(
+            isShuffle = isShuffle,
+            repeatMode = repeatMode,
+            onShuffle = onShuffle,
+            onRepeat = onRepeat,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 66.dp, max = 86.dp)
+                .padding(horizontal = 26.dp)
+                .padding(bottom = 6.dp),
+        )
+    }
+}
+
+@Composable
+private fun FullPlayerToolbar(
+    title: String,
+    useRoundedTypography: Boolean,
+    expansionProgress: Float,
+    isLyrics: Boolean,
+    onCollapse: () -> Unit,
+    onBackToPlayer: () -> Unit,
+    onOpenMoreOptions: () -> Unit,
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    androidx.compose.material3.TopAppBar(
+        modifier = Modifier.graphicsLayer {
+            alpha = expansionProgress.coerceIn(0f, 1f)
+        },
+        title = {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelLarge.copy(
+                    fontFamily = if (useRoundedTypography) RoundedSans else MaterialTheme.typography.labelLarge.fontFamily,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.5.sp,
+                ),
+                maxLines = 1,
+            )
+        },
+        navigationIcon = {
+            FilledTonalIconButton(
+                onClick = if (isLyrics) onBackToPlayer else onCollapse,
+                modifier = Modifier.padding(start = 4.dp).size(48.dp),
+            ) {
+                Icon(
+                    painter = materialSymbolPainterResource(
+                        if (isLyrics) "arrow_back" else "keyboard_arrow_down",
+                    ),
+                    contentDescription = if (isLyrics) "Back to player" else "Collapse player",
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+        },
+        actions = {
+            if (!isLyrics) {
+                FilledTonalIconButton(
+                    onClick = onOpenMoreOptions,
+                    modifier = Modifier.padding(end = 14.dp).size(48.dp),
                 ) {
                     Icon(
-                        painter = materialSymbolPainterResource(
-                            name = if (isPlaying) "pause" else "play_arrow",
-                            slot = if (isPlaying) "playback.pause" else "playback.play",
-                        ),
-                        contentDescription = if (isPlaying) "Pause" else "Play",
-                        modifier = Modifier.size(30.dp),
-                    )
-                }
-                IconButton(onClick = onNext) {
-                    Icon(
-                        painter = materialSymbolPainterResource(
-                            name = "skip_next",
-                            slot = "playback.skip",
-                        ),
-                        contentDescription = "Next",
-                        modifier = Modifier.size(28.dp),
+                        painter = materialSymbolPainterResource("more_vert"),
+                        contentDescription = "More options",
+                        modifier = Modifier.size(24.dp),
                     )
                 }
             }
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                FilterChip(
-                    selected = isShuffle,
-                    onClick = onShuffle,
-                    label = { Text("Shuffle") },
-                )
-                FilterChip(
-                    selected = repeatMode != RepeatMode.OFF,
-                    onClick = onRepeat,
-                    label = { Text("Repeat: ${repeatMode.name.lowercase()}") },
-                )
-                FilterChip(
-                    selected = false,
-                    onClick = { onPanelChange("lyrics") },
-                    label = { Text("Lyrics") },
-                )
-                FilterChip(
-                    selected = false,
-                    onClick = queueVisible,
-                    label = { Text("Queue") },
-                )
-                FilterChip(
-                    selected = false,
-                    onClick = audioVisible,
-                    label = { Text("Audio") },
-                )
-            }
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(track.availableVariants, key = { it.format }) { variant ->
-                    FilterChip(
-                        selected = audioQuality?.codec.equals(variant.format, ignoreCase = true),
-                        onClick = { onQualityVariantSelected?.invoke(variant) },
-                        label = { Text(variant.format) },
-                    )
-                }
-            }
-            switchingQualityFormat?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall)
-            }
-            TextButton(onClick = onDismiss) { Text("Dismiss player") }
+        },
+        colors = androidx.compose.material3.TopAppBarDefaults.topAppBarColors(
+            containerColor = androidx.compose.ui.graphics.Color.Transparent,
+            titleContentColor = colorScheme.onPrimaryContainer,
+            navigationIconContentColor = colorScheme.primary,
+            actionIconContentColor = colorScheme.primary,
+        ),
+    )
+}
+
+@Composable
+private fun FullPlayerSongMetadata(
+    track: HomeTrack,
+    useRoundedTypography: Boolean,
+    isPlaying: Boolean,
+    onArtist: ((String) -> Unit)?,
+    onLyrics: () -> Unit,
+    onQueue: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 70.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = track.title,
+                style = MaterialTheme.typography.headlineSmall.copy(
+                    fontFamily = if (useRoundedTypography) RoundedSans else MaterialTheme.typography.headlineSmall.fontFamily,
+                    fontWeight = FontWeight.Bold,
+                    color = colorScheme.onPrimaryContainer,
+                ),
+                maxLines = 1,
+                modifier = Modifier.basicMarquee(
+                    iterations = if (isPlaying) Int.MAX_VALUE else 0,
+                ),
+            )
+            Text(
+                text = track.artist,
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontFamily = if (useRoundedTypography) RoundedSans else MaterialTheme.typography.titleMedium.fontFamily,
+                    letterSpacing = 0.sp,
+                    color = colorScheme.onPrimaryContainer.copy(alpha = 0.7f),
+                ),
+                maxLines = 1,
+                modifier = Modifier
+                    .clickable(
+                        enabled = onArtist != null,
+                        role = Role.Button,
+                        onClickLabel = "Open artist",
+                    ) { onArtist?.invoke(track.artist) }
+                    .basicMarquee(iterations = if (isPlaying) Int.MAX_VALUE else 0),
+            )
         }
-        Spacer(Modifier.height(24.dp))
+
+        val lyricsInteractionSource = remember { MutableInteractionSource() }
+        val queueInteractionSource = remember { MutableInteractionSource() }
+        ButtonGroup(
+            overflowIndicator = { menuState ->
+                ButtonGroupDefaults.OverflowIndicator(menuState = menuState)
+            },
+            horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val lyricsModifier = Modifier.animateWidth(lyricsInteractionSource)
+            val queueModifier = Modifier.animateWidth(queueInteractionSource)
+            customItem(
+                buttonGroupContent = {
+                    FilledTonalIconButton(
+                        onClick = onLyrics,
+                        modifier = lyricsModifier,
+                        shape = ButtonGroupDefaults.connectedLeadingButtonShape,
+                        interactionSource = lyricsInteractionSource,
+                    ) {
+                        Icon(
+                            painter = materialSymbolPainterResource("lyrics"),
+                            contentDescription = "Lyrics",
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
+                },
+                menuContent = { menuState ->
+                    DropdownMenuItem(
+                        text = { Text("Lyrics") },
+                        leadingIcon = {
+                            Icon(
+                                painter = materialSymbolPainterResource("lyrics"),
+                                contentDescription = null,
+                            )
+                        },
+                        onClick = {
+                            onLyrics()
+                            menuState.dismiss()
+                        },
+                    )
+                },
+            )
+            customItem(
+                buttonGroupContent = {
+                    FilledTonalIconButton(
+                        onClick = onQueue,
+                        modifier = queueModifier,
+                        shape = ButtonGroupDefaults.connectedTrailingButtonShape,
+                        interactionSource = queueInteractionSource,
+                    ) {
+                        Icon(
+                            painter = materialSymbolPainterResource("queue_music"),
+                            contentDescription = "Queue",
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
+                },
+                menuContent = { menuState ->
+                    DropdownMenuItem(
+                        text = { Text("Queue") },
+                        leadingIcon = {
+                            Icon(
+                                painter = materialSymbolPainterResource("queue_music"),
+                                contentDescription = null,
+                            )
+                        },
+                        onClick = {
+                            onQueue()
+                            menuState.dismiss()
+                        },
+                    )
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun FullPlayerAlbumCarousel(
+    track: HomeTrack,
+    isPlaying: Boolean,
+    queueState: QueueState?,
+    onTrack: ((HomeTrack) -> Unit)?,
+    onAlbum: (suspend (HomeTrack) -> Boolean)?,
+    motionArtwork: LyricspornMotionArtwork?,
+    expansionProgress: Float,
+    modifier: Modifier = Modifier,
+) {
+    val items = remember(queueState, track.id) { buildPlayerCarouselItems(track, queueState) }
+    val currentEntryId = queueState?.currentEntry?.id
+    val currentPage = remember(items, currentEntryId, track.id) {
+        items.indexOfFirst { currentEntryId != null && it.entryId == currentEntryId }
+            .takeIf { it >= 0 }
+            ?: items.indexOfLast { it.track.id == track.id }.takeIf { it >= 0 }
+            ?: 0
+    }
+    val carouselState = rememberCarouselState(initialItem = currentPage, itemCount = { items.size })
+    var programmaticScroll by remember(carouselState) { mutableStateOf(false) }
+    val hapticFeedback = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+    val albumArtScale by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (isPlaying) 1f else 0.95f,
+        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+        label = "fullPlayerAlbumArtScale",
+    )
+    LaunchedEffect(currentPage, items) {
+        if (carouselState.currentItem != currentPage) {
+            programmaticScroll = true
+            try {
+                carouselState.scrollToItem(currentPage)
+            } finally {
+                programmaticScroll = false
+            }
+        }
+    }
+    LaunchedEffect(carouselState, items, currentPage, currentEntryId, track.id) {
+        var observedScroll = false
+        snapshotFlow { carouselState.isScrollInProgress to carouselState.currentItem }
+            .distinctUntilChanged()
+            .collectLatest { (isScrolling, page) ->
+                if (isScrolling) {
+                    observedScroll = true
+                } else if (observedScroll) {
+                    observedScroll = false
+                    val selected = items.getOrNull(page)
+                    if (!programmaticScroll && page != currentPage && selected != null) {
+                        hapticFeedback.performHapticFeedback(
+                            androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress,
+                        )
+                        onTrack?.invoke(selected.track)
+                    }
+                }
+            }
+    }
+
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+    ) {
+        val itemWidth = maxWidth
+        RoundedHorizontalMultiBrowseCarousel(
+            state = carouselState,
+            carouselWidth = itemWidth,
+            itemSpacing = 8.dp,
+            itemCornerRadius = 18.dp,
+            carouselStyle = "no_peek",
+            suppressNoPeekSettleCorrection = programmaticScroll,
+            itemKey = { index -> playerCarouselItemAtOrNull(items, index)?.entryId ?: index },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(itemWidth)
+                .graphicsLayer {
+                    scaleX = albumArtScale
+                    scaleY = albumArtScale
+                },
+        ) { page ->
+            playerCarouselItemAtOrNull(items, page)?.let { item ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .aspectRatio(1f)
+                        .clickable(
+                            enabled = page == carouselState.currentItem && onAlbum != null,
+                            role = Role.Button,
+                            onClickLabel = "Open album",
+                        ) { scope.launch { onAlbum?.invoke(item.track) } },
+                ) {
+                    AsyncImage(
+                        model = item.track.artworkUrl,
+                        contentDescription = item.track.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    if (
+                        motionArtwork != null &&
+                        item.track.id == track.id &&
+                        page == carouselState.currentItem &&
+                        expansionProgress >= MotionArtworkDisplayProgress
+                    ) {
+                        MotionArtworkVideo(
+                            artwork = motionArtwork,
+                            isPlaying = isPlaying,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    alpha = ((expansionProgress - MotionArtworkDisplayProgress) /
+                                        (1f - MotionArtworkDisplayProgress))
+                                        .coerceIn(0f, 1f)
+                                },
+                        )
+                    }
+                }
+            }
+        }
     }
 }

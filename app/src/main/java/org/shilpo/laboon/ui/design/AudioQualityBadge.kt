@@ -11,6 +11,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -23,12 +24,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ButtonGroup
 import androidx.compose.material3.ButtonGroupDefaults
-import androidx.compose.material3.CircularWavyProgressIndicator
+import androidx.compose.material3.ButtonShapes
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalToggleButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -168,6 +170,12 @@ fun AudioQualityBadge(
         return
     }
 
+    val hasMultipleVariants = formatOptions.size > 1 && onVariantSelected != null
+    val groupItemCount = formatOptions.size + if (isQualityAvailable) 1 else 0
+    val groupInteractionSources = remember(groupItemCount) {
+        List(groupItemCount) { MutableInteractionSource() }
+    }
+
     ButtonGroup(
         modifier = modifier,
         overflowIndicator = { menuState ->
@@ -180,19 +188,23 @@ fun AudioQualityBadge(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (isQualityAvailable) {
+            val interactionSource = groupInteractionSources[0]
             customItem(
                 buttonGroupContent = {
                     FilledTonalButton(
                         onClick = { onClick?.invoke() },
                         enabled = onClick != null,
+                        shapes = groupedButtonShapes(index = 0, count = groupItemCount),
                         colors = ButtonDefaults.filledTonalButtonColors(
                             containerColor = colorScheme.secondaryContainer,
                             contentColor = colorScheme.onSecondaryContainer,
                         ),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
                         modifier = Modifier
+                            .animateWidth(interactionSource, compressionLimit = 14.dp)
                             .height(42.dp)
                             .semantics { contentDescription = "Audio quality details" },
+                        interactionSource = interactionSource,
                     ) {
                         QualityMetricsContent(
                             detailState = AudioQualityDetailState.Locked,
@@ -217,9 +229,9 @@ fun AudioQualityBadge(
             )
         }
 
-        val hasMultipleVariants = formatOptions.size > 1 && onVariantSelected != null
-
-        formatOptions.forEach { variant ->
+        formatOptions.forEachIndexed { index, variant ->
+            val groupIndex = index + if (isQualityAvailable) 1 else 0
+            val interactionSource = groupInteractionSources[groupIndex]
             val isSelected = hasMultipleVariants && (
                     variant.backendTrackId == track?.backendTrackId ||
                             (track?.backendTrackId == null && variant.format.equals(
@@ -251,18 +263,23 @@ fun AudioQualityBadge(
                                     onVariantSelected(variant)
                                 }
                             },
+                            shapes = groupedToggleButtonShapes(
+                                index = groupIndex,
+                                count = groupItemCount,
+                            ),
                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
                             modifier = Modifier
+                                .animateWidth(interactionSource, compressionLimit = 14.dp)
                                 .height(42.dp)
                                 .semantics {
                                     contentDescription = "$accessibleFormat quality"
                                 },
+                            interactionSource = interactionSource,
                         ) {
                             if (isSwitching) {
-                                CircularWavyProgressIndicator(
+                                LoadingIndicator(
                                     modifier = Modifier.size(18.dp),
                                     color = itemContentColor,
-                                    trackColor = Color.Transparent,
                                 )
                             } else if (variant.format.equals("aac", ignoreCase = true)) {
                                 Text(
@@ -286,22 +303,27 @@ fun AudioQualityBadge(
                         FilledTonalButton(
                             onClick = { onClick?.invoke() },
                             enabled = onClick != null,
+                            shapes = groupedButtonShapes(
+                                index = groupIndex,
+                                count = groupItemCount,
+                            ),
                             colors = ButtonDefaults.filledTonalButtonColors(
                                 containerColor = colorScheme.secondaryContainer,
                                 contentColor = colorScheme.onSecondaryContainer,
                             ),
                             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
                             modifier = Modifier
+                                .animateWidth(interactionSource, compressionLimit = 14.dp)
                                 .height(42.dp)
                                 .semantics {
                                     contentDescription = "$accessibleFormat quality"
                                 },
+                            interactionSource = interactionSource,
                         ) {
                             if (isSwitching) {
-                                CircularWavyProgressIndicator(
+                                LoadingIndicator(
                                     modifier = Modifier.size(18.dp),
                                     color = colorScheme.onSecondaryContainer,
-                                    trackColor = Color.Transparent,
                                 )
                             } else if (variant.format.equals("aac", ignoreCase = true)) {
                                 Text(
@@ -346,6 +368,27 @@ fun AudioQualityBadge(
             )
         }
     }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+private fun groupedToggleButtonShapes(index: Int, count: Int) = when {
+    count <= 1 -> ButtonGroupDefaults.connectedMiddleButtonShapes()
+    index == 0 -> ButtonGroupDefaults.connectedLeadingButtonShapes()
+    index == count - 1 -> ButtonGroupDefaults.connectedTrailingButtonShapes()
+    else -> ButtonGroupDefaults.connectedMiddleButtonShapes()
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+private fun groupedButtonShapes(index: Int, count: Int): ButtonShapes {
+    if (count <= 1) return ButtonDefaults.shapesFor(42.dp)
+
+    val toggleShapes = groupedToggleButtonShapes(index, count)
+    return ButtonShapes(
+        shape = toggleShapes.shape,
+        pressedShape = toggleShapes.pressedShape,
+    )
 }
 
 @Composable

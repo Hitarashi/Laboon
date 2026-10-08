@@ -7,7 +7,6 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -37,21 +36,11 @@ internal enum class MiniPlayerGestureOutcome {
     DismissRight,
 }
 
-internal enum class MiniPlayerVerticalOutcome {
-    None,
-    Expand,
-    Dismiss,
-}
-
 private const val MINI_PLAYER_SKIP_DISTANCE_DP = 56f
 private const val MINI_PLAYER_SKIP_MAX_DISTANCE_DP = 120f
 private const val MINI_PLAYER_FLING_MIN_DISTANCE_DP = 24f
 private const val MINI_PLAYER_FLING_VELOCITY_DP_PER_SECOND = 900f
 private const val MINI_PLAYER_DISMISS_SCREEN_FRACTION = 0.4f
-
-private const val MINI_PLAYER_VERTICAL_EXPAND_DISTANCE_DP = 24f
-private const val MINI_PLAYER_VERTICAL_DISMISS_DISTANCE_DP = 36f
-private const val MINI_PLAYER_VERTICAL_FLING_VELOCITY_DP_PER_SECOND = 400f
 
 /**
  * Classifies a completed mini-player gesture without depending on pointer input state.
@@ -100,30 +89,6 @@ internal fun resolveMiniPlayerGestureOutcome(
             MiniPlayerGestureOutcome.Next
         }
     }
-}
-
-/**
- * Classifies a completed mini-player vertical gesture.
- *
- * Swipe up expands the full player sheet. Swipe down closes/dismisses the player.
- */
-internal fun resolveMiniPlayerVerticalOutcome(
-    displacementY: Float,
-    velocityY: Float,
-    density: Float,
-): MiniPlayerVerticalOutcome {
-    val safeDensity = density.coerceAtLeast(0.1f)
-    val expandDist = MINI_PLAYER_VERTICAL_EXPAND_DISTANCE_DP * safeDensity
-    val dismissDist = MINI_PLAYER_VERTICAL_DISMISS_DISTANCE_DP * safeDensity
-    val flingVel = MINI_PLAYER_VERTICAL_FLING_VELOCITY_DP_PER_SECOND * safeDensity
-
-    if (displacementY < 0f && (-displacementY >= expandDist || velocityY <= -flingVel)) {
-        return MiniPlayerVerticalOutcome.Expand
-    }
-    if (displacementY > 0f && (displacementY >= dismissDist || velocityY >= flingVel)) {
-        return MiniPlayerVerticalOutcome.Dismiss
-    }
-    return MiniPlayerVerticalOutcome.None
 }
 
 /**
@@ -336,162 +301,6 @@ internal fun Modifier.miniPlayerDismissHorizontalGesture(
                 handler.onHorizontalDrag(dragAmount)
             },
             onDragEnd = { handler.onDragEnd(velocityTracker.calculateVelocity().x) },
-            onDragCancel = { handler.onDragCancel() },
-        )
-    }
-}
-
-/**
- * Handles mini-player vertical drag gestures:
- * - Swipe up expands the full player sheet (matching PixelPlayer sheet expansion).
- * - Swipe down closes the player.
- */
-internal class MiniPlayerVerticalDragGestureHandler(
-    private val scope: CoroutineScope,
-    private val density: Density,
-    private val hapticFeedback: HapticFeedback,
-    private val offsetAnimatable: Animatable<Float, AnimationVector1D>,
-    private val onExpand: () -> Unit,
-    private val onDismiss: () -> Unit,
-) {
-    private var accumulatedDragY: Float = 0f
-    private var offsetJob: Job? = null
-    private var hasPerformedGestureHaptic = false
-
-    fun onDragStart() {
-        accumulatedDragY = 0f
-        hasPerformedGestureHaptic = false
-        offsetJob?.cancel()
-        offsetJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            offsetAnimatable.stop()
-        }
-    }
-
-    fun onVerticalDrag(dragAmount: Float) {
-        accumulatedDragY += dragAmount
-
-        if (accumulatedDragY < 0f) {
-            // Dragging upwards to expand full player: elastic tension resistance
-            val maxUpTensionPx = 20f * density.density
-            val snapThresholdPx = 80f * density.density
-            val dragFraction = (abs(accumulatedDragY) / snapThresholdPx).coerceIn(0f, 1f)
-            val tensionOffset = lerp(0f, maxUpTensionPx, dragFraction)
-            offsetJob?.cancel()
-            offsetJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                offsetAnimatable.snapTo(-tensionOffset)
-            }
-        } else {
-            // Dragging downwards to close player: follow finger downwards
-            offsetJob?.cancel()
-            offsetJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                offsetAnimatable.snapTo(accumulatedDragY)
-            }
-        }
-    }
-
-    fun onDragEnd(velocityY: Float) {
-        val completedDragY = accumulatedDragY
-        val outcome = resolveMiniPlayerVerticalOutcome(
-            displacementY = completedDragY,
-            velocityY = velocityY,
-            density = density.density,
-        )
-        accumulatedDragY = 0f
-        offsetJob?.cancel()
-
-        when (outcome) {
-            MiniPlayerVerticalOutcome.Expand -> {
-                performGestureHapticOnce()
-                onExpand()
-                animateBackToRest()
-            }
-
-            MiniPlayerVerticalOutcome.Dismiss -> {
-                performGestureHapticOnce()
-                val targetDismissOffset = 180f * density.density
-                offsetJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-                    offsetAnimatable.animateTo(
-                        targetValue = targetDismissOffset,
-                        animationSpec = tween(
-                            durationMillis = 200,
-                            easing = FastOutSlowInEasing,
-                        ),
-                    )
-                    onDismiss()
-                    offsetAnimatable.snapTo(0f)
-                }
-            }
-
-            MiniPlayerVerticalOutcome.None -> animateBackToRest()
-        }
-    }
-
-    fun onDragCancel() {
-        accumulatedDragY = 0f
-        offsetJob?.cancel()
-        animateBackToRest()
-    }
-
-    private fun performGestureHapticOnce() {
-        if (hasPerformedGestureHaptic) return
-        hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-        hasPerformedGestureHaptic = true
-    }
-
-    private fun animateBackToRest() {
-        offsetJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
-            offsetAnimatable.animateTo(
-                targetValue = 0f,
-                animationSpec = spring(
-                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                    stiffness = Spring.StiffnessMedium,
-                ),
-            )
-        }
-    }
-}
-
-@Composable
-internal fun rememberMiniPlayerVerticalDragGestureHandler(
-    scope: CoroutineScope,
-    density: Density,
-    hapticFeedback: HapticFeedback,
-    offsetAnimatable: Animatable<Float, AnimationVector1D>,
-    onExpand: () -> Unit,
-    onDismiss: () -> Unit,
-): MiniPlayerVerticalDragGestureHandler {
-    val onExpandState = rememberUpdatedState(onExpand)
-    val onDismissState = rememberUpdatedState(onDismiss)
-    return remember(scope, density, hapticFeedback, offsetAnimatable) {
-        MiniPlayerVerticalDragGestureHandler(
-            scope = scope,
-            density = density,
-            hapticFeedback = hapticFeedback,
-            offsetAnimatable = offsetAnimatable,
-            onExpand = { onExpandState.value() },
-            onDismiss = { onDismissState.value() },
-        )
-    }
-}
-
-internal fun Modifier.miniPlayerVerticalDragGesture(
-    enabled: Boolean,
-    handler: MiniPlayerVerticalDragGestureHandler,
-): Modifier {
-    if (!enabled) return this
-    return this.pointerInput(enabled, handler) {
-        val velocityTracker = VelocityTracker()
-        detectVerticalDragGestures(
-            onDragStart = {
-                velocityTracker.resetTracking()
-                handler.onDragStart()
-            },
-            onVerticalDrag = { change, dragAmount ->
-                velocityTracker.addPosition(change.uptimeMillis, change.position)
-                change.consume()
-                handler.onVerticalDrag(dragAmount)
-            },
-            onDragEnd = { handler.onDragEnd(velocityTracker.calculateVelocity().y) },
             onDragCancel = { handler.onDragCancel() },
         )
     }

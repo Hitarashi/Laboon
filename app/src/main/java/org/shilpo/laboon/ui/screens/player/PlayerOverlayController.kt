@@ -51,14 +51,20 @@ internal fun PlayerOverlayController(
         FullPlayerTransportControls(
             isPlaying = state.isPlaying,
             isBuffering = state.isBuffering,
+            canSkipPrevious = state.canSkipPrevious,
+            canSkipNext = state.queueState?.hasNext == true,
+            onPlayPause = actions.onPlayPause,
+            onPrevious = actions.onPrevious,
+            onNext = actions.onNext,
+        )
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        FullPlayerToggleRow(
             isShuffle = state.isShuffle,
             repeatMode = state.repeatMode,
-            onPlayPauseClick = actions.onPlayPause,
-            onPreviousClick = actions.onPrevious,
-            onNextClick = actions.onNext,
-            onToggleShuffle = actions.onToggleShuffle,
-            onCycleRepeatMode = actions.onCycleRepeatMode,
-            isDark = isDark,
+            onShuffle = actions.onToggleShuffle,
+            onRepeat = actions.onCycleRepeatMode,
         )
     }
 }

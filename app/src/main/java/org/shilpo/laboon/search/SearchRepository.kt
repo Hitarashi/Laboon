@@ -31,7 +31,8 @@ data class PlaybackResolution(
 
 /**
  * Cached-server-side state for one provider track id, as reported by `POST /api/v1/lookup`.
- * Only produced for tracks that actually have at least one usable format id.
+ * Only produced for tracks that actually have at least one server format id. The default playback
+ * selection can be empty when the only available format is unsupported Dolby audio.
  */
 data class CachedTrackAvailability(
     val variants: List<TrackFormatVariant>,
@@ -140,6 +141,7 @@ interface SearchRepository {
 class SearchRepositoryImpl(
     private val sessionStore: SessionStore,
     private val http: HttpJsonClient = HttpJsonClient(),
+    private val deviceSupportsDolby: () -> Boolean = PlatformAudioCodecSupport::supportsDolby,
 ) : SearchRepository, TrackAvailabilityLookup, AlbumAvailabilityLookup {
 
     override suspend fun search(
@@ -271,8 +273,14 @@ class SearchRepositoryImpl(
             lookupAvailableFormats(tracks.mapNotNull(HomeTrack::providerTrackId)).cached
         return tracks.map { track ->
             val availability = track.providerTrackId?.let(availabilityByAppleId::get)
+            val preferredTrackId = availability?.playbackTrackId
             track.copy(
-                backendTrackId = availability?.playbackTrackId,
+                streamUrl = when {
+                    availability == null -> track.streamUrl
+                    preferredTrackId != null && preferredTrackId == track.backendTrackId -> track.streamUrl
+                    else -> null
+                },
+                backendTrackId = preferredTrackId,
                 isCached = availability?.variants?.isNotEmpty() == true,
                 codec = availability?.preferredCodec,
                 availableFormats = availability?.variants.orEmpty()
@@ -299,6 +307,7 @@ class SearchRepositoryImpl(
                 .mapNotNull(::normalizeProviderTrackId)
                 .distinct()
             if (validIds.isEmpty()) return@withContext BatchAvailabilityLookup.EMPTY
+            val dolbySupported = deviceSupportsDolby()
 
             val availabilityById = linkedMapOf<String, CachedTrackAvailability>()
             val unresolved = linkedSetOf<String>()
@@ -356,7 +365,10 @@ class SearchRepositoryImpl(
                         }
                     }.orEmpty()
                     if (cachedFormats.isNotEmpty()) {
-                        val preferred = cachedFormats.maxByOrNull { it.format.preference() }
+                        val preferred = DefaultAudioVariantSelector.selectDefault(
+                            cachedFormats,
+                            dolbySupported,
+                        )
                         availabilityById[appleId] = CachedTrackAvailability(
                             variants = cachedFormats,
                             preferredCodec = preferred?.format,
@@ -525,13 +537,6 @@ class SearchRepositoryImpl(
                 backendTrackId = backendId,
             )
         }
-
-    private fun String.preference(): Int = when (this) {
-        "ec-3" -> 3
-        "alac" -> 2
-        "aac" -> 1
-        else -> 0
-    }
 
     private fun String.normalizeFormat(): String = lowercase(Locale.ROOT)
         .replace("ec3", "ec-3")

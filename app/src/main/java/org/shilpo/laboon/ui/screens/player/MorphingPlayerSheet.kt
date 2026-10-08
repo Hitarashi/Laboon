@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -48,15 +49,15 @@ import org.shilpo.laboon.playback.DiscoveryStatus
 import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.playback.RepeatMode
 import org.shilpo.laboon.playback.SpectrumFrame
+import org.shilpo.laboon.theme.LocalArtworkColorScheme
 import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
 import org.shilpo.laboon.ui.design.MiniPlayerSpacing
 import org.shilpo.laboon.ui.design.NavigationBarBottomPadding
 import org.shilpo.laboon.ui.design.NavigationBarHeight
 import org.shilpo.laboon.ui.design.painterResource
+import org.shilpo.laboon.ui.design.theme.animateColorScheme
 
 private const val SettleDurationMs = 400
-private const val MotionArtworkRequestProgress = 0.97f
-private const val MotionArtworkDisplayProgress = 0.96f
 private val SettleEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 
 private val CookieMorph = Morph(MaterialShapes.Circle, MaterialShapes.Cookie12Sided)
@@ -138,50 +139,57 @@ fun MorphingPlayerSheet(
     motionArtwork: LyricspornMotionArtwork? = null,
     onRequestMotionArtwork: (() -> Unit)? = null,
 ) {
+    val playerColorScheme = animateColorScheme(
+        LocalArtworkColorScheme.current ?: MaterialTheme.colorScheme,
+    )
     val collapsedBottomChromeClearance = lerp(
         start = NavigationBarHeight + NavigationBarBottomPadding + MiniPlayerSpacing,
         stop = MiniPlayerSpacing,
         fraction = albumDockProgress.coerceIn(0f, 1f),
     )
-    StockPlayerSheet(
-        track = track,
-        isPlaying = isPlaying,
-        isBuffering = isBuffering,
-        progress = playbackProgress,
-        currentPositionMs = currentPositionMs,
-        durationMs = durationMs,
-        audioQuality = audioQuality,
-        switchingQualityFormat = switchingQualityFormat,
-        onQualityVariantSelected = onQualityVariantSelected,
-        isShuffle = isShuffle,
-        repeatMode = repeatMode,
-        canSkipPrevious = canSkipPrevious,
-        onPlayPause = onPlayPauseClick,
-        onPrevious = onPreviousClick,
-        onNext = onNextClick,
-        onSeek = onSeek,
-        onShuffle = onToggleShuffle,
-        onRepeat = onCycleRepeatMode,
-        onDismiss = onDismiss,
-        onExpansionChange = onExpansionProgressChange,
-        collapsedBottomChromeClearance = collapsedBottomChromeClearance,
-        navigationBarHiddenProgress = albumDockProgress,
-        queueState = queueState,
-        onRemove = onRemoveUpNext,
-        onMove = onMoveUpNext,
-        onTrack = onTrackClick,
-        onQueueEntry = onQueueEntryClick,
-        onPromote = onPromoteAutoplay,
-        onClear = onClearUpcoming,
-        onRetry = onRetryDiscovery,
-        isDiscovering = isDiscovering,
-        discoveryStatus = discoveryStatus,
-        onAlbum = onOpenAlbum,
-        onArtist = onArtistClick,
-        lyrics = lyricsLines,
-        lyricsLoading = lyricsLoading,
-        modifier = modifier,
-    )
+    MaterialTheme(colorScheme = playerColorScheme) {
+        StockPlayerSheet(
+            track = track,
+            isPlaying = isPlaying,
+            isBuffering = isBuffering,
+            progress = playbackProgress,
+            currentPositionMs = currentPositionMs,
+            durationMs = durationMs,
+            audioQuality = audioQuality,
+            switchingQualityFormat = switchingQualityFormat,
+            onQualityVariantSelected = onQualityVariantSelected,
+            isShuffle = isShuffle,
+            repeatMode = repeatMode,
+            canSkipPrevious = canSkipPrevious,
+            onPlayPause = onPlayPauseClick,
+            onPrevious = onPreviousClick,
+            onNext = onNextClick,
+            onSeek = onSeek,
+            onShuffle = onToggleShuffle,
+            onRepeat = onCycleRepeatMode,
+            onDismiss = onDismiss,
+            onExpansionChange = onExpansionProgressChange,
+            collapsedBottomChromeClearance = collapsedBottomChromeClearance,
+            navigationBarHiddenProgress = albumDockProgress,
+            queueState = queueState,
+            onRemove = onRemoveUpNext,
+            onMove = onMoveUpNext,
+            onTrack = onTrackClick,
+            onQueueEntry = onQueueEntryClick,
+            onPromote = onPromoteAutoplay,
+            onClear = onClearUpcoming,
+            onRetry = onRetryDiscovery,
+            isDiscovering = isDiscovering,
+            discoveryStatus = discoveryStatus,
+            onAlbum = onOpenAlbum,
+            onArtist = onArtistClick,
+            lyrics = lyricsLines,
+            lyricsLoading = lyricsLoading,
+            motionArtwork = motionArtwork,
+            onRequestMotionArtwork = onRequestMotionArtwork,
+            modifier = modifier,
+        )
+    }
 }
 
 @Composable

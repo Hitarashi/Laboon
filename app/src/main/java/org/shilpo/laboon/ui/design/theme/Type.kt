@@ -3,7 +3,9 @@ package org.shilpo.laboon.ui.design.theme
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.ExperimentalTextApi
 import org.shilpo.laboon.R
 
 val GoogleSansFlex = FontFamily(
@@ -11,6 +13,50 @@ val GoogleSansFlex = FontFamily(
     Font(R.font.google_sans_flex, FontWeight.Medium),
     Font(R.font.google_sans_flex, FontWeight.SemiBold),
     Font(R.font.google_sans_flex, FontWeight.Bold),
+)
+
+@OptIn(ExperimentalTextApi::class)
+internal val RoundedSans = FontFamily(
+    Font(
+        resId = R.font.gsans_flex_full,
+        weight = FontWeight.Light,
+        variationSettings = FontVariation.Settings(
+            FontVariation.weight(FontWeight.Light.weight),
+            FontVariation.Setting("ROND", 100f),
+        ),
+    ),
+    Font(
+        resId = R.font.gsans_flex_full,
+        weight = FontWeight.Normal,
+        variationSettings = FontVariation.Settings(
+            FontVariation.weight(FontWeight.Normal.weight),
+            FontVariation.Setting("ROND", 100f),
+        ),
+    ),
+    Font(
+        resId = R.font.gsans_flex_full,
+        weight = FontWeight.Medium,
+        variationSettings = FontVariation.Settings(
+            FontVariation.weight(FontWeight.Medium.weight),
+            FontVariation.Setting("ROND", 100f),
+        ),
+    ),
+    Font(
+        resId = R.font.gsans_flex_full,
+        weight = FontWeight.SemiBold,
+        variationSettings = FontVariation.Settings(
+            FontVariation.weight(FontWeight.SemiBold.weight),
+            FontVariation.Setting("ROND", 100f),
+        ),
+    ),
+    Font(
+        resId = R.font.gsans_flex_full,
+        weight = FontWeight.Bold,
+        variationSettings = FontVariation.Settings(
+            FontVariation.weight(FontWeight.Bold.weight),
+            FontVariation.Setting("ROND", 100f),
+        ),
+    ),
 )
 
 private val defaultTypography = Typography()

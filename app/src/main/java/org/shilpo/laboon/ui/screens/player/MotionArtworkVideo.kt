@@ -5,9 +5,11 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -31,10 +33,12 @@ import java.util.Locale
 @OptIn(markerClass = [UnstableApi::class])
 internal fun MotionArtworkVideo(
     artwork: LyricspornMotionArtwork,
+    isPlaying: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val currentIsPlaying = rememberUpdatedState(isPlaying)
     var hasRenderedFrame by remember(artwork.url) { mutableStateOf(false) }
     val player = remember(artwork.url, artwork.format) {
         ExoPlayer.Builder(context).build().apply {
@@ -60,7 +64,10 @@ internal fun MotionArtworkVideo(
         }
 
         fun syncPlayback() {
-            if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            if (
+                currentIsPlaying.value &&
+                lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+            ) {
                 if (player.playbackState == Player.STATE_IDLE) player.prepare()
                 player.play()
             } else {
@@ -87,6 +94,18 @@ internal fun MotionArtworkVideo(
             lifecycleOwner.lifecycle.removeObserver(observer)
             player.removeListener(listener)
             player.release()
+        }
+    }
+
+    LaunchedEffect(player, lifecycleOwner, isPlaying) {
+        if (
+            isPlaying &&
+            lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        ) {
+            if (player.playbackState == Player.STATE_IDLE) player.prepare()
+            player.play()
+        } else {
+            player.pause()
         }
     }
 

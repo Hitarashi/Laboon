@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.home.TrackFormatVariant
@@ -46,6 +47,11 @@ internal fun PlayerSeekBar(
     isDark: Boolean,
     showTrackInfo: Boolean = true,
     showAudioQuality: Boolean = true,
+    activeTrackColor: Color? = null,
+    inactiveTrackColor: Color? = null,
+    thumbColor: Color? = null,
+    timeTextColor: Color? = null,
+    timeTextFontFamily: FontFamily? = null,
 ) {
     var isSeeking by remember { mutableStateOf(false) }
     var seekPosition by remember { mutableFloatStateOf(0f) }
@@ -59,6 +65,18 @@ internal fun PlayerSeekBar(
         totalDuration = safeDuration,
         isVisible = true,
     )
+    val resolvedActiveTrackColor = activeTrackColor ?: if (isDark) Color.White else Color(0xFF191C1E)
+    val resolvedInactiveTrackColor = inactiveTrackColor ?: if (isDark) {
+        Color.White.copy(alpha = 0.24f)
+    } else {
+        Color.Black.copy(alpha = 0.16f)
+    }
+    val resolvedThumbColor = thumbColor ?: if (isDark) Color.White else Color(0xFF191C1E)
+    val resolvedTimeTextColor = timeTextColor ?: if (isDark) {
+        Color.White.copy(alpha = 0.6f)
+    } else {
+        Color.Black.copy(alpha = 0.6f)
+    }
 
     Column(modifier = modifier) {
         WavySliderExpressive(
@@ -72,11 +90,9 @@ internal fun PlayerSeekBar(
                 onSeek(fraction)
             },
             enabled = safeDuration > 0L,
-            activeTrackColor = if (isDark) Color.White else Color(0xFF191C1E),
-            inactiveTrackColor = if (isDark) Color.White.copy(alpha = 0.24f) else Color.Black.copy(
-                alpha = 0.16f
-            ),
-            thumbColor = if (isDark) Color.White else Color(0xFF191C1E),
+            activeTrackColor = resolvedActiveTrackColor,
+            inactiveTrackColor = resolvedInactiveTrackColor,
+            thumbColor = resolvedThumbColor,
             isPlaying = isPlaying,
             isVisible = true,
             modifier = Modifier
@@ -100,8 +116,10 @@ internal fun PlayerSeekBar(
             }
             Text(
                 text = formatDurationMs(position),
-                style = MaterialTheme.typography.labelSmall,
-                color = if (isDark) Color.White.copy(alpha = 0.6f) else Color.Black.copy(alpha = 0.6f),
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontFamily = timeTextFontFamily ?: MaterialTheme.typography.labelSmall.fontFamily,
+                ),
+                color = resolvedTimeTextColor,
             )
 
             if (showAudioQuality) {
@@ -129,8 +147,10 @@ internal fun PlayerSeekBar(
 
             Text(
                 text = formatDurationMs(safeDuration),
-                style = MaterialTheme.typography.labelSmall,
-                color = if (isDark) Color.White.copy(alpha = 0.6f) else Color.Black.copy(alpha = 0.6f),
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontFamily = timeTextFontFamily ?: MaterialTheme.typography.labelSmall.fontFamily,
+                ),
+                color = resolvedTimeTextColor,
             )
         }
     }

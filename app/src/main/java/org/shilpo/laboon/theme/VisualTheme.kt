@@ -30,6 +30,7 @@ import org.shilpo.laboon.theme.contract.ThemeTextStyle
 import org.shilpo.laboon.theme.renderer.LocalThemeIconOverrides
 
 internal val LocalVisualMotionScale = staticCompositionLocalOf { 1f }
+internal val LocalArtworkColorScheme = staticCompositionLocalOf<ColorScheme?> { null }
 
 @Composable
 internal fun LaboonExpressiveTheme(
@@ -39,23 +40,26 @@ internal fun LaboonExpressiveTheme(
 ) {
     val context = LocalContext.current
     val darkTheme = isSystemInDarkTheme()
-    var artworkSeed by androidx.compose.runtime.remember(theme?.manifest?.id) {
+    var artworkSeed by androidx.compose.runtime.remember(artworkUrl) {
         androidx.compose.runtime.mutableStateOf<Color?>(null)
     }
-    androidx.compose.runtime.LaunchedEffect(theme?.definition?.colorSource, artworkUrl) {
-        artworkSeed =
-            if (theme?.definition?.colorSource == org.shilpo.laboon.theme.contract.ThemeColorSource.ARTWORK) {
-                org.shilpo.laboon.ui.design.theme.ArtworkColorExtractor.extractSeedColor(
-                    context,
-                    artworkUrl
-                )
-            } else null
+    androidx.compose.runtime.LaunchedEffect(artworkUrl) {
+        artworkSeed = org.shilpo.laboon.ui.design.theme.ArtworkColorExtractor.extractSeedColor(
+            context,
+            artworkUrl,
+        )
+    }
+    val artworkColorScheme = remember(artworkSeed, darkTheme) {
+        artworkSeed?.let {
+            org.shilpo.laboon.ui.design.theme.ArtworkColorSchemeGenerator.generateColorScheme(
+                it,
+                darkTheme,
+            )
+        }
     }
     val systemScheme = when {
-        artworkSeed != null -> org.shilpo.laboon.ui.design.theme.ArtworkColorSchemeGenerator.generateColorScheme(
-            checkNotNull(artworkSeed),
-            darkTheme
-        )
+        theme?.definition?.colorSource == org.shilpo.laboon.theme.contract.ThemeColorSource.ARTWORK &&
+            artworkColorScheme != null -> artworkColorScheme
 
         Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && darkTheme -> dynamicDarkColorScheme(
             context
@@ -89,6 +93,7 @@ internal fun LaboonExpressiveTheme(
     CompositionLocalProvider(
         LocalVisualMotionScale provides motionScale,
         LocalThemeIconOverrides provides theme?.definition?.iconOverrides.orEmpty(),
+        LocalArtworkColorScheme provides artworkColorScheme,
     ) {
         MaterialExpressiveTheme(
             colorScheme = colors,

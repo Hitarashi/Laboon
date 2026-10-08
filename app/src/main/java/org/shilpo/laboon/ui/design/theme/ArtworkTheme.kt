@@ -3,18 +3,30 @@ package org.shilpo.laboon.ui.design.theme
 import android.content.Context
 import android.graphics.Bitmap
 import androidx.collection.LruCache
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.toArgb
 import coil3.BitmapImage
 import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import coil3.request.allowHardware
+import com.google.android.material.color.utilities.DynamicScheme
+import com.google.android.material.color.utilities.Hct
+import com.google.android.material.color.utilities.SchemeTonalSpot
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
@@ -290,211 +302,137 @@ object ArtworkColorExtractor {
 
 object ArtworkColorSchemeGenerator {
     fun generateColorScheme(seedColor: Color, isDark: Boolean): ColorScheme {
-        val r = (seedColor.red * 255).toInt()
-        val g = (seedColor.green * 255).toInt()
-        val b = (seedColor.blue * 255).toInt()
-        val hsl = ArtworkColorExtractor.rgbToHsl(r, g, b)
-        val h = hsl[0]
-        val s = hsl[1].coerceIn(0.25f, 0.85f)
-        val sSec = s * 0.40f
-        val hTert = (h + 60f) % 360f
-        val sTert = s * 0.60f
-        val sNeut = (s * 0.08f).coerceAtMost(0.12f)
-        val sNeutVar = (s * 0.16f).coerceAtMost(0.20f)
-
-        return if (isDark) {
-            val primary = Color.hsl(h, s, 0.80f)
-            darkColorScheme(
-                primary = primary,
-                onPrimary = Color.hsl(h, s, 0.20f),
-                primaryContainer = Color.hsl(h, s, 0.30f),
-                onPrimaryContainer = Color.hsl(h, s, 0.90f),
-                inversePrimary = Color.hsl(h, s, 0.40f),
-                secondary = Color.hsl(h, sSec, 0.80f),
-                onSecondary = Color.hsl(h, sSec, 0.20f),
-                secondaryContainer = Color.hsl(h, sSec, 0.30f),
-                onSecondaryContainer = Color.hsl(h, sSec, 0.90f),
-                tertiary = Color.hsl(hTert, sTert, 0.80f),
-                onTertiary = Color.hsl(hTert, sTert, 0.20f),
-                tertiaryContainer = Color.hsl(hTert, sTert, 0.30f),
-                onTertiaryContainer = Color.hsl(hTert, sTert, 0.90f),
-                background = Color.hsl(h, sNeut, 0.06f),
-                onBackground = Color.hsl(h, sNeut, 0.90f),
-                surface = Color.hsl(h, sNeut, 0.06f),
-                onSurface = Color.hsl(h, sNeut, 0.90f),
-                surfaceVariant = Color.hsl(h, sNeutVar, 0.25f),
-                onSurfaceVariant = Color.hsl(h, sNeutVar, 0.80f),
-                surfaceTint = primary,
-                inverseSurface = Color.hsl(h, sNeut, 0.90f),
-                inverseOnSurface = Color.hsl(h, sNeut, 0.20f),
-                surfaceDim = Color.hsl(h, sNeut, 0.06f),
-                surfaceBright = Color.hsl(h, sNeut, 0.24f),
-                surfaceContainerLowest = Color.hsl(h, sNeut, 0.04f),
-                surfaceContainerLow = Color.hsl(h, sNeut, 0.10f),
-                surfaceContainer = Color.hsl(h, sNeut, 0.12f),
-                surfaceContainerHigh = Color.hsl(h, sNeut, 0.17f),
-                surfaceContainerHighest = Color.hsl(h, sNeut, 0.22f),
-                outline = Color.hsl(h, sNeutVar, 0.60f),
-                outlineVariant = Color.hsl(h, sNeutVar, 0.30f),
-                scrim = Color(0xFF000000),
-            )
-        } else {
-            val primary = Color.hsl(h, s, 0.40f)
-            lightColorScheme(
-                primary = primary,
-                onPrimary = Color(0xFFFFFFFF),
-                primaryContainer = Color.hsl(h, s * 0.70f, 0.90f),
-                onPrimaryContainer = Color.hsl(h, s, 0.10f),
-                inversePrimary = Color.hsl(h, s, 0.80f),
-                secondary = Color.hsl(h, sSec, 0.40f),
-                onSecondary = Color(0xFFFFFFFF),
-                secondaryContainer = Color.hsl(h, sSec * 0.70f, 0.90f),
-                onSecondaryContainer = Color.hsl(h, sSec, 0.10f),
-                tertiary = Color.hsl(hTert, sTert, 0.40f),
-                onTertiary = Color(0xFFFFFFFF),
-                tertiaryContainer = Color.hsl(hTert, sTert * 0.70f, 0.90f),
-                onTertiaryContainer = Color.hsl(hTert, sTert, 0.10f),
-                background = Color.hsl(h, sNeut, 0.98f),
-                onBackground = Color.hsl(h, sNeut, 0.10f),
-                surface = Color.hsl(h, sNeut, 0.98f),
-                onSurface = Color.hsl(h, sNeut, 0.10f),
-                surfaceVariant = Color.hsl(h, sNeutVar, 0.90f),
-                onSurfaceVariant = Color.hsl(h, sNeutVar, 0.30f),
-                surfaceTint = primary,
-                inverseSurface = Color.hsl(h, sNeut, 0.20f),
-                inverseOnSurface = Color.hsl(h, sNeut, 0.95f),
-                surfaceDim = Color.hsl(h, sNeut, 0.87f),
-                surfaceBright = Color.hsl(h, sNeut, 0.98f),
-                surfaceContainerLowest = Color(0xFFFFFFFF),
-                surfaceContainerLow = Color.hsl(h, sNeut, 0.96f),
-                surfaceContainer = Color.hsl(h, sNeut, 0.94f),
-                surfaceContainerHigh = Color.hsl(h, sNeut, 0.92f),
-                surfaceContainerHighest = Color.hsl(h, sNeut, 0.90f),
-                outline = Color.hsl(h, sNeutVar, 0.50f),
-                outlineVariant = Color.hsl(h, sNeutVar, 0.80f),
-                scrim = Color(0xFF000000),
-            )
+        return runCatching {
+            SchemeTonalSpot(Hct.fromInt(seedColor.toArgb()), isDark, 0.0)
+                .toComposeColorScheme()
+        }.getOrElse {
+            if (isDark) darkColorScheme() else lightColorScheme()
         }
     }
 }
 
+private fun DynamicScheme.toComposeColorScheme(): ColorScheme = ColorScheme(
+    primary = Color(getPrimary()),
+    onPrimary = Color(getOnPrimary()),
+    primaryContainer = Color(getPrimaryContainer()),
+    onPrimaryContainer = Color(getOnPrimaryContainer()),
+    inversePrimary = Color(getInversePrimary()),
+    secondary = Color(getSecondary()),
+    onSecondary = Color(getOnSecondary()),
+    secondaryContainer = Color(getSecondaryContainer()),
+    onSecondaryContainer = Color(getOnSecondaryContainer()),
+    tertiary = Color(getTertiary()),
+    onTertiary = Color(getOnTertiary()),
+    tertiaryContainer = Color(getTertiaryContainer()),
+    onTertiaryContainer = Color(getOnTertiaryContainer()),
+    background = Color(getBackground()),
+    onBackground = Color(getOnBackground()),
+    surface = Color(getSurface()),
+    onSurface = Color(getOnSurface()),
+    surfaceVariant = Color(getSurfaceVariant()),
+    onSurfaceVariant = Color(getOnSurfaceVariant()),
+    surfaceTint = Color(getSurfaceTint()),
+    inverseSurface = Color(getInverseSurface()),
+    inverseOnSurface = Color(getInverseOnSurface()),
+    error = Color(getError()),
+    onError = Color(getOnError()),
+    errorContainer = Color(getErrorContainer()),
+    onErrorContainer = Color(getOnErrorContainer()),
+    outline = Color(getOutline()),
+    outlineVariant = Color(getOutlineVariant()),
+    scrim = Color(getScrim()),
+    surfaceBright = Color(getSurfaceBright()),
+    surfaceDim = Color(getSurfaceDim()),
+    surfaceContainer = Color(getSurfaceContainer()),
+    surfaceContainerHigh = Color(getSurfaceContainerHigh()),
+    surfaceContainerHighest = Color(getSurfaceContainerHighest()),
+    surfaceContainerLow = Color(getSurfaceContainerLow()),
+    surfaceContainerLowest = Color(getSurfaceContainerLowest()),
+    primaryFixed = Color(getPrimaryFixed()),
+    primaryFixedDim = Color(getPrimaryFixedDim()),
+    onPrimaryFixed = Color(getOnPrimaryFixed()),
+    onPrimaryFixedVariant = Color(getOnPrimaryFixedVariant()),
+    secondaryFixed = Color(getSecondaryFixed()),
+    secondaryFixedDim = Color(getSecondaryFixedDim()),
+    onSecondaryFixed = Color(getOnSecondaryFixed()),
+    onSecondaryFixedVariant = Color(getOnSecondaryFixedVariant()),
+    tertiaryFixed = Color(getTertiaryFixed()),
+    tertiaryFixedDim = Color(getTertiaryFixedDim()),
+    onTertiaryFixed = Color(getOnTertiaryFixed()),
+    onTertiaryFixedVariant = Color(getOnTertiaryFixedVariant()),
+)
+
 @Composable
 fun animateColorScheme(target: ColorScheme): ColorScheme {
-    val primary by animateColorAsState(target.primary, label = "color_primary")
-    val onPrimary by animateColorAsState(target.onPrimary, label = "color_onPrimary")
-    val primaryContainer by animateColorAsState(
-        target.primaryContainer,
-        label = "color_primaryContainer"
-    )
-    val onPrimaryContainer by animateColorAsState(
-        target.onPrimaryContainer,
-        label = "color_onPrimaryContainer"
-    )
-    val inversePrimary by animateColorAsState(target.inversePrimary, label = "color_inversePrimary")
-    val secondary by animateColorAsState(target.secondary, label = "color_secondary")
-    val onSecondary by animateColorAsState(target.onSecondary, label = "color_onSecondary")
-    val secondaryContainer by animateColorAsState(
-        target.secondaryContainer,
-        label = "color_secondaryContainer"
-    )
-    val onSecondaryContainer by animateColorAsState(
-        target.onSecondaryContainer,
-        label = "color_onSecondaryContainer"
-    )
-    val tertiary by animateColorAsState(target.tertiary, label = "color_tertiary")
-    val onTertiary by animateColorAsState(target.onTertiary, label = "color_onTertiary")
-    val tertiaryContainer by animateColorAsState(
-        target.tertiaryContainer,
-        label = "color_tertiaryContainer"
-    )
-    val onTertiaryContainer by animateColorAsState(
-        target.onTertiaryContainer,
-        label = "color_onTertiaryContainer"
-    )
-    val background by animateColorAsState(target.background, label = "color_background")
-    val onBackground by animateColorAsState(target.onBackground, label = "color_onBackground")
-    val surface by animateColorAsState(target.surface, label = "color_surface")
-    val onSurface by animateColorAsState(target.onSurface, label = "color_onSurface")
-    val surfaceVariant by animateColorAsState(target.surfaceVariant, label = "color_surfaceVariant")
-    val onSurfaceVariant by animateColorAsState(
-        target.onSurfaceVariant,
-        label = "color_onSurfaceVariant"
-    )
-    val surfaceTint by animateColorAsState(target.surfaceTint, label = "color_surfaceTint")
-    val inverseSurface by animateColorAsState(target.inverseSurface, label = "color_inverseSurface")
-    val inverseOnSurface by animateColorAsState(
-        target.inverseOnSurface,
-        label = "color_inverseOnSurface"
-    )
-    val outline by animateColorAsState(target.outline, label = "color_outline")
-    val outlineVariant by animateColorAsState(target.outlineVariant, label = "color_outlineVariant")
-    val scrim by animateColorAsState(target.scrim, label = "color_scrim")
-    val surfaceBright by animateColorAsState(target.surfaceBright, label = "color_surfaceBright")
-    val surfaceDim by animateColorAsState(target.surfaceDim, label = "color_surfaceDim")
-    val surfaceContainer by animateColorAsState(
-        target.surfaceContainer,
-        label = "color_surfaceContainer"
-    )
-    val surfaceContainerHigh by animateColorAsState(
-        target.surfaceContainerHigh,
-        label = "color_surfaceContainerHigh"
-    )
-    val surfaceContainerHighest by animateColorAsState(
-        target.surfaceContainerHighest,
-        label = "color_surfaceContainerHighest"
-    )
-    val surfaceContainerLow by animateColorAsState(
-        target.surfaceContainerLow,
-        label = "color_surfaceContainerLow"
-    )
-    val surfaceContainerLowest by animateColorAsState(
-        target.surfaceContainerLowest,
-        label = "color_surfaceContainerLowest"
-    )
-    val error by animateColorAsState(target.error, label = "color_error")
-    val onError by animateColorAsState(target.onError, label = "color_onError")
-    val errorContainer by animateColorAsState(target.errorContainer, label = "color_errorContainer")
-    val onErrorContainer by animateColorAsState(
-        target.onErrorContainer,
-        label = "color_onErrorContainer"
-    )
+    val progress = remember { Animatable(1f) }
+    var fromScheme by remember { mutableStateOf(target) }
+    var toScheme by remember { mutableStateOf(target) }
 
-    return target.copy(
-        primary = primary,
-        onPrimary = onPrimary,
-        primaryContainer = primaryContainer,
-        onPrimaryContainer = onPrimaryContainer,
-        inversePrimary = inversePrimary,
-        secondary = secondary,
-        onSecondary = onSecondary,
-        secondaryContainer = secondaryContainer,
-        onSecondaryContainer = onSecondaryContainer,
-        tertiary = tertiary,
-        onTertiary = onTertiary,
-        tertiaryContainer = tertiaryContainer,
-        onTertiaryContainer = onTertiaryContainer,
-        background = background,
-        onBackground = onBackground,
-        surface = surface,
-        onSurface = onSurface,
-        surfaceVariant = surfaceVariant,
-        onSurfaceVariant = onSurfaceVariant,
-        surfaceTint = surfaceTint,
-        inverseSurface = inverseSurface,
-        inverseOnSurface = inverseOnSurface,
-        outline = outline,
-        outlineVariant = outlineVariant,
-        scrim = scrim,
-        surfaceBright = surfaceBright,
-        surfaceDim = surfaceDim,
-        surfaceContainer = surfaceContainer,
-        surfaceContainerHigh = surfaceContainerHigh,
-        surfaceContainerHighest = surfaceContainerHighest,
-        surfaceContainerLow = surfaceContainerLow,
-        surfaceContainerLowest = surfaceContainerLowest,
-        error = error,
-        onError = onError,
-        errorContainer = errorContainer,
-        onErrorContainer = onErrorContainer,
-    )
+    LaunchedEffect(target) {
+        if (toScheme == target) return@LaunchedEffect
+        fromScheme = lerpColorScheme(fromScheme, toScheme, progress.value)
+        toScheme = target
+        progress.snapTo(0f)
+        progress.animateTo(
+            targetValue = 1f,
+            animationSpec = spring(stiffness = Spring.StiffnessLow),
+        )
+    }
+
+    val interpolated by remember {
+        derivedStateOf { lerpColorScheme(fromScheme, toScheme, progress.value) }
+    }
+    return interpolated
 }
+
+private fun lerpColorScheme(from: ColorScheme, to: ColorScheme, fraction: Float): ColorScheme =
+    to.copy(
+        primary = lerp(from.primary, to.primary, fraction),
+        onPrimary = lerp(from.onPrimary, to.onPrimary, fraction),
+        primaryContainer = lerp(from.primaryContainer, to.primaryContainer, fraction),
+        onPrimaryContainer = lerp(from.onPrimaryContainer, to.onPrimaryContainer, fraction),
+        inversePrimary = lerp(from.inversePrimary, to.inversePrimary, fraction),
+        primaryFixed = lerp(from.primaryFixed, to.primaryFixed, fraction),
+        primaryFixedDim = lerp(from.primaryFixedDim, to.primaryFixedDim, fraction),
+        onPrimaryFixed = lerp(from.onPrimaryFixed, to.onPrimaryFixed, fraction),
+        onPrimaryFixedVariant = lerp(from.onPrimaryFixedVariant, to.onPrimaryFixedVariant, fraction),
+        secondary = lerp(from.secondary, to.secondary, fraction),
+        onSecondary = lerp(from.onSecondary, to.onSecondary, fraction),
+        secondaryContainer = lerp(from.secondaryContainer, to.secondaryContainer, fraction),
+        onSecondaryContainer = lerp(from.onSecondaryContainer, to.onSecondaryContainer, fraction),
+        secondaryFixed = lerp(from.secondaryFixed, to.secondaryFixed, fraction),
+        secondaryFixedDim = lerp(from.secondaryFixedDim, to.secondaryFixedDim, fraction),
+        onSecondaryFixed = lerp(from.onSecondaryFixed, to.onSecondaryFixed, fraction),
+        onSecondaryFixedVariant = lerp(from.onSecondaryFixedVariant, to.onSecondaryFixedVariant, fraction),
+        tertiary = lerp(from.tertiary, to.tertiary, fraction),
+        onTertiary = lerp(from.onTertiary, to.onTertiary, fraction),
+        tertiaryContainer = lerp(from.tertiaryContainer, to.tertiaryContainer, fraction),
+        onTertiaryContainer = lerp(from.onTertiaryContainer, to.onTertiaryContainer, fraction),
+        tertiaryFixed = lerp(from.tertiaryFixed, to.tertiaryFixed, fraction),
+        tertiaryFixedDim = lerp(from.tertiaryFixedDim, to.tertiaryFixedDim, fraction),
+        onTertiaryFixed = lerp(from.onTertiaryFixed, to.onTertiaryFixed, fraction),
+        onTertiaryFixedVariant = lerp(from.onTertiaryFixedVariant, to.onTertiaryFixedVariant, fraction),
+        background = lerp(from.background, to.background, fraction),
+        onBackground = lerp(from.onBackground, to.onBackground, fraction),
+        surface = lerp(from.surface, to.surface, fraction),
+        onSurface = lerp(from.onSurface, to.onSurface, fraction),
+        surfaceVariant = lerp(from.surfaceVariant, to.surfaceVariant, fraction),
+        onSurfaceVariant = lerp(from.onSurfaceVariant, to.onSurfaceVariant, fraction),
+        surfaceTint = lerp(from.surfaceTint, to.surfaceTint, fraction),
+        inverseSurface = lerp(from.inverseSurface, to.inverseSurface, fraction),
+        inverseOnSurface = lerp(from.inverseOnSurface, to.inverseOnSurface, fraction),
+        error = lerp(from.error, to.error, fraction),
+        onError = lerp(from.onError, to.onError, fraction),
+        errorContainer = lerp(from.errorContainer, to.errorContainer, fraction),
+        onErrorContainer = lerp(from.onErrorContainer, to.onErrorContainer, fraction),
+        outline = lerp(from.outline, to.outline, fraction),
+        outlineVariant = lerp(from.outlineVariant, to.outlineVariant, fraction),
+        scrim = lerp(from.scrim, to.scrim, fraction),
+        surfaceBright = lerp(from.surfaceBright, to.surfaceBright, fraction),
+        surfaceDim = lerp(from.surfaceDim, to.surfaceDim, fraction),
+        surfaceContainer = lerp(from.surfaceContainer, to.surfaceContainer, fraction),
+        surfaceContainerHigh = lerp(from.surfaceContainerHigh, to.surfaceContainerHigh, fraction),
+        surfaceContainerHighest = lerp(from.surfaceContainerHighest, to.surfaceContainerHighest, fraction),
+        surfaceContainerLow = lerp(from.surfaceContainerLow, to.surfaceContainerLow, fraction),
+        surfaceContainerLowest = lerp(from.surfaceContainerLowest, to.surfaceContainerLowest, fraction),
+    )

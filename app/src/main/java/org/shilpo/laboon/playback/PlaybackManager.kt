@@ -56,6 +56,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.suspendCancellableCoroutine
 import org.shilpo.laboon.auth.SessionStore
 import org.shilpo.laboon.auth.SharedPreferencesKeyValueStore
 import org.shilpo.laboon.home.HomeTrack
@@ -71,6 +73,9 @@ import org.shilpo.laboon.rip.AutoRipSource
 import org.shilpo.laboon.search.SearchRepository
 import org.shilpo.laboon.search.SearchRepositoryImpl
 import java.nio.ByteBuffer
+import java.util.IdentityHashMap
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.coroutines.resume
 import kotlin.math.roundToInt
 
 private fun resourceContentLength(responseHeaders: Map<String, List<String>>): Long? {
@@ -141,6 +146,12 @@ class PlaybackManagerImpl(
     private val completedRipTrackIds: SharedFlow<String>? = null,
 ) : PlaybackManager {
 
+    private data class PlayerAudioSinkState(
+        @Volatile var inputFormat: Format? = null,
+        @Volatile var audioTrackConfig: AudioSink.AudioTrackConfig? = null,
+        @Volatile var inputIsPcm: Boolean = false,
+    )
+
     private val spectrumVisualizer = SpectrumVisualizer()
     override val spectrumState: StateFlow<SpectrumFrame> = spectrumVisualizer.state
 
@@ -173,10 +184,17 @@ class PlaybackManagerImpl(
 
     private var player: ExoPlayer? = null
     private var mediaSession: MediaSession? = null
+    private var sessionForwardingPlayer: Player? = null
+    private var sessionCommandListeners = IdentityHashMap<Player.Listener, Player.Listener>()
+    private var sessionCommandUpdateJob: Job? = null
+    private val playerAudioSinkStates = ConcurrentHashMap<ExoPlayer, PlayerAudioSinkState>()
     private var progressJob: Job? = null
     private var resolveJob: Job? = null
     private var qualitySwitchJob: Job? = null
     private var qualitySwitchGeneration: Long = 0L
+    private var qualitySwitchCandidate: ExoPlayer? = null
+    private var qualityHandoffFadeJob: Job? = null
+    private var qualityHandoffPreviousPlayer: ExoPlayer? = null
     private var pendingPlaybackMediaId: String? = null
     private var preloadJob: Job? = null
     private var precacheJob: Job? = null
@@ -453,14 +471,9 @@ class PlaybackManagerImpl(
         }
     }
 
-    private fun initPlayer() {
-        if (player != null) return
-        val audioAttributes = AudioAttributes.Builder()
-            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-            .setUsage(C.USAGE_MEDIA)
-            .setAllowedCapturePolicy(C.ALLOW_CAPTURE_BY_ALL)
-            .setSpatializationBehavior(C.SPATIALIZATION_BEHAVIOR_AUTO)
-            .build()
+    private fun buildPlayer(handleAudioFocus: Boolean = true): ExoPlayer {
+        var owner: ExoPlayer? = null
+        val audioSinkState = PlayerAudioSinkState()
 
         val renderersFactory = object : DefaultRenderersFactory(context) {
             override fun buildAudioSink(
@@ -479,16 +492,18 @@ class PlaybackManagerImpl(
 
                     override fun configure(audioSinkConfig: AudioSink.AudioSinkConfig) {
                         super.configure(audioSinkConfig)
-                        sinkInputFormat = audioSinkConfig.format
                         inputIsPcm = audioSinkConfig.format.sampleMimeType == MimeTypes.AUDIO_RAW
+                        audioSinkState.inputFormat = audioSinkConfig.format
+                        audioSinkState.inputIsPcm = inputIsPcm
                         visualizedBuffer = null
-                        spectrumVisualizer.sink.flush(
-                            audioSinkConfig.format.sampleRate,
-                            audioSinkConfig.format.channelCount,
-                            audioSinkConfig.format.pcmEncoding,
-                        )
-                        scope.launch {
-                            player?.let { updateAudioQuality(it) }
+                        if (player === owner) {
+                            sinkInputFormat = audioSinkConfig.format
+                            spectrumVisualizer.sink.flush(
+                                audioSinkConfig.format.sampleRate,
+                                audioSinkConfig.format.channelCount,
+                                audioSinkConfig.format.pcmEncoding,
+                            )
+                            owner?.let { active -> scope.launch { updateAudioQuality(active) } }
                         }
                     }
 
@@ -498,7 +513,7 @@ class PlaybackManagerImpl(
                         encodedAccessUnitCount: Int,
                     ): Boolean {
 
-                        if (inputIsPcm && visualizedBuffer !== buffer) {
+                        if (player === owner && inputIsPcm && visualizedBuffer !== buffer) {
                             spectrumVisualizer.sink.handleBuffer(buffer)
                             visualizedBuffer = buffer
                         }
@@ -511,22 +526,23 @@ class PlaybackManagerImpl(
                     override fun flush() {
                         super.flush()
                         visualizedBuffer = null
-                        spectrumVisualizer.reset()
+                        if (player === owner) spectrumVisualizer.reset()
                     }
 
                     override fun reset() {
                         super.reset()
                         visualizedBuffer = null
-                        spectrumVisualizer.reset()
+                        if (player === owner) spectrumVisualizer.reset()
                     }
 
                     override fun setListener(listener: AudioSink.Listener) {
                         super.setListener(object : AudioSink.Listener by listener {
                             override fun onAudioTrackInitialized(audioTrackConfig: AudioSink.AudioTrackConfig) {
                                 listener.onAudioTrackInitialized(audioTrackConfig)
-                                sinkAudioTrackConfig = audioTrackConfig
-                                scope.launch {
-                                    player?.let { updateAudioQuality(it) }
+                                audioSinkState.audioTrackConfig = audioTrackConfig
+                                if (player === owner) {
+                                    sinkAudioTrackConfig = audioTrackConfig
+                                    owner?.let { active -> scope.launch { updateAudioQuality(active) } }
                                 }
                             }
                         })
@@ -574,12 +590,24 @@ class PlaybackManagerImpl(
 
         val exo = ExoPlayer.Builder(context, renderersFactory)
             .setTrackSelector(trackSelector)
-            .setAudioAttributes(audioAttributes, true)
+            .setAudioAttributes(playbackAudioAttributes(), handleAudioFocus)
             .setHandleAudioBecomingNoisy(true)
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
             .build()
+        owner = exo
+        playerAudioSinkStates[exo] = audioSinkState
+        return exo
+    }
 
+    private fun playbackAudioAttributes(): AudioAttributes = AudioAttributes.Builder()
+        .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+        .setUsage(C.USAGE_MEDIA)
+        .setAllowedCapturePolicy(C.ALLOW_CAPTURE_BY_ALL)
+        .setSpatializationBehavior(C.SPATIALIZATION_BEHAVIOR_AUTO)
+        .build()
+
+    private fun attachPlayerListeners(exo: ExoPlayer) {
         exo.addAnalyticsListener(object : AnalyticsListener {
             override fun onAudioDecoderInitialized(
                 eventTime: AnalyticsListener.EventTime,
@@ -587,7 +615,7 @@ class PlaybackManagerImpl(
                 initializedTimestampMs: Long,
                 initializationDurationMs: Long
             ) {
-                if (exo.currentMediaItem?.mediaId == currentQueueMediaId()) {
+                if (player === exo && exo.currentMediaItem?.mediaId == currentQueueMediaId()) {
                     currentDecoderName = decoderName
                     updateAudioQuality(exo)
                 }
@@ -598,7 +626,7 @@ class PlaybackManagerImpl(
                 loadEventInfo: LoadEventInfo,
                 mediaLoadData: MediaLoadData
             ) {
-                if (exo.currentMediaItem?.mediaId == currentQueueMediaId()) {
+                if (player === exo && exo.currentMediaItem?.mediaId == currentQueueMediaId()) {
                     val resourceLength = resourceContentLength(loadEventInfo.responseHeaders)
                     if (resourceLength != null && resourceLength > currentResourceLengthBytes) {
                         currentResourceLengthBytes = resourceLength
@@ -612,7 +640,7 @@ class PlaybackManagerImpl(
                 format: Format,
                 decoderReuseEvaluation: DecoderReuseEvaluation?
             ) {
-                if (exo.currentMediaItem?.mediaId == currentQueueMediaId()) {
+                if (player === exo && exo.currentMediaItem?.mediaId == currentQueueMediaId()) {
                     currentAudioFormat = format
                     updateAudioQuality(exo)
                 }
@@ -621,6 +649,7 @@ class PlaybackManagerImpl(
 
         exo.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
+                if (player !== exo) return
                 when (playbackState) {
                     Player.STATE_BUFFERING -> {
                         _state.value = _state.value.copy(isBuffering = true)
@@ -691,6 +720,7 @@ class PlaybackManagerImpl(
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                if (player !== exo) return
                 when (reason) {
 
                     Player.MEDIA_ITEM_TRANSITION_REASON_AUTO,
@@ -715,6 +745,7 @@ class PlaybackManagerImpl(
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (player !== exo) return
                 syncTrackStateWithPlayer(exo)
                 _state.value = _state.value.copy(isPlaying = isPlaying)
                 if (isPlaying) {
@@ -729,6 +760,7 @@ class PlaybackManagerImpl(
             }
 
             override fun onTracksChanged(tracks: Tracks) {
+                if (player !== exo) return
                 if (exo.currentMediaItem?.mediaId == currentQueueMediaId()) {
                     for (group in tracks.groups) {
                         if (group.type == C.TRACK_TYPE_AUDIO) {
@@ -745,6 +777,7 @@ class PlaybackManagerImpl(
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                if (player !== exo) return
                 fadeJob?.cancel()
                 pendingFadeIn = false
                 val failedTrack = _state.value.currentTrack
@@ -813,6 +846,123 @@ class PlaybackManagerImpl(
                 }
             }
         })
+    }
+
+    private fun createSessionForwardingPlayer(exo: ExoPlayer): Player {
+        val commandListeners = IdentityHashMap<Player.Listener, Player.Listener>()
+        lateinit var forwardingPlayer: Player
+        forwardingPlayer = object : ForwardingPlayer(exo) {
+            override fun addListener(listener: Player.Listener) {
+                val forwardingListener = object : Player.Listener by listener {
+                    override fun onAvailableCommandsChanged(commands: Player.Commands) {
+                        listener.onAvailableCommandsChanged(forwardingPlayer.availableCommands)
+                    }
+
+                    override fun onEvents(player: Player, events: Player.Events) {
+                        listener.onEvents(forwardingPlayer, events)
+                    }
+                }
+                commandListeners[listener] = forwardingListener
+                super.addListener(forwardingListener)
+            }
+
+            override fun removeListener(listener: Player.Listener) {
+                val forwardingListener = commandListeners.remove(listener) ?: return
+                super.removeListener(forwardingListener)
+            }
+
+            override fun getAvailableCommands(): Player.Commands {
+                val queueState = queueManager.state.value
+                val commands = super.getAvailableCommands().buildUpon()
+                if (queueState.hasPrevious) {
+                    commands.add(COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                    commands.add(COMMAND_SEEK_TO_PREVIOUS)
+                } else {
+                    commands.remove(COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                    commands.remove(COMMAND_SEEK_TO_PREVIOUS)
+                }
+                if (queueState.hasNext) {
+                    commands.add(COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                    commands.add(COMMAND_SEEK_TO_NEXT)
+                } else {
+                    commands.remove(COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                    commands.remove(COMMAND_SEEK_TO_NEXT)
+                }
+                return commands.build()
+            }
+
+            override fun isCommandAvailable(command: Int): Boolean = when (command) {
+                COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+                COMMAND_SEEK_TO_PREVIOUS -> queueManager.state.value.hasPrevious
+
+                COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+                COMMAND_SEEK_TO_NEXT -> queueManager.state.value.hasNext
+
+                else -> super.isCommandAvailable(command)
+            }
+
+            override fun play() {
+                resume()
+            }
+
+            override fun pause() {
+                this@PlaybackManagerImpl.pause()
+            }
+
+            override fun setPlayWhenReady(playWhenReady: Boolean) {
+                if (playWhenReady) {
+                    resume()
+                } else {
+                    this@PlaybackManagerImpl.pause()
+                }
+            }
+
+            override fun seekToNext() {
+                skipToNext()
+            }
+
+            override fun seekToPrevious() {
+                skipToPrevious()
+            }
+
+            override fun seekToPreviousMediaItem() {
+                skipToPrevious()
+            }
+
+            override fun seekToNextMediaItem() {
+                skipToNext()
+            }
+        }
+        sessionCommandListeners = commandListeners
+        sessionForwardingPlayer = forwardingPlayer
+        return forwardingPlayer
+    }
+
+    private fun startSessionCommandUpdates() {
+        if (sessionCommandUpdateJob?.isActive == true) return
+        sessionCommandUpdateJob = scope.launch {
+            var previousCommands = sessionForwardingPlayer?.availableCommands
+            queueManager.state.collect {
+                val forwardingPlayer = sessionForwardingPlayer ?: return@collect
+                val commands = forwardingPlayer.availableCommands
+                if (commands == previousCommands) return@collect
+                previousCommands = commands
+                val events = Player.Events(
+                    FlagSet.Builder().add(Player.EVENT_AVAILABLE_COMMANDS_CHANGED).build(),
+                )
+                sessionCommandListeners.values.toList().forEach { listener ->
+                    listener.onAvailableCommandsChanged(commands)
+                    listener.onEvents(forwardingPlayer, events)
+                }
+            }
+        }
+    }
+
+    private fun initPlayer() {
+        if (player != null) return
+        val exo = buildPlayer()
+        player = exo
+        attachPlayerListeners(exo)
 
         try {
             val openAppIntent = Intent(context, org.shilpo.laboon.MainActivity::class.java).apply {
@@ -824,90 +974,7 @@ class PlaybackManagerImpl(
                 openAppIntent,
                 android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
             )
-            val commandListeners = java.util.IdentityHashMap<Player.Listener, Player.Listener>()
-            lateinit var forwardingPlayer: Player
-            forwardingPlayer = object : ForwardingPlayer(exo) {
-                override fun addListener(listener: Player.Listener) {
-                    val forwardingListener = object : Player.Listener by listener {
-                        override fun onAvailableCommandsChanged(commands: Player.Commands) {
-                            listener.onAvailableCommandsChanged(forwardingPlayer.availableCommands)
-                        }
-
-                        override fun onEvents(player: Player, events: Player.Events) {
-                            listener.onEvents(forwardingPlayer, events)
-                        }
-                    }
-                    commandListeners[listener] = forwardingListener
-                    super.addListener(forwardingListener)
-                }
-
-                override fun removeListener(listener: Player.Listener) {
-                    val forwardingListener = commandListeners.remove(listener) ?: return
-                    super.removeListener(forwardingListener)
-                }
-
-                override fun getAvailableCommands(): Player.Commands {
-                    val queueState = queueManager.state.value
-                    val commands = super.getAvailableCommands().buildUpon()
-                    if (queueState.hasPrevious) {
-                        commands.add(COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
-                        commands.add(COMMAND_SEEK_TO_PREVIOUS)
-                    } else {
-                        commands.remove(COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
-                        commands.remove(COMMAND_SEEK_TO_PREVIOUS)
-                    }
-                    if (queueState.hasNext) {
-                        commands.add(COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
-                        commands.add(COMMAND_SEEK_TO_NEXT)
-                    } else {
-                        commands.remove(COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
-                        commands.remove(COMMAND_SEEK_TO_NEXT)
-                    }
-                    return commands.build()
-                }
-
-                override fun isCommandAvailable(command: Int): Boolean = when (command) {
-                    COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
-                    COMMAND_SEEK_TO_PREVIOUS -> queueManager.state.value.hasPrevious
-
-                    COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
-                    COMMAND_SEEK_TO_NEXT -> queueManager.state.value.hasNext
-
-                    else -> super.isCommandAvailable(command)
-                }
-
-                override fun play() {
-                    resume()
-                }
-
-                override fun pause() {
-                    this@PlaybackManagerImpl.pause()
-                }
-
-                override fun setPlayWhenReady(playWhenReady: Boolean) {
-                    if (playWhenReady) {
-                        resume()
-                    } else {
-                        this@PlaybackManagerImpl.pause()
-                    }
-                }
-
-                override fun seekToNext() {
-                    skipToNext()
-                }
-
-                override fun seekToPrevious() {
-                    skipToPrevious()
-                }
-
-                override fun seekToPreviousMediaItem() {
-                    skipToPrevious()
-                }
-
-                override fun seekToNextMediaItem() {
-                    skipToNext()
-                }
-            }
+            val forwardingPlayer = createSessionForwardingPlayer(exo)
             val session = MediaSession.Builder(context, forwardingPlayer)
                 .setSessionActivity(pendingIntent)
                 .build()
@@ -916,21 +983,7 @@ class PlaybackManagerImpl(
             PlaybackServiceHolder.service?.let { s ->
                 runCatching { s.addSession(session) }
             }
-            scope.launch {
-                var previousCommands = forwardingPlayer.availableCommands
-                queueManager.state.collect {
-                    val commands = forwardingPlayer.availableCommands
-                    if (commands == previousCommands) return@collect
-                    previousCommands = commands
-                    val events = Player.Events(
-                        FlagSet.Builder().add(Player.EVENT_AVAILABLE_COMMANDS_CHANGED).build(),
-                    )
-                    commandListeners.values.toList().forEach { listener ->
-                        listener.onAvailableCommandsChanged(commands)
-                        listener.onEvents(forwardingPlayer, events)
-                    }
-                }
-            }
+            startSessionCommandUpdates()
         } catch (_: Exception) {
         }
 
@@ -1036,6 +1089,8 @@ class PlaybackManagerImpl(
             qualitySwitchJob?.cancel()
             qualitySwitchJob = null
             qualitySwitchGeneration += 1L
+            releaseQualitySwitchCandidate()
+            cancelQualityHandoff()
         }
         resetPipelineForTrack()
         val initialQuality = resolveQualityFromMetadata(nextTrack)
@@ -1089,6 +1144,8 @@ class PlaybackManagerImpl(
         qualitySwitchJob?.cancel()
         qualitySwitchJob = null
         qualitySwitchGeneration += 1L
+        releaseQualitySwitchCandidate()
+        cancelQualityHandoff()
         preloadJob?.cancel()
         cancelPrecache()
         fadeJob?.cancel()
@@ -1453,6 +1510,9 @@ class PlaybackManagerImpl(
 
         const val DISCOVERY_REFILL_THRESHOLD = 4
         const val MAX_RETRIES = 3
+        const val QUALITY_SWITCH_READY_TIMEOUT_MS = 45_000L
+        const val QUALITY_SWITCH_PLAY_TIMEOUT_MS = 3_000L
+        const val QUALITY_SWITCH_FADE_STEP_MS = 18L
     }
 
     private fun buildMediaItem(
@@ -2012,6 +2072,7 @@ class PlaybackManagerImpl(
     }
 
     override fun pause() {
+        cancelQualityHandoff()
         val exo = player ?: return
         pendingFadeIn = false
         val pos = exo.currentPosition.coerceAtLeast(0L)
@@ -2064,6 +2125,7 @@ class PlaybackManagerImpl(
     }
 
     override fun seekTo(progress: Float) {
+        cancelQualityHandoff()
         val exo = player ?: return
         val dur = if (exo.duration > 0) exo.duration else _state.value.durationMs
         if (dur > 0) {
@@ -2079,6 +2141,209 @@ class PlaybackManagerImpl(
         }
     }
 
+    private suspend fun awaitPlayerReady(exo: ExoPlayer): Boolean =
+        withTimeoutOrNull(QUALITY_SWITCH_READY_TIMEOUT_MS) {
+            if (exo.playbackState == Player.STATE_READY) return@withTimeoutOrNull true
+            suspendCancellableCoroutine { continuation ->
+                val listener = object : Player.Listener {
+                    private fun finish(ready: Boolean) {
+                        exo.removeListener(this)
+                        if (continuation.isActive) continuation.resume(ready)
+                    }
+
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        when (playbackState) {
+                            Player.STATE_READY -> finish(true)
+                            Player.STATE_ENDED -> finish(false)
+                        }
+                    }
+
+                    override fun onPlayerError(error: PlaybackException) {
+                        finish(false)
+                    }
+                }
+                exo.addListener(listener)
+                continuation.invokeOnCancellation { exo.removeListener(listener) }
+                if (exo.playbackState == Player.STATE_READY) {
+                    exo.removeListener(listener)
+                    if (continuation.isActive) continuation.resume(true)
+                } else if (exo.playbackState == Player.STATE_ENDED) {
+                    exo.removeListener(listener)
+                    if (continuation.isActive) continuation.resume(false)
+                }
+            }
+        } == true
+
+    private suspend fun awaitPlayerPlaying(exo: ExoPlayer): Boolean =
+        withTimeoutOrNull(QUALITY_SWITCH_PLAY_TIMEOUT_MS) {
+            if (exo.isPlaying) return@withTimeoutOrNull true
+            suspendCancellableCoroutine { continuation ->
+                val listener = object : Player.Listener {
+                    private fun finish(playing: Boolean) {
+                        exo.removeListener(this)
+                        if (continuation.isActive) continuation.resume(playing)
+                    }
+
+                    override fun onIsPlayingChanged(isPlaying: Boolean) {
+                        if (isPlaying) finish(true)
+                    }
+
+                    override fun onPlayerError(error: PlaybackException) {
+                        finish(false)
+                    }
+                }
+                exo.addListener(listener)
+                continuation.invokeOnCancellation { exo.removeListener(listener) }
+                if (exo.isPlaying) {
+                    exo.removeListener(listener)
+                    if (continuation.isActive) continuation.resume(true)
+                }
+            }
+        } == true
+
+    private fun releaseQualitySwitchCandidate(candidate: ExoPlayer? = null) {
+        val pending = qualitySwitchCandidate ?: return
+        if (candidate != null && pending !== candidate) return
+        qualitySwitchCandidate = null
+        if (pending !== player) {
+            pending.pause()
+            pending.release()
+            playerAudioSinkStates.remove(pending)
+        }
+    }
+
+    private fun cancelQualityHandoff() {
+        val hadQualityHandoff = qualityHandoffPreviousPlayer != null
+        qualityHandoffFadeJob?.cancel()
+        qualityHandoffFadeJob = null
+        qualityHandoffPreviousPlayer?.let { previous ->
+            if (previous !== player) {
+                previous.pause()
+                previous.release()
+                playerAudioSinkStates.remove(previous)
+            }
+        }
+        qualityHandoffPreviousPlayer = null
+        player?.let { active -> if (active.isPlaying) active.volume = 1f }
+        if (hadQualityHandoff) {
+            player?.setAudioAttributes(playbackAudioAttributes(), true)
+        }
+    }
+
+    private fun fadeBetweenQualityPlayers(previous: ExoPlayer, replacement: ExoPlayer) {
+        val previousVolume = previous.volume.coerceIn(0f, 1f)
+        qualityHandoffPreviousPlayer = previous
+        qualityHandoffFadeJob = scope.launch {
+            val steps = 8
+            for (step in 1..steps) {
+                delay(QUALITY_SWITCH_FADE_STEP_MS)
+                if (player !== replacement) break
+                val fraction = step.toFloat() / steps
+                replacement.volume = fraction
+                previous.volume = previousVolume * (1f - fraction)
+            }
+            if (player === replacement) replacement.volume = 1f
+            previous.volume = 0f
+            previous.pause()
+            previous.release()
+            replacement.setAudioAttributes(playbackAudioAttributes(), true)
+            playerAudioSinkStates.remove(previous)
+            if (qualityHandoffPreviousPlayer === previous) {
+                qualityHandoffPreviousPlayer = null
+                qualityHandoffFadeJob = null
+            }
+        }
+    }
+
+    private fun promoteQualitySwitchPlayer(
+        previous: ExoPlayer,
+        replacement: ExoPlayer,
+        track: HomeTrack,
+        positionMs: Long,
+        shouldResume: Boolean,
+    ): Boolean {
+        val previousForwardingPlayer = sessionForwardingPlayer
+        val previousCommandListeners = sessionCommandListeners
+        val forwardingPlayer = createSessionForwardingPlayer(replacement)
+        try {
+            mediaSession?.setPlayer(forwardingPlayer)
+        } catch (_: Exception) {
+            sessionForwardingPlayer = previousForwardingPlayer
+            sessionCommandListeners = previousCommandListeners
+            return false
+        }
+
+        fadeJob?.cancel()
+        fadeJob = null
+        cancelQualityHandoff()
+        player = replacement
+        attachPlayerListeners(replacement)
+        qualitySwitchCandidate = null
+        resetPipelineForTrack()
+        playerAudioSinkStates[replacement]?.let { audioState ->
+            sinkInputFormat = audioState.inputFormat
+            sinkAudioTrackConfig = audioState.audioTrackConfig
+            if (audioState.inputIsPcm) {
+                audioState.inputFormat?.let { format ->
+                    spectrumVisualizer.sink.flush(
+                        format.sampleRate,
+                        format.channelCount,
+                        format.pcmEncoding,
+                    )
+                }
+            }
+        }
+        replacement.currentTracks.groups.forEach { group ->
+            if (group.type == C.TRACK_TYPE_AUDIO) {
+                for (index in 0 until group.length) {
+                    if (group.isTrackSelected(index)) {
+                        currentAudioFormat = group.getTrackFormat(index)
+                        break
+                    }
+                }
+            }
+        }
+
+        queueManager.updateCurrentTrack(track)
+        playbackPersistence.saveLastTrack(track)
+        playbackPersistence.saveLastPosition(positionMs)
+        val durationMs = replacement.duration.takeIf { it > 0L }
+            ?: _state.value.durationMs
+        if (durationMs > 0L) playbackPersistence.saveLastDuration(durationMs)
+        val currentPositionMs = replacement.currentPosition.coerceAtLeast(0L)
+        val progress = if (durationMs > 0L) {
+            (currentPositionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+        } else {
+            _state.value.progress
+        }
+        _state.value = _state.value.copy(
+            currentTrack = track,
+            audioQuality = resolveQualityFromMetadata(track),
+            isPlaying = shouldResume && replacement.isPlaying,
+            isBuffering = false,
+            currentPositionMs = currentPositionMs,
+            durationMs = durationMs,
+            progress = progress,
+            switchingQualityFormat = null,
+            error = null,
+        )
+        retryCount = 0
+        pendingFadeIn = false
+        updateAudioQuality(replacement)
+        if (shouldResume) {
+            startProgressTracker()
+            fadeBetweenQualityPlayers(previous, replacement)
+        } else {
+            replacement.volume = 1f
+            previous.pause()
+            previous.release()
+            replacement.setAudioAttributes(playbackAudioAttributes(), true)
+            playerAudioSinkStates.remove(previous)
+            stopProgressTracker()
+        }
+        return true
+    }
+
     override fun switchQualityVariant(track: HomeTrack, variant: TrackFormatVariant) {
         val currentTrack = _state.value.currentTrack ?: return
         if (currentTrack.id != track.id) return
@@ -2091,6 +2356,7 @@ class PlaybackManagerImpl(
                 qualitySwitchJob?.cancel()
                 qualitySwitchJob = null
                 qualitySwitchGeneration += 1L
+                releaseQualitySwitchCandidate()
                 _state.value = _state.value.copy(
                     switchingQualityFormat = null,
                     isBuffering = player?.playbackState == Player.STATE_BUFFERING,
@@ -2101,6 +2367,8 @@ class PlaybackManagerImpl(
         }
 
         qualitySwitchJob?.cancel()
+        releaseQualitySwitchCandidate()
+        cancelQualityHandoff()
         val generation = ++qualitySwitchGeneration
         val selectedTrack = currentTrack.copy(
             streamUrl = null,
@@ -2128,58 +2396,106 @@ class PlaybackManagerImpl(
         )
         val activePlayer = exo
         qualitySwitchJob = scope.launch {
-            val resolution = searchRepository.resolvePlayback(selectedTrack)
-            if (!isActive || generation != qualitySwitchGeneration || player !== activePlayer) {
-                return@launch
-            }
-            if (_state.value.currentTrack?.id != currentTrack.id) return@launch
-            if (resolution == null) {
-                _state.value = _state.value.copy(
-                    switchingQualityFormat = null,
-                    isBuffering = activePlayer.playbackState == Player.STATE_BUFFERING,
-                    isPlaying = activePlayer.isPlaying,
+            var replacement: ExoPlayer? = null
+            try {
+                val resolution = searchRepository.resolvePlayback(selectedTrack)
+                    ?: return@launch
+                if (!isActive || generation != qualitySwitchGeneration || player !== activePlayer) {
+                    return@launch
+                }
+                if (_state.value.currentTrack?.id != currentTrack.id) return@launch
+
+                val currentMediaItem = activePlayer.currentMediaItem ?: return@launch
+                val currentIndex = activePlayer.currentMediaItemIndex
+                    .takeIf { it in 0 until activePlayer.mediaItemCount }
+                    ?: return@launch
+                val resolvedTrack = selectedTrack.copy(
+                    streamUrl = resolution.streamUrl,
+                    codec = resolution.codec ?: selectedTrack.codec,
                 )
-                return@launch
-            }
+                val initialPositionMs = if (activePlayer.playbackState == Player.STATE_ENDED) {
+                    0L
+                } else {
+                    activePlayer.currentPosition.coerceAtLeast(0L)
+                }
+                val replacementPlaylist = List(activePlayer.mediaItemCount) { index ->
+                    if (index == currentIndex) {
+                        buildMediaItem(resolvedTrack, resolution.streamUrl, currentMediaItem.mediaId)
+                    } else {
+                        activePlayer.getMediaItemAt(index)
+                    }
+                }
+                val candidate = buildPlayer(handleAudioFocus = false).also {
+                    replacement = it
+                    qualitySwitchCandidate = it
+                    it.volume = 0f
+                    it.setMediaItems(replacementPlaylist, currentIndex, initialPositionMs)
+                    it.prepare()
+                }
 
-            val resolvedTrack = selectedTrack.copy(
-                streamUrl = resolution.streamUrl,
-                codec = resolution.codec ?: selectedTrack.codec,
-            )
-            val durationMs = activePlayer.duration.coerceAtLeast(0L)
-            val playbackEnded = activePlayer.playbackState == Player.STATE_ENDED
-            val positionMs = if (playbackEnded) {
-                0L
-            } else {
-                activePlayer.currentPosition.coerceAtLeast(0L)
-            }
-            val shouldResumePlayback = activePlayer.playWhenReady
-            val progress = if (playbackEnded) {
-                0f
-            } else if (durationMs > 0L) {
-                (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
-            } else {
-                _state.value.progress
-            }
+                if (!awaitPlayerReady(candidate)) return@launch
+                if (!isActive || generation != qualitySwitchGeneration || player !== activePlayer ||
+                    _state.value.currentTrack?.id != currentTrack.id
+                ) {
+                    return@launch
+                }
 
-            queueManager.updateCurrentTrack(resolvedTrack)
-            playbackPersistence.saveLastTrack(resolvedTrack)
-            playbackPersistence.saveLastPosition(positionMs)
-            if (durationMs > 0L) playbackPersistence.saveLastDuration(durationMs)
-            _state.value = _state.value.copy(
-                currentTrack = resolvedTrack,
-                audioQuality = resolveQualityFromMetadata(resolvedTrack),
-                currentPositionMs = positionMs,
-                durationMs = durationMs.takeIf { it > 0L } ?: _state.value.durationMs,
-                progress = progress,
-                switchingQualityFormat = availableVariant.format,
-            )
-            startPlayback(
-                track = resolvedTrack,
-                streamUrl = resolution.streamUrl,
-                startPositionMs = positionMs,
-                playWhenReady = shouldResumePlayback,
-            )
+                // The old stream kept playing while the new one buffered. Re-align the staged
+                // player at the live playhead before it is allowed to take over.
+                val handoffPositionMs = if (activePlayer.playbackState == Player.STATE_ENDED) {
+                    0L
+                } else {
+                    activePlayer.currentPosition.coerceAtLeast(0L)
+                }
+                candidate.seekTo(currentIndex, handoffPositionMs)
+                if (!awaitPlayerReady(candidate)) return@launch
+                if (!isActive || generation != qualitySwitchGeneration || player !== activePlayer ||
+                    _state.value.currentTrack?.id != currentTrack.id
+                ) {
+                    return@launch
+                }
+
+                val shouldResumePlayback = activePlayer.playWhenReady &&
+                    (_state.value.isPlaying ||
+                        activePlayer.playbackState == Player.STATE_BUFFERING ||
+                        activePlayer.playbackState == Player.STATE_ENDED)
+                if (shouldResumePlayback) {
+                    candidate.play()
+                    if (!awaitPlayerPlaying(candidate)) return@launch
+                }
+                if (!isActive || generation != qualitySwitchGeneration || player !== activePlayer ||
+                    _state.value.currentTrack?.id != currentTrack.id
+                ) {
+                    return@launch
+                }
+
+                if (!promoteQualitySwitchPlayer(
+                        previous = activePlayer,
+                        replacement = candidate,
+                        track = resolvedTrack,
+                        positionMs = handoffPositionMs,
+                        shouldResume = shouldResumePlayback,
+                    )
+                ) {
+                    return@launch
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Keep the active stream untouched if the replacement cannot be prepared.
+            } finally {
+                replacement?.let(::releaseQualitySwitchCandidate)
+                if (generation == qualitySwitchGeneration) {
+                    if (player === activePlayer && _state.value.switchingQualityFormat != null) {
+                        _state.value = _state.value.copy(
+                            switchingQualityFormat = null,
+                            isBuffering = activePlayer.playbackState == Player.STATE_BUFFERING,
+                            isPlaying = activePlayer.isPlaying,
+                        )
+                    }
+                    qualitySwitchJob = null
+                }
+            }
         }
     }
 
@@ -2194,6 +2510,8 @@ class PlaybackManagerImpl(
         qualitySwitchJob?.cancel()
         qualitySwitchJob = null
         qualitySwitchGeneration += 1L
+        releaseQualitySwitchCandidate()
+        cancelQualityHandoff()
         pendingPlaybackMediaId = null
         preloadJob?.cancel()
         cancelPrecache()
@@ -2240,6 +2558,8 @@ class PlaybackManagerImpl(
         qualitySwitchJob?.cancel()
         qualitySwitchJob = null
         qualitySwitchGeneration += 1L
+        releaseQualitySwitchCandidate()
+        cancelQualityHandoff()
         pendingPlaybackMediaId = null
         preloadJob?.cancel()
         cancelPrecache()
@@ -2262,7 +2582,12 @@ class PlaybackManagerImpl(
         mediaSession = null
         PlaybackServiceHolder.mediaSession = null
         player?.release()
+        player?.let(playerAudioSinkStates::remove)
         player = null
+        sessionForwardingPlayer = null
+        sessionCommandListeners.clear()
+        sessionCommandUpdateJob?.cancel()
+        sessionCommandUpdateJob = null
         scope.cancel()
     }
 
