@@ -83,6 +83,18 @@ class TrackIdentityTest {
     }
 
     @Test
+    fun liveRemixAndVersionTitlesRemainSeparateRecordings() {
+        val studio = track("Song")
+        val live = track("Song (Live)")
+        val remix = track("Song (Remix)")
+        val version = track("Song (Version)")
+
+        assertNotEquals(TrackIdentity.keyOf(studio), TrackIdentity.keyOf(live))
+        assertNotEquals(TrackIdentity.keyOf(studio), TrackIdentity.keyOf(remix))
+        assertNotEquals(TrackIdentity.keyOf(studio), TrackIdentity.keyOf(version))
+    }
+
+    @Test
     fun testArtistFeaturedClauseCollapses() {
         assertEquals(
             TrackIdentity.keyOf(track("Song", "A")),

@@ -91,6 +91,7 @@ import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.lyrics.LyricsLine
 import org.shilpo.laboon.playback.ArtworkUrlHelper
 import org.shilpo.laboon.playback.AudioQualityInfo
+import org.shilpo.laboon.playback.DiscoveryStatus
 import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.playback.RepeatMode
 import org.shilpo.laboon.playback.SpectrumFrame
@@ -144,6 +145,7 @@ fun FullPlayerScreen(
     audioQuality: AudioQualityInfo? = null,
     isShuffle: Boolean = false,
     repeatMode: RepeatMode = RepeatMode.OFF,
+    canSkipPrevious: Boolean = false,
     spectrum: SpectrumFrame = SpectrumFrame(),
     onPlayPauseClick: () -> Unit,
     onPreviousClick: () -> Unit,
@@ -157,9 +159,15 @@ fun FullPlayerScreen(
     onMoreClick: () -> Unit = {},
     isDark: Boolean = isSystemInDarkTheme(),
     queueState: QueueState? = null,
+    isDiscovering: Boolean = false,
+    discoveryStatus: DiscoveryStatus = DiscoveryStatus.IDLE,
     onRemoveUpNext: ((Int) -> Unit)? = null,
     onMoveUpNext: ((Int, Int) -> Unit)? = null,
     onTrackClick: ((HomeTrack) -> Unit)? = null,
+    onQueueEntryClick: ((Long) -> Unit)? = null,
+    onPromoteAutoplay: ((Long) -> Unit)? = null,
+    onClearUpcoming: (() -> Unit)? = null,
+    onRetryDiscovery: (() -> Unit)? = null,
     onOpenAlbum: ((HomeTrack) -> Unit)? = null,
     onArtistClick: ((String) -> Unit)? = null,
     lyricsLines: List<LyricsLine> = emptyList(),
@@ -302,6 +310,7 @@ fun FullPlayerScreen(
                     cover = {
                         FullPlayerCoverCard(
                             track = track,
+                            canSkipPrevious = canSkipPrevious,
                             onPreviousClick = onPreviousClick,
                             onNextClick = onNextClick,
                         )
@@ -319,6 +328,7 @@ fun FullPlayerScreen(
                             onQualityVariantSelected = onQualityVariantSelected,
                             isShuffle = isShuffle,
                             repeatMode = repeatMode,
+                            canSkipPrevious = canSkipPrevious,
                             onPlayPauseClick = onPlayPauseClick,
                             onPreviousClick = onPreviousClick,
                             onNextClick = onNextClick,
@@ -354,6 +364,9 @@ fun FullPlayerScreen(
                 currentPositionMs = currentPositionMs,
                 durationMs = durationMs,
                 queueState = queueState,
+                canSkipPrevious = canSkipPrevious,
+                isDiscovering = isDiscovering,
+                discoveryStatus = discoveryStatus,
                 lyricsLines = lyricsLines,
                 lyricsLoading = lyricsLoading,
                 spectrum = spectrum,
@@ -368,8 +381,12 @@ fun FullPlayerScreen(
                 onAudioQualityClick = { showAudioInfo = true },
                 onQualityVariantSelected = onQualityVariantSelected ?: {},
                 onTrackClick = { selected -> onTrackClick?.invoke(selected) },
+                onQueueEntryClick = { entryId -> onQueueEntryClick?.invoke(entryId) },
+                onPromoteAutoplay = { entryId -> onPromoteAutoplay?.invoke(entryId) },
                 onRemoveUpNext = { index -> onRemoveUpNext?.invoke(index) },
                 onMoveUpNext = { from, to -> onMoveUpNext?.invoke(from, to) },
+                onClearUpcoming = { onClearUpcoming?.invoke() },
+                onRetryDiscovery = { onRetryDiscovery?.invoke() },
             ),
             selectedPanel = activePanel,
             panelFractionProvider = { panelFraction.value },
@@ -553,6 +570,7 @@ private fun FullPlayerToolbar(
 @Composable
 private fun FullPlayerCoverCard(
     track: HomeTrack,
+    canSkipPrevious: Boolean,
     onPreviousClick: () -> Unit,
     onNextClick: () -> Unit,
 ) {
@@ -592,7 +610,7 @@ private fun FullPlayerCoverCard(
                             coroutineScope.launch {
                                 if (abs(accumulatedDragX) > snapThresholdPx) {
                                     if (accumulatedDragX > 0) {
-                                        onPreviousClick()
+                                        if (canSkipPrevious) onPreviousClick()
                                     } else {
                                         onNextClick()
                                     }
@@ -689,6 +707,7 @@ private fun FullPlayerControls(
     onQualityVariantSelected: ((TrackFormatVariant) -> Unit)? = null,
     isShuffle: Boolean,
     repeatMode: RepeatMode,
+    canSkipPrevious: Boolean = false,
     onPlayPauseClick: () -> Unit,
     onPreviousClick: () -> Unit,
     onNextClick: () -> Unit,
@@ -770,6 +789,7 @@ private fun FullPlayerControls(
             isBuffering = isBuffering,
             isShuffle = isShuffle,
             repeatMode = repeatMode,
+            canSkipPrevious = canSkipPrevious,
             onPlayPauseClick = onPlayPauseClick,
             onPreviousClick = onPreviousClick,
             onNextClick = onNextClick,
@@ -799,6 +819,7 @@ internal fun FullPlayerTransportControls(
     isBuffering: Boolean,
     isShuffle: Boolean,
     repeatMode: RepeatMode,
+    canSkipPrevious: Boolean = false,
     onPlayPauseClick: () -> Unit,
     onPreviousClick: () -> Unit,
     onNextClick: () -> Unit,
@@ -912,6 +933,7 @@ internal fun FullPlayerTransportControls(
                     .size(52.dp)
                     .clip(CircleShape)
                     .clickable(
+                        enabled = canSkipPrevious,
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
                         onClick = onPreviousClick,
@@ -921,7 +943,8 @@ internal fun FullPlayerTransportControls(
                 Icon(
                     painter = painterResource(R.drawable.ic_skip),
                     contentDescription = "Previous",
-                    tint = if (isDark) Color.White else Color(0xFF191C1E),
+                    tint = (if (isDark) Color.White else Color(0xFF191C1E))
+                        .copy(alpha = if (canSkipPrevious) 1f else 0.4f),
                     modifier = Modifier
                         .size(30.dp)
                         .rotate(180f),

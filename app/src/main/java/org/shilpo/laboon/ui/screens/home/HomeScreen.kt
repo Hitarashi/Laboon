@@ -305,7 +305,12 @@ fun HomeScreen(
     }
 
     val playbackManager = remember(context, sessionStore) {
-        PlaybackManagerHolder.getInstance(context.applicationContext, sessionStore)
+        PlaybackManagerHolder.getInstance(
+            context.applicationContext,
+            sessionStore,
+            autoRipCoordinator = autoRipCoordinator,
+            completedRipTrackIds = ripConnection.completedRipTrackIds,
+        )
     }
     val playbackState by playbackManager.state.collectAsState()
     val queueState by playbackManager.queueManager.state.collectAsState()
@@ -331,9 +336,6 @@ fun HomeScreen(
     LaunchedEffect(autoRipCoordinator, matchedTopAlbums) {
         autoRipCoordinator.observeAlbums(AutoRipSource.HOME_FEED, matchedTopAlbums)
     }
-    LaunchedEffect(autoRipCoordinator, queueState.items) {
-        autoRipCoordinator.observe(AutoRipSource.PLAYBACK_QUEUE, queueState.items)
-    }
     LaunchedEffect(ripConnection) {
         launch {
             ripConnection.completedRipTrackIds.collect { providerTrackId ->
@@ -342,7 +344,6 @@ fun HomeScreen(
                 if (availability.isEmpty()) return@collect
                 feedState = feedState.withAvailability(availability)
                 homeFeedCache.save(feedState)
-                playbackManager.queueManager.applyAvailability(availability)
             }
         }
     }
@@ -903,6 +904,7 @@ fun HomeScreen(
                     onRequestMotionArtwork = { playbackManager.requestMotionArtwork(track) },
                     isShuffle = queueState.isShuffle,
                     repeatMode = queueState.repeatMode,
+                    canSkipPrevious = queueState.hasPrevious,
                     spectrum = spectrumState,
                     onPlayPauseClick = {
                         if (playbackState.currentTrack != null) {
@@ -940,6 +942,8 @@ fun HomeScreen(
                         playerExpansionProgress = progress
                     },
                     queueState = queueState,
+                    isDiscovering = playbackState.isDiscovering,
+                    discoveryStatus = playbackState.discoveryStatus,
                     onRemoveUpNext = { index ->
                         playbackManager.queueManager.removeUpNext(index)
                     },
@@ -947,8 +951,15 @@ fun HomeScreen(
                         playbackManager.queueManager.moveUpNext(from, to)
                     },
                     onTrackClick = { t ->
-                        playbackManager.play(t, contextTracks = queueState.items)
+                        playbackManager.play(
+                            t,
+                            contextTracks = queueState.contextEntries.map { it.track },
+                        )
                     },
+                    onQueueEntryClick = playbackManager::playQueueEntry,
+                    onPromoteAutoplay = playbackManager.queueManager::promoteAutoplayToManual,
+                    onClearUpcoming = playbackManager.queueManager::clearUpNext,
+                    onRetryDiscovery = playbackManager::retryDiscovery,
                     onOpenAlbum = { albumTrack ->
                         val albumId = albumDetailsRepository.resolveAlbumIdForTrack(albumTrack)
                         if (albumId == null) {
@@ -1991,4 +2002,3 @@ private fun RecordLabelOverlayHost(
         modifier = finalModifier,
     )
 }
-

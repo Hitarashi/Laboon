@@ -9,25 +9,11 @@ object TrackIdentity {
     private val BRACKET_QUALIFIER_WORDS = listOf(
         "remaster",
         "remastered",
-        "explicit",
         "deluxe",
         "bonus",
-        "version",
         "anniversary",
-        "live",
-        "remix",
-        "mono",
-        "stereo",
-        "edit",
-        "radio",
-        "single",
-        "album",
-        "ep",
-        "demo",
-        "take",
         "expanded",
         "reissue",
-        "clean",
     )
 
     private val EDGE_NOISE_CHARS = charArrayOf('-', '_', '.', ',', '!', '?')
@@ -115,15 +101,12 @@ object TrackIdentity {
     }
 
     private fun isQualifierPhrase(phrase: String): Boolean {
-        if (phrase.isBlank()) return false
-        if (YEAR_TOKEN.containsMatchIn(phrase)) return true
-        return phrase.split(' ', '\t').any { token ->
+        return phrase.isNotBlank() && phrase.split(' ', '\t').any { token ->
             val word = token.trim(*EDGE_NOISE_CHARS, '(', ')', '[', ']')
             BRACKET_QUALIFIER_WORDS.any { qualifier -> word.startsWith(qualifier) }
         }
     }
 
-    private val YEAR_TOKEN = Regex("(^|\\s)(19\\d\\d|20\\d\\d)($|\\s|[)\\]])")
     private val FEATURED_CLAUSE =
         Regex("(?<=[\\s(\\[])\\s*(feat|ft|featuring)\\.?\\s*[)\\]]?.*$", RegexOption.IGNORE_CASE)
 

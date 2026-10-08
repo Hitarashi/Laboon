@@ -7,33 +7,34 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.updateAndGet
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.home.TrackAvailability
 import org.shilpo.laboon.home.TrackIdentity
 import org.shilpo.laboon.search.CachedTrackAvailability
+import java.util.concurrent.atomic.AtomicLong
 
 interface QueueManager {
     val state: StateFlow<QueueState>
     fun play(track: HomeTrack, contextTracks: List<HomeTrack>? = null)
     fun updateCurrentTrack(track: HomeTrack)
-
     fun applyAvailability(availability: Map<String, CachedTrackAvailability>)
-    fun selectCurrentById(trackId: String): HomeTrack?
+    fun selectCurrentById(mediaId: String): HomeTrack?
+    fun playEntry(entryId: Long): HomeTrack?
     fun playNext(track: HomeTrack)
     fun addToQueue(track: HomeTrack)
-
+    fun promoteAutoplayToManual(entryId: Long)
     fun removeUpNext(index: Int)
     fun moveUpNext(fromIndex: Int, toIndex: Int)
     fun clearUpNext()
-    fun toggleAutoplay()
+    fun retryAutoplay()
     fun cycleRepeatMode()
     fun toggleShuffle()
-    fun peekNext(): HomeTrack?
+    fun peekNextEntry(): QueueEntry?
     fun advanceToNext(): HomeTrack?
     fun advanceToPrevious(): HomeTrack?
     fun appendDiscovery(tracks: List<HomeTrack>)
+    fun discoverySeedTracks(): List<HomeTrack>
     fun getRecentHistoryKeys(): Set<String>
     fun release()
 }
@@ -53,245 +54,434 @@ class QueueManagerImpl(
     }
 
     private val ownedFlushScope: CoroutineScope? = flushScope?.takeIf { writeScope == null }
-
     private val writer: QueuePersistenceWriter? = persistence?.let { store ->
         flushScope?.let { QueuePersistenceWriter(store, it) }
     }
+    private val nextEntryId = AtomicLong(
+        (_state.value.history + _state.value.upcomingEntries + _state.value.contextEntries)
+            .maxOfOrNull(QueueEntry::id)?.plus(1L) ?: 1L,
+    )
 
     override fun play(track: HomeTrack, contextTracks: List<HomeTrack>?) {
-        val context = contextTracks?.takeIf { it.isNotEmpty() } ?: listOf(track)
-        val items = dedupe(context)
-        val key = TrackIdentity.keyOf(track)
-        val currentIndex = items.indexOfFirst { TrackIdentity.keyOf(it) == key }
+        val sourceContext = contextTracks?.takeIf(List<HomeTrack>::isNotEmpty) ?: listOf(track)
+        val context = sourceContext.toMutableList()
+        var selectedIndex = context.indexOfFirst { it.id == track.id }
+        if (selectedIndex < 0) {
+            selectedIndex = context.indexOfFirst { TrackIdentity.isSameTrack(it, track) }
+        }
+        if (selectedIndex < 0) {
+            context.add(0, track)
+            selectedIndex = 0
+        }
+        val uniqueContext = dedupeContext(context)
+        selectedIndex = uniqueContext.indexOfFirst { it.id == track.id }
             .takeIf { it >= 0 }
-            ?: items.indexOfFirst { it.id == track.id }.takeIf { it >= 0 }
-            ?: 0
+            ?: uniqueContext.indexOfFirst { TrackIdentity.isSameTrack(it, track) }.coerceAtLeast(0)
+        val contextEntries = uniqueContext.mapIndexed { index, item ->
+            newEntry(item, QueueOrigin.CONTEXT, index)
+        }
+        val selectedEntry = contextEntries[selectedIndex].copy(track = track)
 
-        mutate { s ->
-            s.copy(
-                items = items,
-                currentIndex = currentIndex,
-                preShuffleOrder = if (s.isShuffle) items else null,
+        mutate { old ->
+            val manuals = old.upcomingEntries.filter { it.origin == QueueOrigin.MANUAL }
+            val history = (old.history + selectedEntry).takeLast(MAX_HISTORY_ENTRIES)
+            val cursor = history.lastIndex
+            val contextTail = contextEntries.drop(selectedIndex + 1)
+            val contextQueue = if (old.isShuffle) contextTail.shuffled() else contextTail
+            old.copy(
+                history = history,
+                historyCursor = cursor,
+                upcomingEntries = manuals + contextQueue,
+                contextEntries = contextEntries,
+                sessionSeedEntryId = selectedEntry.id,
+                autoplaySuppressed = false,
+                dismissedAutoplayKeys = emptySet(),
             )
         }
     }
 
     override fun updateCurrentTrack(track: HomeTrack) {
-        mutate { state ->
-            val index = state.currentIndex
-            val current = state.items.getOrNull(index) ?: return@mutate state
-            if (!TrackIdentity.isSameTrack(current, track)) return@mutate state
-
-            val updatedItems = state.items.toMutableList().apply { set(index, track) }
-            val updatedPreShuffleOrder = state.preShuffleOrder?.map { queuedTrack ->
-                if (TrackIdentity.isSameTrack(queuedTrack, track)) track else queuedTrack
-            }
-            state.copy(items = updatedItems, preShuffleOrder = updatedPreShuffleOrder)
+        mutate { current ->
+            val index = current.historyCursor
+            val entry = current.history.getOrNull(index) ?: return@mutate current
+            if (!TrackIdentity.isSameTrack(entry.track, track)) return@mutate current
+            current.copy(
+                history = current.history.mapIndexed { i, item ->
+                    if (i == index) item.copy(track = track) else item
+                },
+                contextEntries = current.contextEntries.map { item ->
+                    if (item.id == entry.id) item.copy(track = track) else item
+                },
+            )
         }
     }
 
     override fun applyAvailability(availability: Map<String, CachedTrackAvailability>) {
         if (availability.isEmpty()) return
-        mutate { state ->
-            val updated = TrackAvailability.apply(state.items, availability)
-            val updatedPreShuffleOrder = state.preShuffleOrder?.let { order ->
-                TrackAvailability.apply(order, availability)
+        mutate { current ->
+            val entries = current.history + current.upcomingEntries + current.contextEntries
+            val distinctEntries = entries.distinctBy(QueueEntry::id)
+            val updatedTracks = distinctEntries.zip(
+                TrackAvailability.apply(distinctEntries.map(QueueEntry::track), availability),
+            ).associate { (entry, track) -> entry.id to track }
+
+            fun QueueEntry.withAvailability(): QueueEntry {
+                val updated = updatedTracks[id] ?: return this
+                return if (updated == track) this else copy(track = updated)
             }
-            if (updated === state.items && updatedPreShuffleOrder === state.preShuffleOrder) {
-                state
-            } else {
-                state.copy(items = updated, preShuffleOrder = updatedPreShuffleOrder)
-            }
+            current.copy(
+                history = current.history.map(QueueEntry::withAvailability),
+                upcomingEntries = current.upcomingEntries.map(QueueEntry::withAvailability),
+                contextEntries = current.contextEntries.map(QueueEntry::withAvailability),
+            )
         }
     }
 
-    override fun selectCurrentById(trackId: String): HomeTrack? {
-        var selectedTrack: HomeTrack? = null
-        mutate { state ->
-            val index = state.items.indexOfFirst { it.id == trackId }
-            if (index < 0) return@mutate state
-            selectedTrack = state.items[index]
-            if (index == state.currentIndex) state else state.copy(currentIndex = index)
+    override fun selectCurrentById(mediaId: String): HomeTrack? {
+        val entryId = mediaId
+            .takeIf { it.startsWith(QUEUE_MEDIA_ID_PREFIX) }
+            ?.removePrefix(QUEUE_MEDIA_ID_PREFIX)
+            ?.toLongOrNull()
+            ?: return null
+        return selectEntryAsCurrent(entryId)
+    }
+
+    override fun playEntry(entryId: Long): HomeTrack? {
+        var selected: HomeTrack? = null
+        val after = _state.updateAndGet { current ->
+            val historyIndex = current.history.indexOfFirst { it.id == entryId }
+            if (historyIndex >= 0) {
+                selected = current.history[historyIndex].track
+                return@updateAndGet current.copy(historyCursor = historyIndex)
+            }
+            val queueIndex = current.upcomingEntries.indexOfFirst { it.id == entryId }
+            if (queueIndex < 0) return@updateAndGet current
+            val chosen = current.upcomingEntries[queueIndex]
+            val history = (current.history + chosen).takeLast(MAX_HISTORY_ENTRIES)
+            selected = chosen.track
+            current.copy(
+                history = history,
+                historyCursor = history.lastIndex,
+                upcomingEntries = current.upcomingEntries.filterNot { it.id == entryId },
+                skippedHistoryEntryIds = current.skippedHistoryEntryIds - entryId,
+            )
         }
-        return selectedTrack
+        if (selected != null) persist(after)
+        return selected
     }
 
     override fun playNext(track: HomeTrack) {
-        mutate { s -> s.stagedNextTo(track) }
+        mutate { current ->
+            current.copy(
+                upcomingEntries = listOf(
+                    newEntry(
+                        track,
+                        QueueOrigin.MANUAL
+                    )
+                ) + current.upcomingEntries
+            )
+        }
     }
 
     override fun addToQueue(track: HomeTrack) {
-        mutate { s ->
-            val key = TrackIdentity.keyOf(track)
-            if (s.items.any { TrackIdentity.keyOf(it) == key }) {
-                s
-            } else {
-                s.copy(items = s.items + track)
+        mutate { current ->
+            val manualCount = current.upcomingEntries.count { it.origin == QueueOrigin.MANUAL }
+            current.copy(
+                upcomingEntries = current.upcomingEntries.toMutableList().apply {
+                    add(manualCount, newEntry(track, QueueOrigin.MANUAL))
+                },
+            )
+        }
+    }
+
+    override fun promoteAutoplayToManual(entryId: Long) {
+        mutate { current ->
+            val index = current.upcomingEntries.indexOfFirst { it.id == entryId }
+            if (index < 0 || current.upcomingEntries[index].origin != QueueOrigin.AUTOPLAY) {
+                return@mutate current
             }
+            val entry = current.upcomingEntries[index].copy(origin = QueueOrigin.MANUAL)
+            current.copy(
+                upcomingEntries = current.upcomingEntries.toMutableList().apply {
+                    removeAt(index)
+                    add(count { it.origin == QueueOrigin.MANUAL }, entry)
+                },
+            )
         }
     }
 
     override fun removeUpNext(index: Int) {
-        mutate { s -> s.withoutUpcomingAt(index) }
-    }
-
-    override fun moveUpNext(fromIndex: Int, toIndex: Int) {
-        mutate { s -> s.moveUpcoming(fromIndex, toIndex) }
-    }
-
-    override fun clearUpNext() {
-        mutate { s ->
-            val kept =
-                if (s.currentIndex in s.items.indices) s.items.take(s.currentIndex + 1) else emptyList()
-            s.copy(items = kept, currentIndex = kept.lastIndex)
+        mutate { current ->
+            if (index < 0) return@mutate current
+            val forwardCount = current.forwardHistory.size
+            if (index < forwardCount) {
+                val historyIndex = current.historyCursor + 1 + index
+                val entry = current.history.getOrNull(historyIndex) ?: return@mutate current
+                current.copy(skippedHistoryEntryIds = current.skippedHistoryEntryIds + entry.id)
+            } else {
+                val queueIndex = index - forwardCount
+                val entry = current.upcomingEntries.getOrNull(queueIndex) ?: return@mutate current
+                current.copy(
+                    upcomingEntries = current.upcomingEntries.toMutableList()
+                        .apply { removeAt(queueIndex) },
+                    dismissedAutoplayKeys = if (entry.origin == QueueOrigin.AUTOPLAY) {
+                        current.dismissedAutoplayKeys + setOf(
+                            TrackIdentity.keyOf(entry.track),
+                            TrackIdentity.keyOf(null, entry.track.title, entry.track.artist),
+                        )
+                    } else current.dismissedAutoplayKeys,
+                )
+            }
         }
     }
 
-    override fun toggleAutoplay() {
-        mutate { s -> s.copy(isAutoplayEnabled = !s.isAutoplayEnabled) }
+    override fun moveUpNext(fromIndex: Int, toIndex: Int) {
+        mutate { current ->
+            val forwardCount = current.forwardHistory.size
+            val from = fromIndex - forwardCount
+            val to = toIndex - forwardCount
+            if (from !in current.upcomingEntries.indices || to !in current.upcomingEntries.indices) {
+                return@mutate current
+            }
+            val working = current.upcomingEntries.toMutableList()
+            val moved = working.removeAt(from)
+            val targetOrigin = working.getOrNull(to)?.origin ?: moved.origin
+            val promoted =
+                moved.origin == QueueOrigin.AUTOPLAY && targetOrigin != QueueOrigin.AUTOPLAY
+            val entry = if (promoted) moved.copy(origin = QueueOrigin.MANUAL) else moved
+            val group = if (promoted) QueueOrigin.MANUAL else moved.origin
+            val groupIndices = working.indices.filter { working[it].origin == group }
+            val insertion = when {
+                groupIndices.isEmpty() -> working.size
+                targetOrigin == group -> groupIndices.firstOrNull { it >= to }
+                    ?: (groupIndices.last() + 1)
+
+                group == QueueOrigin.MANUAL -> groupIndices.last() + 1
+                else -> groupIndices.last() + 1
+            }.coerceIn(0, working.size)
+            working.add(insertion, entry)
+            current.copy(upcomingEntries = working)
+        }
+    }
+
+    override fun clearUpNext() {
+        mutate { current ->
+            current.copy(upcomingEntries = emptyList(), autoplaySuppressed = true)
+        }
+    }
+
+    override fun retryAutoplay() {
+        mutate { current ->
+            if (!current.autoplaySuppressed) current else current.copy(autoplaySuppressed = false)
+        }
     }
 
     override fun cycleRepeatMode() {
-        mutate { s ->
-            val next = when (s.repeatMode) {
+        mutate { current ->
+            val next = when (current.repeatMode) {
                 RepeatMode.OFF -> RepeatMode.ALL
                 RepeatMode.ALL -> RepeatMode.ONE
                 RepeatMode.ONE -> RepeatMode.OFF
             }
-            s.copy(repeatMode = next)
+            current.copy(repeatMode = next)
         }
     }
 
     override fun toggleShuffle() {
-        mutate { s ->
-            if (!s.isShuffle) {
-                val cut = (s.currentIndex + 1).coerceIn(0, s.items.size)
-                val head = s.items.subList(0, cut)
-                val tail = s.items.subList(cut, s.items.size).shuffled()
-                s.copy(isShuffle = true, items = head + tail, preShuffleOrder = s.items)
+        mutate { current ->
+            if (!current.isShuffle) {
+                val manuals = current.upcomingEntries.filter { it.origin == QueueOrigin.MANUAL }
+                val context = current.upcomingEntries
+                    .filter { it.origin == QueueOrigin.CONTEXT }
+                    .shuffled()
+                val autoplay = current.upcomingEntries.filter { it.origin == QueueOrigin.AUTOPLAY }
+                current.copy(isShuffle = true, upcomingEntries = manuals + context + autoplay)
             } else {
-                s.copy(isShuffle = false, items = s.unshuffledOrder(), preShuffleOrder = null)
+                val manuals = current.upcomingEntries.filter { it.origin == QueueOrigin.MANUAL }
+                val context = current.upcomingEntries
+                    .filter { it.origin == QueueOrigin.CONTEXT }
+                    .sortedWith(compareBy<QueueEntry> { it.contextOrder ?: Int.MAX_VALUE })
+                val autoplay = current.upcomingEntries.filter { it.origin == QueueOrigin.AUTOPLAY }
+                current.copy(isShuffle = false, upcomingEntries = manuals + context + autoplay)
             }
         }
     }
 
-    override fun peekNext(): HomeTrack? {
-        val s = _state.value
-        if (s.currentIndex < 0) return null
-        if (s.repeatMode == RepeatMode.ONE) return s.currentTrack
-        return s.items.getOrNull(s.currentIndex + 1)
-            ?: s.items.takeIf { s.repeatMode == RepeatMode.ALL }?.firstOrNull()
+    override fun peekNextEntry(): QueueEntry? {
+        var current = _state.value
+        if (current.currentTrack == null) return null
+        if (current.repeatMode == RepeatMode.ALL && current.forwardHistory.isEmpty() &&
+            current.contextUpcomingEntries.isEmpty() && current.contextEntries.isNotEmpty()
+        ) {
+            current = _state.updateAndGet { state -> state.withRepeatedContextBeforeAutoplay() }
+            persist(current)
+        }
+        current.forwardHistory.firstOrNull()?.let { return it }
+        if (current.repeatMode == RepeatMode.ONE) return current.currentEntry
+        current.upcomingEntries.firstOrNull()?.let { return it }
+        return null
     }
 
     override fun advanceToNext(): HomeTrack? {
-        val before = _state.value
-        if (before.currentIndex < 0) return null
-        if (before.repeatMode == RepeatMode.ONE) return before.currentTrack
-        val nextIndex = when {
-            before.currentIndex + 1 < before.items.size -> before.currentIndex + 1
-            before.repeatMode == RepeatMode.ALL && before.items.isNotEmpty() -> 0
-            else -> return null
+        var selected: HomeTrack? = null
+        val after = _state.updateAndGet { original ->
+            if (original.currentTrack == null) return@updateAndGet original
+            val nextHistoryIndex = original.history.indices.firstOrNull { index ->
+                index > original.historyCursor && original.history[index].id !in original.skippedHistoryEntryIds
+            }
+            if (nextHistoryIndex != null) {
+                selected = original.history[nextHistoryIndex].track
+                return@updateAndGet original.copy(historyCursor = nextHistoryIndex)
+            }
+
+            var current = original
+            if (current.repeatMode == RepeatMode.ALL && current.contextUpcomingEntries.isEmpty()) {
+                current = current.withRepeatedContextBeforeAutoplay()
+            }
+            val nextEntry = current.upcomingEntries.firstOrNull()
+            if (nextEntry == null) {
+                if (current.repeatMode == RepeatMode.ALL && current.contextEntries.isNotEmpty()) {
+                    current = current.withRepeatedContextBeforeAutoplay(force = true)
+                }
+            }
+            val chosen = current.upcomingEntries.firstOrNull() ?: return@updateAndGet original
+            val history = (current.history + chosen).takeLast(MAX_HISTORY_ENTRIES)
+            selected = chosen.track
+            var after = current.copy(
+                history = history,
+                historyCursor = history.lastIndex,
+                upcomingEntries = current.upcomingEntries.drop(1),
+                skippedHistoryEntryIds = current.skippedHistoryEntryIds - chosen.id,
+            )
+            if (after.repeatMode == RepeatMode.ALL && after.contextUpcomingEntries.isEmpty()) {
+                after = after.withRepeatedContextBeforeAutoplay()
+            }
+            after
         }
-        val after = _state.updateAndGet { it.copy(currentIndex = nextIndex) }
-        persist(after)
-        return after.currentTrack
+        if (selected != null) persist(after)
+        return selected
     }
 
     override fun advanceToPrevious(): HomeTrack? {
-        val before = _state.value
-        if (before.currentIndex <= 0) return before.currentTrack
-        val after = _state.updateAndGet { s -> s.copy(currentIndex = s.currentIndex - 1) }
-        persist(after)
-        return after.currentTrack
+        var selected: HomeTrack? = null
+        val after = _state.updateAndGet { current ->
+            val previousIndex = current.history.indices.lastOrNull { index ->
+                index < current.historyCursor && current.history[index].id !in current.skippedHistoryEntryIds
+            } ?: return@updateAndGet current
+            selected = current.history[previousIndex].track
+            current.copy(historyCursor = previousIndex)
+        }
+        if (selected != null) persist(after)
+        return selected
     }
 
     override fun appendDiscovery(tracks: List<HomeTrack>) {
         if (tracks.isEmpty()) return
-        mutate { s ->
-            val seen = HashSet<String>(s.items.size + tracks.size)
-            s.items.forEach { seen.add(TrackIdentity.keyOf(it)) }
-            val fresh = tracks.filter { seen.add(TrackIdentity.keyOf(it)) }
-            if (fresh.isEmpty()) s else s.copy(items = s.items + fresh)
+        mutate { current ->
+            if (current.autoplaySuppressed) return@mutate current
+            val known = current.upcomingEntries.mapTo(HashSet()) { TrackIdentity.keyOf(it.track) }
+            known += getRecentHistoryKeys(current)
+            known += current.dismissedAutoplayKeys
+            val fresh = tracks.filter { track ->
+                track.title.isNotBlank() && track.artist.isNotBlank() && known.add(
+                    TrackIdentity.keyOf(
+                        track
+                    )
+                )
+            }
+            if (fresh.isEmpty()) return@mutate current
+            current.copy(
+                upcomingEntries = current.upcomingEntries + fresh.map {
+                    newEntry(
+                        it,
+                        QueueOrigin.AUTOPLAY
+                    )
+                },
+            )
         }
     }
 
-    override fun getRecentHistoryKeys(): Set<String> {
-        val s = _state.value
-        val played = s.items.take((s.currentIndex + 1).coerceIn(0, s.items.size))
-        val keys = LinkedHashSet<String>(RECENT_HISTORY_LIMIT * 2)
-        played.takeLast(RECENT_HISTORY_LIMIT).forEach { track ->
-            keys.add(TrackIdentity.keyOf(track))
-            keys.add(legacyKey(track))
+    override fun discoverySeedTracks(): List<HomeTrack> {
+        val current = _state.value
+        val seed = current.sessionSeedEntryId?.let { id ->
+            current.contextEntries.firstOrNull { it.id == id }?.track
+                ?: current.history.firstOrNull { it.id == id }?.track
         }
-        return keys
+        val listened = current.history.takeLast(3).map(QueueEntry::track)
+        val seen = HashSet<String>()
+        return (listOfNotNull(seed) + listened).filter { seen.add(TrackIdentity.keyOf(it)) }
     }
+
+    override fun getRecentHistoryKeys(): Set<String> = getRecentHistoryKeys(_state.value)
 
     override fun release() {
-        val state = _state.value
-        writer?.flush(state)
+        writer?.flush(_state.value)
         ownedFlushScope?.cancel()
     }
 
-    private inline fun mutate(transform: (QueueState) -> QueueState) {
-        _state.update(transform)
-        persist(_state.value)
+    private fun selectEntryAsCurrent(entryId: Long): HomeTrack? {
+        var selected: HomeTrack? = null
+        val after = _state.updateAndGet { current ->
+            val historyIndex = current.history.indexOfFirst { it.id == entryId }
+            if (historyIndex >= 0) {
+                selected = current.history[historyIndex].track
+                return@updateAndGet current.copy(historyCursor = historyIndex)
+            }
+            val queueIndex = current.upcomingEntries.indexOfFirst { it.id == entryId }
+            if (queueIndex < 0) return@updateAndGet current
+            val chosen = current.upcomingEntries.take(queueIndex + 1)
+            selected = chosen.last().track
+            val history = (current.history + chosen).takeLast(MAX_HISTORY_ENTRIES)
+            current.copy(
+                history = history,
+                historyCursor = history.lastIndex,
+                upcomingEntries = current.upcomingEntries.drop(queueIndex + 1),
+            )
+        }
+        if (selected != null) persist(after)
+        return selected
+    }
+
+    private fun QueueState.withRepeatedContextBeforeAutoplay(force: Boolean = false): QueueState {
+        if ((!force && contextUpcomingEntries.isNotEmpty()) || contextEntries.isEmpty()) return this
+        val manuals = upcomingEntries.filter { it.origin == QueueOrigin.MANUAL }
+        val auto = upcomingEntries.filter { it.origin == QueueOrigin.AUTOPLAY }
+        val repeated = contextEntries.map { original ->
+            newEntry(original.track, QueueOrigin.CONTEXT, original.contextOrder)
+        }
+        return copy(upcomingEntries = manuals + repeated + auto)
+    }
+
+    private fun getRecentHistoryKeys(state: QueueState): Set<String> {
+        val keys = LinkedHashSet<String>(RECENT_HISTORY_LIMIT)
+        state.history.takeLast(RECENT_HISTORY_LIMIT)
+            .forEach { entry -> keys.add(TrackIdentity.keyOf(entry.track)) }
+        return keys
+    }
+
+    private fun mutate(transform: (QueueState) -> QueueState) {
+        val after = _state.updateAndGet(transform)
+        persist(after)
     }
 
     private fun persist(state: QueueState) {
         writer?.schedule(state)
     }
 
-    private fun QueueState.stagedNextTo(track: HomeTrack): QueueState {
-        val key = TrackIdentity.keyOf(track)
-        val existing = items.indexOfFirst { TrackIdentity.keyOf(it) == key }
-        if (existing == currentIndex) return this
-        val working = items.toMutableList()
-        val shiftedCurrent = if (existing in 0..currentIndex) currentIndex - 1 else currentIndex
-        if (existing >= 0) working.removeAt(existing)
-        working.add((shiftedCurrent + 1).coerceIn(0, working.size), track)
-        return copy(items = working, currentIndex = shiftedCurrent)
-    }
+    private fun newEntry(
+        track: HomeTrack,
+        origin: QueueOrigin,
+        contextOrder: Int? = null,
+    ): QueueEntry = QueueEntry(nextEntryId.getAndIncrement(), track, origin, contextOrder)
 
-    private fun QueueState.withoutUpcomingAt(index: Int): QueueState {
-        val absolute = upcomingIndexOf(index) ?: return this
-        val working = items.toMutableList()
-        working.removeAt(absolute)
-        return copy(items = working)
-    }
-
-    private fun QueueState.moveUpcoming(fromIndex: Int, toIndex: Int): QueueState {
-        val from = upcomingIndexOf(fromIndex) ?: return this
-        val to = upcomingIndexOf(toIndex) ?: return this
-        if (from == to) return this
-        val working = items.toMutableList()
-        working.add(to, working.removeAt(from))
-        return copy(items = working)
-    }
-
-    private fun QueueState.upcomingIndexOf(index: Int): Int? {
-        if (index < 0) return null
-        val absolute = currentIndex + 1 + index
-        return absolute.takeIf { it in items.indices }
-    }
-
-    private fun QueueState.unshuffledOrder(): List<HomeTrack> {
-        val saved = preShuffleOrder ?: return items
-        val present = items.mapTo(HashSet(items.size)) { TrackIdentity.keyOf(it) }
-        val savedKeys = saved.mapTo(HashSet(saved.size)) { TrackIdentity.keyOf(it) }
-        return saved.filter { TrackIdentity.keyOf(it) in present } +
-                items.filter { TrackIdentity.keyOf(it) !in savedKeys }
-    }
-
-    private fun dedupe(tracks: List<HomeTrack>): List<HomeTrack> {
+    private fun dedupeContext(tracks: List<HomeTrack>): List<HomeTrack> {
         val seen = HashSet<String>(tracks.size)
         return tracks.filter { seen.add(TrackIdentity.keyOf(it)) }
     }
 
-    private fun legacyKey(track: HomeTrack): String =
-        "${track.title.lowercase().trim()}:::${track.artist.lowercase().trim()}"
-
     companion object {
-
         const val RECENT_HISTORY_LIMIT = 80
+        const val MAX_HISTORY_ENTRIES = 200
+        const val QUEUE_MEDIA_ID_PREFIX = "queue-entry:"
     }
 }

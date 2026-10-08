@@ -25,8 +25,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetValue
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberBottomSheetState
@@ -49,6 +47,8 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.playback.DiscoveryStatus
+import org.shilpo.laboon.playback.QueueOrigin
 import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.playback.RepeatMode
 import org.shilpo.laboon.ui.design.TrackCodecBadges
@@ -61,14 +61,39 @@ fun QueueBottomSheet(
     onRemoveUpNext: (Int) -> Unit,
     onMoveUpNext: (Int, Int) -> Unit,
     onClearUpNext: () -> Unit,
-    onToggleAutoplay: () -> Unit,
     onToggleShuffle: () -> Unit,
     onCycleRepeatMode: () -> Unit,
+    onQueueEntryClick: (Long) -> Unit = { entryId ->
+        queueState.playbackUpcomingEntries.firstOrNull { it.id == entryId }
+            ?.track?.let(onTrackClick)
+    },
+    onPromoteAutoplay: (Long) -> Unit = {},
+    onRetryDiscovery: () -> Unit = {},
     isDiscovering: Boolean = false,
+    discoveryStatus: DiscoveryStatus = DiscoveryStatus.IDLE,
     modifier: Modifier = Modifier,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val upcoming = queueState.upcoming
+    val upcomingEntries = queueState.playbackUpcomingEntries
+    val forwardHistoryCount = queueState.forwardHistory.size
+    val queueGroups = buildList {
+        if (forwardHistoryCount > 0) {
+            add(
+                "Previously played" to upcomingEntries.take(forwardHistoryCount)
+                    .mapIndexed { index, entry -> index to entry })
+        }
+        val remaining = upcomingEntries.drop(forwardHistoryCount).mapIndexed { index, entry ->
+            (index + forwardHistoryCount) to entry
+        }
+        listOf(
+            QueueOrigin.MANUAL to "Your queue",
+            QueueOrigin.CONTEXT to "Album/playlist",
+            QueueOrigin.AUTOPLAY to "Autoplay",
+        ).forEach { (origin, title) ->
+            val entries = remaining.filter { it.second.origin == origin }
+            if (entries.isNotEmpty()) add(title to entries)
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -94,23 +119,10 @@ fun QueueBottomSheet(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(
-                        text = "Autoplay",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Switch(
-                        checked = queueState.isAutoplayEnabled,
-                        onCheckedChange = { onToggleAutoplay() },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    )
-                }
+                Text(
+                    "Autoplay on", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
 
             Spacer(modifier = Modifier.height(4.dp))
@@ -172,13 +184,13 @@ fun QueueBottomSheet(
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(
-                            text = "Up Next (${queueState.upNextCount})",
+                            text = "Your queue (${queueState.upNextCount})",
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onSurface,
                             fontWeight = FontWeight.SemiBold,
                         )
 
-                        if (upcoming.isNotEmpty()) {
+                        if (upcomingEntries.isNotEmpty()) {
                             TextButton(onClick = onClearUpNext) {
                                 Text(
                                     text = "Clear",
@@ -190,7 +202,7 @@ fun QueueBottomSheet(
                     }
                 }
 
-                if (upcoming.isEmpty()) {
+                if (upcomingEntries.isEmpty()) {
                     item(key = "up_next_empty") {
                         if (isDiscovering) {
                             Row(
@@ -225,21 +237,57 @@ fun QueueBottomSheet(
                         }
                     }
                 } else {
-                    itemsIndexed(
-                        items = upcoming,
-                        key = { idx, track -> "upnext_${idx}_${track.id}" },
-                    ) { index, track ->
-                        QueueTrackRow(
-                            track = track,
-                            onClick = { onTrackClick(track) },
-                            onMoveUp = if (index > 0) {
-                                { onMoveUpNext(index, index - 1) }
-                            } else null,
-                            onMoveDown = if (index < upcoming.size - 1) {
-                                { onMoveUpNext(index, index + 1) }
-                            } else null,
-                            onRemove = { onRemoveUpNext(index) },
-                        )
+                    queueGroups.forEach { (title, entries) ->
+                        item(key = "queue_group_$title") {
+                            Text(
+                                title,
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        itemsIndexed(
+                            items = entries,
+                            key = { _, row -> "upnext_${row.second.id}" },
+                        ) { groupIndex, (index, entry) ->
+                            val isPlayedHistory = title == "Previously played"
+                            QueueTrackRow(
+                                track = entry.track,
+                                onClick = { onQueueEntryClick(entry.id) },
+                                onMoveUp = if (!isPlayedHistory && groupIndex > 0) {
+                                    { onMoveUpNext(index, index - 1) }
+                                } else null,
+                                onMoveDown = if (!isPlayedHistory && groupIndex < entries.lastIndex) {
+                                    { onMoveUpNext(index, index + 1) }
+                                } else null,
+                                onRemove = { onRemoveUpNext(index) },
+                                onPromote = if (entry.origin == QueueOrigin.AUTOPLAY) {
+                                    { onPromoteAutoplay(entry.id) }
+                                } else null,
+                            )
+                        }
+                    }
+                }
+                if (isDiscovering || discoveryStatus == DiscoveryStatus.FAILED ||
+                    discoveryStatus == DiscoveryStatus.EXHAUSTED
+                ) {
+                    item(key = "discovery_state") {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (isDiscovering) CircularProgressIndicator(
+                                Modifier.size(16.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Text(
+                                text = when {
+                                    isDiscovering -> "Finding related songs…"
+                                    discoveryStatus == DiscoveryStatus.FAILED -> "Song discovery failed"
+                                    else -> "No related songs found"
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (!isDiscovering) TextButton(onClick = onRetryDiscovery) { Text("Retry") }
+                        }
                     }
                 }
             }
@@ -360,6 +408,7 @@ private fun QueueTrackRow(
     onMoveUp: (() -> Unit)? = null,
     onMoveDown: (() -> Unit)? = null,
     onRemove: (() -> Unit)? = null,
+    onPromote: (() -> Unit)? = null,
 ) {
     Row(
         modifier = modifier
@@ -433,7 +482,7 @@ private fun QueueTrackRow(
             }
         }
 
-        if (onMoveUp != null || onMoveDown != null || onRemove != null) {
+        if (onMoveUp != null || onMoveDown != null || onRemove != null || onPromote != null) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
@@ -465,6 +514,9 @@ private fun QueueTrackRow(
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                }
+                if (onPromote != null) {
+                    TextButton(onClick = onPromote) { Text("Keep") }
                 }
             }
         }

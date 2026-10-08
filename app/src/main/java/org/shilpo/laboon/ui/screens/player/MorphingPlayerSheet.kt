@@ -108,6 +108,7 @@ import org.shilpo.laboon.lyrics.LyricsLine
 import org.shilpo.laboon.lyricsporn.LyricspornMotionArtwork
 import org.shilpo.laboon.playback.ArtworkUrlHelper
 import org.shilpo.laboon.playback.AudioQualityInfo
+import org.shilpo.laboon.playback.DiscoveryStatus
 import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.playback.RepeatMode
 import org.shilpo.laboon.playback.SpectrumFrame
@@ -177,6 +178,7 @@ fun MorphingPlayerSheet(
     onQualityVariantSelected: ((TrackFormatVariant) -> Unit)? = null,
     isShuffle: Boolean = false,
     repeatMode: RepeatMode = RepeatMode.OFF,
+    canSkipPrevious: Boolean = false,
     spectrum: SpectrumFrame = SpectrumFrame(),
     onPlayPauseClick: () -> Unit,
     onPreviousClick: () -> Unit,
@@ -191,9 +193,15 @@ fun MorphingPlayerSheet(
     onMoreClick: () -> Unit = {},
     onExpansionProgressChange: ((Float) -> Unit)? = null,
     queueState: QueueState? = null,
+    isDiscovering: Boolean = false,
+    discoveryStatus: DiscoveryStatus = DiscoveryStatus.IDLE,
     onRemoveUpNext: ((Int) -> Unit)? = null,
     onMoveUpNext: ((Int, Int) -> Unit)? = null,
     onTrackClick: ((HomeTrack) -> Unit)? = null,
+    onQueueEntryClick: ((Long) -> Unit)? = null,
+    onPromoteAutoplay: ((Long) -> Unit)? = null,
+    onClearUpcoming: (() -> Unit)? = null,
+    onRetryDiscovery: (() -> Unit)? = null,
     onOpenAlbum: (suspend (HomeTrack) -> Boolean)? = null,
     onArtistClick: ((String) -> Unit)? = null,
     lyricsLines: List<LyricsLine> = emptyList(),
@@ -508,7 +516,7 @@ fun MorphingPlayerSheet(
                                         1 -> {
                                             val currentOffset = miniSwipeOffsetX.value
                                             if (currentOffset > swipeThreshold || totalX > swipeThreshold) {
-                                                onPreviousClick()
+                                                if (canSkipPrevious) onPreviousClick()
                                             } else if (currentOffset < -swipeThreshold || totalX < -swipeThreshold) {
                                                 onNextClick()
                                             }
@@ -892,7 +900,7 @@ fun MorphingPlayerSheet(
                                                 coroutineScope.launch {
                                                     if (abs(coverAccumulatedDragX) > coverSnapThreshold) {
                                                         if (coverAccumulatedDragX > 0) {
-                                                            onPreviousClick()
+                                                            if (canSkipPrevious) onPreviousClick()
                                                         } else {
                                                             onNextClick()
                                                         }
@@ -1354,6 +1362,7 @@ fun MorphingPlayerSheet(
                                 .size(skipButtonSize)
                                 .clip(CircleShape)
                                 .clickable(
+                                    enabled = canSkipPrevious,
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null,
                                     onClick = onPreviousClick,
@@ -1366,7 +1375,7 @@ fun MorphingPlayerSheet(
                                 modifier = Modifier
                                     .size(skipIconSize)
                                     .rotate(180f),
-                                tint = controllerIconTint,
+                                tint = controllerIconTint.copy(alpha = if (canSkipPrevious) 1f else 0.4f),
                             )
                         }
 
@@ -1496,6 +1505,9 @@ fun MorphingPlayerSheet(
                 currentPositionMs = currentPositionMs,
                 durationMs = durationMs,
                 queueState = queueState,
+                canSkipPrevious = canSkipPrevious,
+                isDiscovering = isDiscovering,
+                discoveryStatus = discoveryStatus,
                 lyricsLines = lyricsLines,
                 lyricsLoading = lyricsLoading,
                 spectrum = spectrum,
@@ -1510,8 +1522,12 @@ fun MorphingPlayerSheet(
                 onAudioQualityClick = { showAudioInfo = true },
                 onQualityVariantSelected = onQualityVariantSelected ?: {},
                 onTrackClick = { selected -> onTrackClick?.invoke(selected) },
+                onQueueEntryClick = { entryId -> onQueueEntryClick?.invoke(entryId) },
+                onPromoteAutoplay = { entryId -> onPromoteAutoplay?.invoke(entryId) },
                 onRemoveUpNext = { index -> onRemoveUpNext?.invoke(index) },
                 onMoveUpNext = { from, to -> onMoveUpNext?.invoke(from, to) },
+                onClearUpcoming = { onClearUpcoming?.invoke() },
+                onRetryDiscovery = { onRetryDiscovery?.invoke() },
             ),
             selectedPanel = activePanel,
             panelFractionProvider = { panelFraction.value },

@@ -88,6 +88,11 @@ class ListenBrainzLabsTest {
         assertEquals(seedA, track.mbid)
         assertEquals("Profound Mysteries II", track.album)
         org.junit.Assert.assertNull(track.artworkUrl)
+        assertEquals(
+            27.0,
+            ListenBrainzLabs.parseSimilarRecordingCandidates(body).single().similarity!!,
+            0.0
+        )
     }
 
     @Test
@@ -156,5 +161,140 @@ class ListenBrainzLabsTest {
         assertTrue(url.contains("/1/cf/recommendation/user/rob/recording"))
         assertTrue("count is capped at 1000: $url", url.contains("count=1000"))
         assertTrue(!url.contains("offset"))
+    }
+
+    @Test
+    fun `metadata endpoints use documented recording ids and separate artist ids`() {
+        val lookup = ListenBrainzLabs.metadataLookupUrl(
+            HomeTrack("track", "A Song", "An Artist", album = "An Album"),
+        )
+        assertTrue(lookup.contains("/1/metadata/lookup/"))
+        assertTrue(lookup.contains("recording_name=A+Song"))
+        assertTrue(lookup.contains("artist_name=An+Artist"))
+
+        val recording = ListenBrainzLabs.recordingMbidLookupUrl(listOf(seedA, seedB))
+        assertTrue(recording.startsWith("https://labs.api.listenbrainz.org/recording-mbid-lookup/json"))
+        assertTrue(recording.contains("recording_mbid=$seedA"))
+        assertTrue(recording.contains("recording_mbid=$seedB"))
+        assertTrue(
+            ListenBrainzLabs.metadataRecordingUrl(listOf(seedA, seedB))
+                .contains("recording_mbids=$seedA,$seedB")
+        )
+    }
+
+    @Test
+    fun `nested recording metadata reads artist ids and release without assuming a title`() {
+        val artistMbid = "0d33cc88-28ae-44d5-be7e-7a653e518720"
+        val body = JSONObject().put(
+            seedA,
+            JSONObject()
+                .put(
+                    "artist", JSONObject()
+                        .put("name", "Portishead")
+                        .put(
+                            "artists",
+                            JSONArray().put(JSONObject().put("artist_mbid", artistMbid))
+                        )
+                )
+                .put("release", JSONObject().put("name", "Dummy"))
+                .put("recording", JSONObject().put("rels", JSONArray())),
+        )
+
+        val metadata = ListenBrainzLabs.parseRecordingMetadata(body, listOf(seedA)).getValue(seedA)
+
+        assertEquals(seedA, metadata.recordingMbid)
+        assertEquals(null, metadata.title)
+        assertEquals("Portishead", metadata.artistName)
+        assertEquals(listOf(artistMbid), metadata.artistMbids)
+        assertEquals("Dummy", metadata.releaseName)
+    }
+
+    @Test
+    fun `recording lookup returns recording and artist mbids independently`() {
+        val artistMbid = "artist-mbid"
+        val body = JSONArray().put(
+            JSONObject()
+                .put("recording_mbid", seedA)
+                .put("canonical_recording_mbid", seedB)
+                .put("recording_name", "Some Resolve")
+                .put("artist_credit_name", "Röyksopp")
+                .put("artist_credit_mbids", JSONArray().put(artistMbid))
+                .put("release_name", "Profound Mysteries")
+                .put("length", 210_000),
+        )
+
+        val recording = ListenBrainzLabs.parseRecordingMbidLookup(body).single()
+
+        assertEquals(seedB, recording.recordingMbid)
+        assertEquals("Some Resolve", recording.title)
+        assertEquals("Röyksopp", recording.artistName)
+        assertEquals(listOf(artistMbid), recording.artistMbids)
+        assertEquals(210_000L, recording.durationMs)
+    }
+
+    @Test
+    fun `metadata lookup obtains artist ids for a recording matched by title`() {
+        val artistMbid = "artist-mbid"
+        val metadata = ListenBrainzLabs.parseMetadataLookup(
+            JSONObject()
+                .put("recording_mbid", seedA)
+                .put("recording_name", "Song title")
+                .put("artist_credit_name", "Artist name")
+                .put("artist_mbids", JSONArray().put(artistMbid))
+                .put("release_name", "Release"),
+        )
+
+        assertEquals(seedA, metadata?.recordingMbid)
+        assertEquals("Song title", metadata?.title)
+        assertEquals("Artist name", metadata?.artistName)
+        assertEquals(listOf(artistMbid), metadata?.artistMbids)
+    }
+
+    @Test
+    fun `feedback parsing returns loved and hated ratings and ignores malformed rows`() {
+        val body = JSONObject().put(
+            "feedback",
+            JSONArray()
+                .put(JSONObject().put("recording_mbid", seedA).put("rating", "love"))
+                .put(JSONObject().put("recording_mbid", seedB).put("rating", "hate"))
+                .put(JSONObject().put("rating", "love")),
+        )
+
+        assertEquals(mapOf(seedA to "love", seedB to "hate"), ListenBrainzLabs.parseFeedback(body))
+        assertEquals(emptyMap<String, String>(), ListenBrainzLabs.parseFeedback(JSONObject()))
+    }
+
+    @Test
+    fun `recording feedback URL and score response follow the feedback API`() {
+        val url = ListenBrainzLabs.feedbackUrl("rob smith", count = 500)
+        assertTrue(url.contains("/1/feedback/user/rob+smith/get-feedback"))
+        assertTrue(url.contains("count=500"))
+
+        val body = JSONObject().put(
+            "feedback",
+            JSONArray()
+                .put(JSONObject().put("recording_mbid", seedA).put("score", 1))
+                .put(JSONObject().put("recording_mbid", seedB).put("score", -1)),
+        )
+        assertEquals(mapOf(seedA to "love", seedB to "hate"), ListenBrainzLabs.parseFeedback(body))
+    }
+
+    @Test
+    fun `artist radio URL requires artist mbid and recommendation parser keeps scores`() {
+        val url = ListenBrainzLabs.artistRadioUrl(seedA)
+        assertTrue(url.contains("/1/lb-radio/artist/$seedA"))
+        val recommendations = JSONObject().put(
+            "payload",
+            JSONObject().put(
+                "mbids", JSONArray().put(
+                    JSONObject().put("recording_mbid", seedB).put("score", 3.25),
+                )
+            ),
+        )
+        assertEquals(
+            3.25,
+            ListenBrainzLabs.parseCfRecommendations(recommendations).single().score!!,
+            0.0
+        )
     }
 }

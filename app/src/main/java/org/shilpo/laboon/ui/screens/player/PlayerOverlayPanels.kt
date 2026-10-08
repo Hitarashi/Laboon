@@ -40,6 +40,7 @@ import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.lyrics.LyricsLine
 import org.shilpo.laboon.lyrics.LyricsTranslator
 import org.shilpo.laboon.playback.AudioQualityInfo
+import org.shilpo.laboon.playback.DiscoveryStatus
 import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.playback.RepeatMode
 import org.shilpo.laboon.playback.SpectrumFrame
@@ -71,6 +72,9 @@ internal data class PlayerOverlayState(
     val currentPositionMs: Long,
     val durationMs: Long,
     val queueState: QueueState?,
+    val canSkipPrevious: Boolean = false,
+    val isDiscovering: Boolean = false,
+    val discoveryStatus: DiscoveryStatus = DiscoveryStatus.IDLE,
     val lyricsLines: List<LyricsLine>,
     val lyricsLoading: Boolean,
     val spectrum: SpectrumFrame = SpectrumFrame(),
@@ -86,8 +90,12 @@ internal data class PlayerOverlayActions(
     val onAudioQualityClick: () -> Unit,
     val onQualityVariantSelected: (TrackFormatVariant) -> Unit,
     val onTrackClick: (HomeTrack) -> Unit,
+    val onQueueEntryClick: (Long) -> Unit,
+    val onPromoteAutoplay: (Long) -> Unit,
     val onRemoveUpNext: (Int) -> Unit,
     val onMoveUpNext: (Int, Int) -> Unit,
+    val onClearUpcoming: () -> Unit,
+    val onRetryDiscovery: () -> Unit,
 )
 
 @Composable
@@ -149,7 +157,7 @@ internal fun PlayerOverlayPanels(
 
     val lyricsListState = rememberLazyListState()
     val queueListState = rememberLazyListState()
-    val queueState = state.queueState ?: QueueState(items = listOf(state.track), currentIndex = 0)
+    val queueState = state.queueState ?: QueueState.withCurrent(state.track)
     val navigationItems = listOf(
         FloatingNavigationItem(
             value = PlayerPanelTab.Lyrics,
@@ -275,9 +283,14 @@ internal fun PlayerOverlayPanels(
 
                             PlayerPanelTab.Queue -> QueueScreen(
                                 queueState = queueState,
-                                onTrackClick = actions.onTrackClick,
+                                onQueueEntryClick = actions.onQueueEntryClick,
                                 onRemoveUpNext = actions.onRemoveUpNext,
                                 onMoveUpNext = actions.onMoveUpNext,
+                                onPromoteAutoplay = actions.onPromoteAutoplay,
+                                onClearUpcoming = actions.onClearUpcoming,
+                                onRetryDiscovery = actions.onRetryDiscovery,
+                                isDiscovering = state.isDiscovering,
+                                discoveryStatus = state.discoveryStatus,
                                 queueFractionProvider = panelFractionProvider,
                                 lazyListState = queueListState,
                             )

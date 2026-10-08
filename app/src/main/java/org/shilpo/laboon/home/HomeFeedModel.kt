@@ -19,12 +19,14 @@ data class HomeTrack(
     val isCached: Boolean = false,
     val codec: String? = null,
     val mbid: String? = null,
+    val artistMbid: String? = null,
     val isrc: String? = null,
     val providerTrackId: String? = null,
     val availableFormats: List<String> = emptyList(),
     val availableVariants: List<TrackFormatVariant> = emptyList(),
     val durationMs: Long? = null,
     val contentRating: String? = null,
+    val listenedAtMs: Long? = null,
 ) {
     val isPlayable: Boolean
         get() = backendTrackId != null || !streamUrl.isNullOrBlank()
@@ -36,6 +38,18 @@ data class HomeArtist(
     val playCount: Long = 0,
     val imageUrl: String? = null,
     val appleCatalogId: String? = null,
+    val mbid: String? = null,
+    val source: String? = null,
+)
+
+/** Taste inputs shared by home discovery and queue autoplay. */
+data class UserTasteProfile(
+    val recentTracks: List<HomeTrack> = emptyList(),
+    val topTracks: List<HomeTrack> = emptyList(),
+    val topArtists: List<HomeArtist> = emptyList(),
+    val lovedTracks: List<HomeTrack> = emptyList(),
+    val lovedRecordingMbids: Set<String> = emptySet(),
+    val dislikedRecordingMbids: Set<String> = emptySet(),
 )
 
 data class HomeAlbum(

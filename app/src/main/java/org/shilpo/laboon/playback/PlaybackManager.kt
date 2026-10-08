@@ -9,6 +9,7 @@ import androidx.annotation.OptIn
 import androidx.core.content.ContextCompat
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.FlagSet
 import androidx.media3.common.Format
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
@@ -45,8 +46,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -63,6 +66,8 @@ import org.shilpo.laboon.lyrics.LyricsLookup
 import org.shilpo.laboon.lyrics.LyricsRepository
 import org.shilpo.laboon.lyrics.LyricsRepositoryImpl
 import org.shilpo.laboon.lyricsporn.LyricspornClient
+import org.shilpo.laboon.rip.AutoRipCoordinator
+import org.shilpo.laboon.rip.AutoRipSource
 import org.shilpo.laboon.search.SearchRepository
 import org.shilpo.laboon.search.SearchRepositoryImpl
 import java.nio.ByteBuffer
@@ -100,6 +105,8 @@ interface PlaybackManager {
 
     fun playNext(track: HomeTrack)
     fun addToQueue(track: HomeTrack)
+    fun playQueueEntry(entryId: Long)
+    fun retryDiscovery()
     fun skipToNext()
     fun skipToPrevious()
     fun pause()
@@ -130,6 +137,8 @@ class PlaybackManagerImpl(
         lyricspornApiUrlProvider = { sessionStore.getSession()?.lyricspornApiUrl },
         diskCache = LyricsDiskCache(context),
     ),
+    private val autoRipCoordinator: AutoRipCoordinator? = null,
+    private val completedRipTrackIds: SharedFlow<String>? = null,
 ) : PlaybackManager {
 
     private val spectrumVisualizer = SpectrumVisualizer()
@@ -168,13 +177,14 @@ class PlaybackManagerImpl(
     private var resolveJob: Job? = null
     private var qualitySwitchJob: Job? = null
     private var qualitySwitchGeneration: Long = 0L
-    private var pendingPlaybackTrackId: String? = null
+    private var pendingPlaybackMediaId: String? = null
     private var preloadJob: Job? = null
     private var precacheJob: Job? = null
     private var currentCacheWriter: CacheWriter? = null
     private var cacheDataSourceFactory: CacheDataSource.Factory? = null
     private var discoveryJob: Job? = null
     private var discoveryGeneration: Long = 0L
+    private var waitingForAutoRipTrackId: String? = null
     private var currentArtworkLookupKey: String? = null
     private var fadeJob: Job? = null
     private var pendingFadeIn: Boolean = false
@@ -215,27 +225,63 @@ class PlaybackManagerImpl(
         scope.launch {
             queueManager.state.collect { qState ->
                 syncPlayerModes(qState)
+                if (qState.autoplaySuppressed && _state.value.discoveryStatus == DiscoveryStatus.LOADING) {
+                    discoveryJob?.cancel()
+                    discoveryGeneration += 1L
+                    _state.value = _state.value.copy(
+                        isDiscovering = false,
+                        discoveryStatus = DiscoveryStatus.IDLE,
+                    )
+                }
+                val autoRipTracks = buildList {
+                    qState.currentTrack?.let(::add)
+                    qState.upcomingEntries.forEach { add(it.track) }
+                }
+                autoRipCoordinator?.observe(AutoRipSource.PLAYBACK_QUEUE, autoRipTracks)
                 qState.currentTrack?.let(::requestTrackArtwork)
+                val queuedCurrent = qState.currentTrack
+                if (queuedCurrent != null && _state.value.currentTrack?.id == queuedCurrent.id) {
+                    if (_state.value.currentTrack != queuedCurrent) {
+                        _state.value = _state.value.copy(currentTrack = queuedCurrent)
+                    }
+                    if (
+                        waitingForAutoRipTrackId == queuedCurrent.id && queuedCurrent.isCached &&
+                        queuedCurrent.backendTrackId != null
+                    ) {
+                        waitingForAutoRipTrackId = null
+                        executePlayTrack(queuedCurrent)
+                    }
+                }
                 _state.value = _state.value.copy(
                     canSkipNext = qState.hasNext,
                     canSkipPrevious = qState.hasPrevious,
                 )
             }
         }
+        if (autoRipCoordinator != null && completedRipTrackIds != null) {
+            scope.launch {
+                completedRipTrackIds.collect { providerTrackId ->
+                    val availability =
+                        autoRipCoordinator.refreshAvailabilityNow(providerTrackId).cached
+                    if (availability.isNotEmpty()) queueManager.applyAvailability(availability)
+                }
+            }
+        }
     }
 
     private fun syncPlayerModes(qState: QueueState) {
         val exo = player ?: return
-        val targetRepeatMode = when (qState.repeatMode) {
-            RepeatMode.OFF -> Player.REPEAT_MODE_OFF
-            RepeatMode.ALL -> Player.REPEAT_MODE_ALL
-            RepeatMode.ONE -> Player.REPEAT_MODE_ONE
+        // QueueManager owns context repeats; Media3 only repeats the current item for Repeat One.
+        val targetRepeatMode = if (qState.repeatMode == RepeatMode.ONE) {
+            Player.REPEAT_MODE_ONE
+        } else {
+            Player.REPEAT_MODE_OFF
         }
         if (exo.repeatMode != targetRepeatMode) {
             exo.repeatMode = targetRepeatMode
         }
-        if (exo.shuffleModeEnabled != qState.isShuffle) {
-            exo.shuffleModeEnabled = qState.isShuffle
+        if (exo.shuffleModeEnabled) {
+            exo.shuffleModeEnabled = false
         }
     }
 
@@ -541,7 +587,7 @@ class PlaybackManagerImpl(
                 initializedTimestampMs: Long,
                 initializationDurationMs: Long
             ) {
-                if (exo.currentMediaItem?.mediaId == _state.value.currentTrack?.id) {
+                if (exo.currentMediaItem?.mediaId == currentQueueMediaId()) {
                     currentDecoderName = decoderName
                     updateAudioQuality(exo)
                 }
@@ -552,7 +598,7 @@ class PlaybackManagerImpl(
                 loadEventInfo: LoadEventInfo,
                 mediaLoadData: MediaLoadData
             ) {
-                if (exo.currentMediaItem?.mediaId == _state.value.currentTrack?.id) {
+                if (exo.currentMediaItem?.mediaId == currentQueueMediaId()) {
                     val resourceLength = resourceContentLength(loadEventInfo.responseHeaders)
                     if (resourceLength != null && resourceLength > currentResourceLengthBytes) {
                         currentResourceLengthBytes = resourceLength
@@ -566,7 +612,7 @@ class PlaybackManagerImpl(
                 format: Format,
                 decoderReuseEvaluation: DecoderReuseEvaluation?
             ) {
-                if (exo.currentMediaItem?.mediaId == _state.value.currentTrack?.id) {
+                if (exo.currentMediaItem?.mediaId == currentQueueMediaId()) {
                     currentAudioFormat = format
                     updateAudioQuality(exo)
                 }
@@ -581,8 +627,8 @@ class PlaybackManagerImpl(
                     }
 
                     Player.STATE_READY -> {
-                        val pendingTrackId = pendingPlaybackTrackId
-                        if ((pendingTrackId != null && exo.currentMediaItem?.mediaId != pendingTrackId) ||
+                        val pendingMediaId = pendingPlaybackMediaId
+                        if ((pendingMediaId != null && exo.currentMediaItem?.mediaId != pendingMediaId) ||
                             isQualitySwitchPreparing(exo)
                         ) {
                             return
@@ -609,7 +655,7 @@ class PlaybackManagerImpl(
                         pendingFadeIn = false
                         exo.volume = 1f
                         if (_state.value.switchingQualityFormat != null ||
-                            pendingPlaybackTrackId != null
+                            pendingPlaybackMediaId != null
                         ) {
                             _state.value = _state.value.copy(
                                 isPlaying = false,
@@ -620,6 +666,14 @@ class PlaybackManagerImpl(
                             stopProgressTracker()
                         } else if (queueManager.state.value.hasNext) {
                             skipToNext()
+                        } else if (_state.value.discoveryStatus == DiscoveryStatus.LOADING) {
+                            _state.value = _state.value.copy(
+                                isPlaying = false,
+                                isBuffering = true,
+                                currentPositionMs = exo.duration.coerceAtLeast(0L),
+                                progress = 1f,
+                            )
+                            stopProgressTracker()
                         } else {
                             _state.value = _state.value.copy(
                                 isPlaying = false,
@@ -646,7 +700,7 @@ class PlaybackManagerImpl(
                     }
 
                     Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT -> {
-                        if (mediaItem != null && mediaItem.mediaId != _state.value.currentTrack?.id) {
+                        if (mediaItem != null && mediaItem.mediaId != currentQueueMediaId()) {
                             followPlayerTransition(exo, mediaItem.mediaId)
                         } else {
                             _state.value = _state.value.copy(
@@ -675,7 +729,7 @@ class PlaybackManagerImpl(
             }
 
             override fun onTracksChanged(tracks: Tracks) {
-                if (exo.currentMediaItem?.mediaId == _state.value.currentTrack?.id) {
+                if (exo.currentMediaItem?.mediaId == currentQueueMediaId()) {
                     for (group in tracks.groups) {
                         if (group.type == C.TRACK_TYPE_AUDIO) {
                             for (i in 0 until group.length) {
@@ -770,7 +824,58 @@ class PlaybackManagerImpl(
                 openAppIntent,
                 android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT,
             )
-            val forwardingPlayer = object : ForwardingPlayer(exo) {
+            val commandListeners = java.util.IdentityHashMap<Player.Listener, Player.Listener>()
+            lateinit var forwardingPlayer: Player
+            forwardingPlayer = object : ForwardingPlayer(exo) {
+                override fun addListener(listener: Player.Listener) {
+                    val forwardingListener = object : Player.Listener by listener {
+                        override fun onAvailableCommandsChanged(commands: Player.Commands) {
+                            listener.onAvailableCommandsChanged(forwardingPlayer.availableCommands)
+                        }
+
+                        override fun onEvents(player: Player, events: Player.Events) {
+                            listener.onEvents(forwardingPlayer, events)
+                        }
+                    }
+                    commandListeners[listener] = forwardingListener
+                    super.addListener(forwardingListener)
+                }
+
+                override fun removeListener(listener: Player.Listener) {
+                    val forwardingListener = commandListeners.remove(listener) ?: return
+                    super.removeListener(forwardingListener)
+                }
+
+                override fun getAvailableCommands(): Player.Commands {
+                    val queueState = queueManager.state.value
+                    val commands = super.getAvailableCommands().buildUpon()
+                    if (queueState.hasPrevious) {
+                        commands.add(COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                        commands.add(COMMAND_SEEK_TO_PREVIOUS)
+                    } else {
+                        commands.remove(COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+                        commands.remove(COMMAND_SEEK_TO_PREVIOUS)
+                    }
+                    if (queueState.hasNext) {
+                        commands.add(COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                        commands.add(COMMAND_SEEK_TO_NEXT)
+                    } else {
+                        commands.remove(COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+                        commands.remove(COMMAND_SEEK_TO_NEXT)
+                    }
+                    return commands.build()
+                }
+
+                override fun isCommandAvailable(command: Int): Boolean = when (command) {
+                    COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+                    COMMAND_SEEK_TO_PREVIOUS -> queueManager.state.value.hasPrevious
+
+                    COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+                    COMMAND_SEEK_TO_NEXT -> queueManager.state.value.hasNext
+
+                    else -> super.isCommandAvailable(command)
+                }
+
                 override fun play() {
                     resume()
                 }
@@ -794,6 +899,14 @@ class PlaybackManagerImpl(
                 override fun seekToPrevious() {
                     skipToPrevious()
                 }
+
+                override fun seekToPreviousMediaItem() {
+                    skipToPrevious()
+                }
+
+                override fun seekToNextMediaItem() {
+                    skipToNext()
+                }
             }
             val session = MediaSession.Builder(context, forwardingPlayer)
                 .setSessionActivity(pendingIntent)
@@ -802,6 +915,21 @@ class PlaybackManagerImpl(
             PlaybackServiceHolder.mediaSession = session
             PlaybackServiceHolder.service?.let { s ->
                 runCatching { s.addSession(session) }
+            }
+            scope.launch {
+                var previousCommands = forwardingPlayer.availableCommands
+                queueManager.state.collect {
+                    val commands = forwardingPlayer.availableCommands
+                    if (commands == previousCommands) return@collect
+                    previousCommands = commands
+                    val events = Player.Events(
+                        FlagSet.Builder().add(Player.EVENT_AVAILABLE_COMMANDS_CHANGED).build(),
+                    )
+                    commandListeners.values.toList().forEach { listener ->
+                        listener.onAvailableCommandsChanged(commands)
+                        listener.onEvents(forwardingPlayer, events)
+                    }
+                }
             }
         } catch (_: Exception) {
         }
@@ -812,6 +940,7 @@ class PlaybackManagerImpl(
     override fun play(track: HomeTrack, contextTracks: List<HomeTrack>?, startPositionMs: Long?) {
         queueManager.play(track, contextTracks)
         executePlayTrack(track, startPositionMs ?: 0L)
+        _state.value = _state.value.copy(discoveryStatus = DiscoveryStatus.IDLE)
         scheduleDiscoveryRefillIfNeeded()
     }
 
@@ -825,11 +954,33 @@ class PlaybackManagerImpl(
         schedulePreloadNext()
     }
 
+    override fun retryDiscovery() {
+        queueManager.retryAutoplay()
+        _state.value = _state.value.copy(error = null, discoveryStatus = DiscoveryStatus.IDLE)
+        scheduleDiscoveryRefillIfNeeded(force = true)
+    }
+
+    override fun playQueueEntry(entryId: Long) {
+        val track = queueManager.playEntry(entryId) ?: return
+        executePlayTrack(track)
+        scheduleDiscoveryRefillIfNeeded()
+    }
+
     override fun skipToNext() {
         val exo = player ?: return
-        if (exo.mediaItemCount > 1 && exo.currentMediaItemIndex < exo.mediaItemCount - 1) {
-            exo.seekToNextMediaItem()
+        val queueState = queueManager.state.value
+        if (queueState.repeatMode != RepeatMode.ONE &&
+            exo.mediaItemCount > 1 && exo.currentMediaItemIndex < exo.mediaItemCount - 1
+        ) {
+            val expectedMediaId = queueManager.peekNextEntry()?.let(::mediaIdForEntry)
+            val playerNextMediaId = exo.getMediaItemAt(exo.currentMediaItemIndex + 1).mediaId
+            if (expectedMediaId == playerNextMediaId) {
+                exo.seekToNextMediaItem()
+            } else {
+                playQueuedNextTrack()
+            }
         } else {
+            // Explicit Next advances even when Repeat One is active.
             playQueuedNextTrack()
         }
     }
@@ -844,12 +995,12 @@ class PlaybackManagerImpl(
 
     private fun syncTrackStateWithPlayer(exo: ExoPlayer) {
         val mediaId = exo.currentMediaItem?.mediaId ?: return
-        val pendingTrackId = pendingPlaybackTrackId
-        if (pendingTrackId != null) {
-            if (mediaId != pendingTrackId) return
-            pendingPlaybackTrackId = null
+        val pendingMediaId = pendingPlaybackMediaId
+        if (pendingMediaId != null) {
+            if (mediaId != pendingMediaId) return
+            pendingPlaybackMediaId = null
         }
-        if (mediaId == _state.value.currentTrack?.id) return
+        if (mediaId == currentQueueMediaId()) return
         followPlayerTransition(exo, mediaId)
     }
 
@@ -872,10 +1023,10 @@ class PlaybackManagerImpl(
 
     private fun followPlayerTransition(exo: ExoPlayer, transitionedMediaId: String) {
         if (exo.currentMediaItem?.mediaId != transitionedMediaId) return
-        val pendingTrackId = pendingPlaybackTrackId
-        if (pendingTrackId != null && transitionedMediaId != pendingTrackId) return
-        if (pendingTrackId == transitionedMediaId) pendingPlaybackTrackId = null
-        if (transitionedMediaId == _state.value.currentTrack?.id) return
+        val pendingMediaId = pendingPlaybackMediaId
+        if (pendingMediaId != null && transitionedMediaId != pendingMediaId) return
+        if (pendingMediaId == transitionedMediaId) pendingPlaybackMediaId = null
+        if (transitionedMediaId == currentQueueMediaId()) return
 
         val nextTrack = queueManager.selectCurrentById(transitionedMediaId)
         if (nextTrack == null) return
@@ -921,21 +1072,18 @@ class PlaybackManagerImpl(
     }
 
     override fun skipToPrevious() {
-        val exo = player ?: return
-        if (exo.currentPosition > 3000L) {
-            exo.seekTo(0L)
-        } else {
-            val prevTrack = queueManager.advanceToPrevious()
-            if (prevTrack != null && prevTrack.id != _state.value.currentTrack?.id) {
-                executePlayTrack(prevTrack)
-            } else {
-                exo.seekTo(0L)
-            }
+        if (player == null) return
+        val previousEntryId = queueManager.state.value.currentEntry?.id
+        val previousTrack = queueManager.advanceToPrevious() ?: return
+        val nextEntryId = queueManager.state.value.currentEntry?.id
+        if (nextEntryId != null && nextEntryId != previousEntryId) {
+            executePlayTrack(previousTrack)
         }
     }
 
     private fun executePlayTrack(track: HomeTrack, startPositionMs: Long = 0L) {
-        pendingPlaybackTrackId = track.id
+        waitingForAutoRipTrackId = null
+        pendingPlaybackMediaId = currentQueueMediaId(track)
         invalidateLyricsRequest()
         resolveJob?.cancel()
         qualitySwitchJob?.cancel()
@@ -1017,10 +1165,21 @@ class PlaybackManagerImpl(
                     startPlayback(updatedTrack, resolution.streamUrl, startPositionMs)
                     schedulePreloadNext()
                 } else {
-                    _state.value = _state.value.copy(
-                        isBuffering = false,
-                        error = "Unable to resolve stream",
-                    )
+                    if (!track.providerTrackId.isNullOrBlank() && !track.isCached) {
+                        val ripCompletedTrack = queueManager.state.value.currentTrack
+                            ?.takeIf { it.id == track.id && it.isCached && it.backendTrackId != null }
+                        if (ripCompletedTrack != null) {
+                            scope.launch { executePlayTrack(ripCompletedTrack) }
+                        } else {
+                            waitingForAutoRipTrackId = track.id
+                            _state.value = _state.value.copy(isBuffering = true, error = null)
+                        }
+                    } else {
+                        _state.value = _state.value.copy(
+                            isBuffering = false,
+                            error = "Unable to resolve stream",
+                        )
+                    }
                 }
             }
         }
@@ -1062,7 +1221,9 @@ class PlaybackManagerImpl(
     }
 
     private fun schedulePreloadNext() {
-        if (queueManager.state.value.isShuffle) {
+        if (queueManager.state.value.isShuffle ||
+            queueManager.state.value.repeatMode == RepeatMode.ONE
+        ) {
             preloadJob?.cancel()
             cancelPrecache()
             return
@@ -1071,10 +1232,11 @@ class PlaybackManagerImpl(
         preloadJob = scope.launch {
             delay(400)
             if (player == null) return@launch
-            val nextTrack = queueManager.peekNext() ?: run {
+            val nextEntry = queueManager.peekNextEntry() ?: run {
                 cancelPrecache()
                 return@launch
             }
+            val nextTrack = nextEntry.track
 
             val streamUrl = if (!nextTrack.streamUrl.isNullOrBlank()) {
                 nextTrack.streamUrl
@@ -1087,7 +1249,7 @@ class PlaybackManagerImpl(
 
             if (!isActive) return@launch
             ArtworkUrlHelper.preload(context, nextTrack.artworkUrl)
-            startPrecacheNext(nextTrack, streamUrl)
+            startPrecacheNext(nextEntry, streamUrl)
         }
     }
 
@@ -1149,8 +1311,9 @@ class PlaybackManagerImpl(
         return false
     }
 
-    private fun startPrecacheNext(track: HomeTrack, streamUrl: String) {
+    private fun startPrecacheNext(nextEntry: QueueEntry, streamUrl: String) {
         cancelPrecache()
+        val track = nextEntry.track
         val factory = cacheDataSourceFactory ?: return
         val currentTrack = _state.value.currentTrack ?: return
         val currentTrackCacheKey = cacheKey(currentTrack)
@@ -1176,8 +1339,10 @@ class PlaybackManagerImpl(
                         return@withContext
                     }
                     val exo = player ?: return@withContext
-                    if (queueManager.peekNext()?.id == track.id && exo.mediaItemCount <= 1) {
-                        exo.addMediaItem(buildMediaItem(track, streamUrl))
+                    if (queueManager.peekNextEntry()?.id == nextEntry.id && exo.mediaItemCount <= 1) {
+                        exo.addMediaItem(
+                            buildMediaItem(track, streamUrl, mediaIdForEntry(nextEntry)),
+                        )
                     }
                 }
             } catch (_: Exception) {
@@ -1197,38 +1362,88 @@ class PlaybackManagerImpl(
         }
     }
 
-    private fun scheduleDiscoveryRefillIfNeeded() {
+    private fun scheduleDiscoveryRefillIfNeeded(force: Boolean = false) {
         discoveryJob?.cancel()
         val generation = ++discoveryGeneration
         val qState = queueManager.state.value
-        if (!qState.isAutoplayEnabled || qState.upNextCount > DISCOVERY_REFILL_THRESHOLD) {
-            _state.value = _state.value.copy(isDiscovering = false)
+        if (qState.autoplaySuppressed || (!force && qState.upNextCount > DISCOVERY_REFILL_THRESHOLD)) {
+            _state.value = _state.value.copy(
+                isDiscovering = false,
+                discoveryStatus = DiscoveryStatus.IDLE,
+            )
             return
         }
-        val seed = qState.currentTrack
-        if (seed == null) {
-            _state.value = _state.value.copy(isDiscovering = false)
+        val seeds = queueManager.discoverySeedTracks()
+        if (seeds.isEmpty()) {
+            _state.value = _state.value.copy(
+                isDiscovering = false,
+                discoveryStatus = DiscoveryStatus.IDLE,
+            )
             return
         }
 
-        _state.value = _state.value.copy(isDiscovering = true)
+        _state.value = _state.value.copy(
+            isDiscovering = true,
+            discoveryStatus = DiscoveryStatus.LOADING,
+        )
         discoveryJob = scope.launch {
+            var result: QueueDiscoveryResult? = null
             try {
-                val queuedKeys = queueManager.state.value.items.mapTo(HashSet()) {
-                    TrackIdentity.keyOf(it)
+                val stateAtStart = queueManager.state.value
+                val queuedKeys = buildSet {
+                    stateAtStart.currentTrack?.let { track ->
+                        add(TrackIdentity.keyOf(track))
+                        add(TrackIdentity.keyOf(null, track.title, track.artist))
+                    }
+                    stateAtStart.playbackUpcomingEntries.forEach { entry ->
+                        add(TrackIdentity.keyOf(entry.track))
+                        add(TrackIdentity.keyOf(null, entry.track.title, entry.track.artist))
+                    }
+                    addAll(stateAtStart.dismissedAutoplayKeys)
                 }
                 val exclude = queueManager.getRecentHistoryKeys() + queuedKeys
-                discoveryEngine.discoverNextTracks(seed, exclude, limit = 6) { discovered ->
-                    withContext(Dispatchers.Main.immediate) {
-                        if (isActive && generation == discoveryGeneration) {
-                            queueManager.appendDiscovery(discovered)
-                            schedulePreloadNext()
+                result =
+                    discoveryEngine.discoverNextTracks(seeds, exclude, limit = 6) { discovered ->
+                        withContext(Dispatchers.Main.immediate) {
+                            if (isActive && generation == discoveryGeneration) {
+                                queueManager.appendDiscovery(discovered)
+                                val exo = player
+                                if (
+                                    exo?.playbackState == Player.STATE_ENDED && exo.playWhenReady &&
+                                    queueManager.peekNextEntry() != null
+                                ) {
+                                    playQueuedNextTrack()
+                                } else {
+                                    schedulePreloadNext()
+                                }
+                            }
                         }
                     }
-                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                result =
+                    QueueDiscoveryResult(emptyList(), successfulResponses = 0, failedResponses = 1)
             } finally {
                 if (generation == discoveryGeneration) {
-                    _state.value = _state.value.copy(isDiscovering = false)
+                    val discoveryStatus = when {
+                        result?.failed == true -> DiscoveryStatus.FAILED
+                        result?.exhausted == true -> DiscoveryStatus.EXHAUSTED
+                        else -> DiscoveryStatus.IDLE
+                    }
+                    _state.value = _state.value.copy(
+                        isDiscovering = false,
+                        discoveryStatus = discoveryStatus,
+                    )
+                    val exo = player
+                    if (
+                        discoveryStatus != DiscoveryStatus.IDLE &&
+                        queueManager.state.value.upNextCount == 0 &&
+                        exo?.playbackState == Player.STATE_ENDED
+                    ) {
+                        _state.value = _state.value.copy(isPlaying = false, isBuffering = false)
+                        stopProgressTracker()
+                    }
                 }
             }
         }
@@ -1240,7 +1455,11 @@ class PlaybackManagerImpl(
         const val MAX_RETRIES = 3
     }
 
-    private fun buildMediaItem(track: HomeTrack, streamUrl: String): MediaItem {
+    private fun buildMediaItem(
+        track: HomeTrack,
+        streamUrl: String,
+        mediaId: String = currentQueueMediaId(track) ?: track.id,
+    ): MediaItem {
         val metadataBuilder = MediaMetadata.Builder()
             .setTitle(track.title)
             .setArtist(track.artist)
@@ -1248,11 +1467,23 @@ class PlaybackManagerImpl(
         track.artworkUrl?.let { metadataBuilder.setArtworkUri(Uri.parse(it)) }
 
         return MediaItem.Builder()
-            .setMediaId(track.id)
+            .setMediaId(mediaId)
             .setCustomCacheKey(cacheKey(track))
             .setUri(streamUrl)
             .setMediaMetadata(metadataBuilder.build())
             .build()
+    }
+
+    private fun mediaIdForEntry(entry: QueueEntry): String =
+        QueueManagerImpl.QUEUE_MEDIA_ID_PREFIX + entry.id
+
+    private fun currentQueueMediaId(track: HomeTrack? = _state.value.currentTrack): String? {
+        val currentEntry = queueManager.state.value.currentEntry ?: return track?.id
+        return if (track == null || currentEntry.track.id == track.id) {
+            mediaIdForEntry(currentEntry)
+        } else {
+            track.id
+        }
     }
 
     private fun resolveQualityFromMetadata(track: HomeTrack?): AudioQualityInfo? {
@@ -1326,7 +1557,7 @@ class PlaybackManagerImpl(
     private fun updateAudioQuality(exo: ExoPlayer) {
         val currentTrack = _state.value.currentTrack ?: return
         val currentMediaItem = exo.currentMediaItem
-        if (currentMediaItem != null && currentMediaItem.mediaId != currentTrack.id) {
+        if (currentMediaItem != null && currentMediaItem.mediaId != currentQueueMediaId()) {
             return
         }
 
@@ -1809,6 +2040,7 @@ class PlaybackManagerImpl(
             val track = _state.value.currentTrack
             if (track != null) {
                 executePlayTrack(track, _state.value.currentPositionMs)
+                scheduleDiscoveryRefillIfNeeded()
                 return
             }
         }
@@ -1876,9 +2108,8 @@ class PlaybackManagerImpl(
             codec = availableVariant.format,
         )
         val exo = player
-        val currentMediaIsLoaded = exo?.currentMediaItem?.mediaId == currentTrack.id
 
-        if (!currentMediaIsLoaded) {
+        if (exo == null || exo.currentMediaItem?.mediaId != currentQueueMediaId()) {
             qualitySwitchJob = null
             queueManager.updateCurrentTrack(selectedTrack)
             playbackPersistence.saveLastTrack(selectedTrack)
@@ -1963,7 +2194,7 @@ class PlaybackManagerImpl(
         qualitySwitchJob?.cancel()
         qualitySwitchJob = null
         qualitySwitchGeneration += 1L
-        pendingPlaybackTrackId = null
+        pendingPlaybackMediaId = null
         preloadJob?.cancel()
         cancelPrecache()
         discoveryJob?.cancel()
@@ -2009,7 +2240,7 @@ class PlaybackManagerImpl(
         qualitySwitchJob?.cancel()
         qualitySwitchJob = null
         qualitySwitchGeneration += 1L
-        pendingPlaybackTrackId = null
+        pendingPlaybackMediaId = null
         preloadJob?.cancel()
         cancelPrecache()
         discoveryJob?.cancel()
@@ -2019,6 +2250,7 @@ class PlaybackManagerImpl(
         pendingFadeIn = false
         stopProgressTracker()
         spectrumVisualizer.reset()
+        autoRipCoordinator?.observe(AutoRipSource.PLAYBACK_QUEUE, emptyList())
         queueManager.release()
         val session = mediaSession
         if (session != null) {
@@ -2031,6 +2263,7 @@ class PlaybackManagerImpl(
         PlaybackServiceHolder.mediaSession = null
         player?.release()
         player = null
+        scope.cancel()
     }
 
     private fun startProgressTracker() {
@@ -2064,9 +2297,19 @@ object PlaybackManagerHolder {
     private var instance: PlaybackManager? = null
     private val lock = Any()
 
-    fun getInstance(context: Context, sessionStore: SessionStore): PlaybackManager {
+    fun getInstance(
+        context: Context,
+        sessionStore: SessionStore,
+        autoRipCoordinator: AutoRipCoordinator? = null,
+        completedRipTrackIds: SharedFlow<String>? = null,
+    ): PlaybackManager {
         return synchronized(lock) {
-            instance ?: PlaybackManagerImpl(context.applicationContext, sessionStore).also {
+            instance ?: PlaybackManagerImpl(
+                context = context.applicationContext,
+                sessionStore = sessionStore,
+                autoRipCoordinator = autoRipCoordinator,
+                completedRipTrackIds = completedRipTrackIds,
+            ).also {
                 instance = it
             }
         }

@@ -70,6 +70,8 @@ import coil3.request.ImageRequest
 import coil3.request.crossfade
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.playback.DiscoveryStatus
+import org.shilpo.laboon.playback.QueueEntry
 import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.ui.design.TrackCodecBadges
 import sh.calvin.reorderable.ReorderableItem
@@ -78,9 +80,14 @@ import sh.calvin.reorderable.rememberReorderableLazyListState
 @Composable
 fun QueueScreen(
     queueState: QueueState,
-    onTrackClick: (HomeTrack) -> Unit,
+    onQueueEntryClick: (Long) -> Unit,
     onRemoveUpNext: (Int) -> Unit,
     onMoveUpNext: (Int, Int) -> Unit,
+    @Suppress("UNUSED_PARAMETER") onPromoteAutoplay: (Long) -> Unit,
+    @Suppress("UNUSED_PARAMETER") onClearUpcoming: () -> Unit,
+    onRetryDiscovery: () -> Unit,
+    isDiscovering: Boolean,
+    discoveryStatus: DiscoveryStatus,
     modifier: Modifier = Modifier,
     queueFractionProvider: () -> Float = { 1f },
     lazyListState: LazyListState = rememberLazyListState(),
@@ -92,9 +99,12 @@ fun QueueScreen(
             queueState = queueState,
             lazyListState = lazyListState,
             queueFractionProvider = queueFractionProvider,
-            onTrackClick = onTrackClick,
+            onQueueEntryClick = onQueueEntryClick,
             onRemoveUpNext = onRemoveUpNext,
             onMoveUpNext = onMoveUpNext,
+            onRetryDiscovery = onRetryDiscovery,
+            isDiscovering = isDiscovering,
+            discoveryStatus = discoveryStatus,
             modifier = Modifier.fillMaxSize(),
         )
     }
@@ -105,13 +115,16 @@ private fun QueueListContent(
     queueState: QueueState,
     lazyListState: LazyListState,
     queueFractionProvider: () -> Float,
-    onTrackClick: (HomeTrack) -> Unit,
+    onQueueEntryClick: (Long) -> Unit,
     onRemoveUpNext: (Int) -> Unit,
     onMoveUpNext: (Int, Int) -> Unit,
+    onRetryDiscovery: () -> Unit,
+    isDiscovering: Boolean,
+    discoveryStatus: DiscoveryStatus,
     modifier: Modifier = Modifier,
 ) {
     val hapticView = LocalView.current
-    val upcomingTracks = remember { mutableStateListOf<HomeTrack>() }
+    val upcomingEntries = remember { mutableStateListOf<QueueEntry>() }
 
     var dragFromIndex by remember { mutableStateOf<Int?>(null) }
     var dragToIndex by remember { mutableStateOf<Int?>(null) }
@@ -124,14 +137,14 @@ private fun QueueListContent(
                 dragFromIndex = from.index
             }
             dragToIndex = to.index
-            upcomingTracks.add(to.index, upcomingTracks.removeAt(from.index))
+            upcomingEntries.add(to.index, upcomingEntries.removeAt(from.index))
         },
     )
 
-    LaunchedEffect(queueState.upcoming) {
+    LaunchedEffect(queueState.playbackUpcomingEntries) {
         if (!reorderableState.isAnyItemDragging) {
-            upcomingTracks.clear()
-            upcomingTracks.addAll(queueState.upcoming)
+            upcomingEntries.clear()
+            upcomingEntries.addAll(queueState.playbackUpcomingEntries)
         }
     }
 
@@ -177,7 +190,7 @@ private fun QueueListContent(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = "${upcomingTracks.size}",
+                        text = "${upcomingEntries.size}",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSecondaryContainer,
@@ -185,7 +198,7 @@ private fun QueueListContent(
                 }
             }
 
-            if (upcomingTracks.isNotEmpty()) {
+            if (upcomingEntries.isNotEmpty()) {
                 Text(
                     text = "Swipe to remove",
                     style = MaterialTheme.typography.labelSmall,
@@ -194,7 +207,7 @@ private fun QueueListContent(
             }
         }
 
-        if (upcomingTracks.isEmpty()) {
+        if (upcomingEntries.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -256,24 +269,24 @@ private fun QueueListContent(
                     },
             ) {
                 itemsIndexed(
-                    items = upcomingTracks,
-                    key = { _, track -> track.id },
+                    items = upcomingEntries,
+                    key = { _, entry -> "queue-entry-${entry.id}" },
                     contentType = { _, _ -> "queue_item" },
-                ) { index, track ->
+                ) { index, entry ->
                     ReorderableItem(
                         state = reorderableState,
-                        key = track.id,
+                        key = "queue-entry-${entry.id}",
                         modifier = if (reorderableState.isAnyItemDragging) Modifier else Modifier.animateItem(),
                     ) { isDragging ->
                         UpNextTrackRow(
-                            track = track,
+                            track = entry.track,
                             index = index,
-                            count = upcomingTracks.size,
+                            count = upcomingEntries.size,
                             isDragging = isDragging,
                             isAnyDragging = reorderableState.isAnyItemDragging,
-                            onClick = { onTrackClick(track) },
+                            onClick = { onQueueEntryClick(entry.id) },
                             onRemove = {
-                                upcomingTracks.removeAt(index)
+                                upcomingEntries.removeAt(index)
                                 onRemoveUpNext(index)
                             },
                             dragHandle = {
@@ -308,6 +321,19 @@ private fun QueueListContent(
                                 }
                             },
                             modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+                if (isDiscovering || discoveryStatus != DiscoveryStatus.IDLE || queueState.autoplaySuppressed) {
+                    item(key = "autoplay_status") {
+                        AutoplayStatus(
+                            isDiscovering = isDiscovering,
+                            status = discoveryStatus,
+                            suppressed = queueState.autoplaySuppressed,
+                            onRetry = onRetryDiscovery,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 12.dp),
                         )
                     }
                 }
@@ -501,6 +527,61 @@ private fun UpNextTrackRow(
             },
             trailingContent = dragHandle,
         )
+    }
+}
+
+@Composable
+private fun AutoplayStatus(
+    isDiscovering: Boolean,
+    status: DiscoveryStatus,
+    suppressed: Boolean,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        when {
+            isDiscovering || status == DiscoveryStatus.LOADING -> {
+                androidx.compose.material3.CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                )
+                Text(
+                    text = "Finding related songs…",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 10.dp),
+                )
+            }
+
+            suppressed -> Text(
+                text = "Autoplay is paused because upcoming songs were cleared.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            status == DiscoveryStatus.FAILED -> {
+                Text(
+                    text = "Couldn’t load song suggestions.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                androidx.compose.material3.TextButton(onClick = onRetry) { Text("Retry") }
+            }
+
+            status == DiscoveryStatus.EXHAUSTED -> {
+                Text(
+                    text = "No more related songs were found.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                androidx.compose.material3.TextButton(onClick = onRetry) { Text("Try again") }
+            }
+        }
     }
 }
 

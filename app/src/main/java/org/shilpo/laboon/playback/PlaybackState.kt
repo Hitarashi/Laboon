@@ -50,6 +50,13 @@ data class AudioQualityInfo(
     val pipelineDetails: AudioPipelineDetails? = null,
 )
 
+enum class DiscoveryStatus {
+    IDLE,
+    LOADING,
+    EXHAUSTED,
+    FAILED,
+}
+
 data class PlaybackState(
     val currentTrack: HomeTrack? = null,
     val isPlaying: Boolean = false,
@@ -61,6 +68,7 @@ data class PlaybackState(
     val canSkipNext: Boolean = false,
     val canSkipPrevious: Boolean = false,
     val isDiscovering: Boolean = false,
+    val discoveryStatus: DiscoveryStatus = DiscoveryStatus.IDLE,
     val switchingQualityFormat: String? = null,
     val audioQuality: AudioQualityInfo? = null,
     val lyricsLines: List<LyricsLine> = emptyList(),

@@ -131,6 +131,10 @@ interface SearchRepository {
     suspend fun resolvePlaybackUrl(track: HomeTrack): String?
     suspend fun resolvePlayback(track: HomeTrack): PlaybackResolution?
     suspend fun resolvePlaybackBatch(tracks: List<HomeTrack>): List<HomeTrack>
+
+    /** Resolves exact Apple catalog identities while allowing tracks that are not yet ripped. */
+    suspend fun resolveCatalogBatch(tracks: List<HomeTrack>): List<HomeTrack> =
+        tracks.filter { !it.providerTrackId.isNullOrBlank() }
 }
 
 class SearchRepositoryImpl(
@@ -461,6 +465,33 @@ class SearchRepositoryImpl(
             }.awaitAll().filterNotNull()
         }
     }
+
+    override suspend fun resolveCatalogBatch(tracks: List<HomeTrack>): List<HomeTrack> =
+        withContext(Dispatchers.IO) {
+            if (tracks.isEmpty()) return@withContext emptyList()
+            val apiBaseUrl = sessionStore.getSession()?.lyricspornApiUrl
+            coroutineScope {
+                tracks.map { track ->
+                    async {
+                        val match = LyricspornClient.resolveTrackCatalogItem(
+                            apiBaseUrl = apiBaseUrl,
+                            title = track.title,
+                            artist = track.artist,
+                            album = track.album,
+                            durationMs = track.durationMs,
+                        )?.takeIf { it.isExactIdentity } ?: return@async null
+                        val item = match.item
+                        track.copy(
+                            artworkUrl = track.artworkUrl ?: item.artworkUrl,
+                            isrc = track.isrc ?: item.isrc,
+                            providerTrackId = item.id,
+                            album = track.album?.takeIf(String::isNotBlank) ?: item.albumName,
+                            durationMs = track.durationMs ?: item.durationMs,
+                        )
+                    }
+                }.awaitAll().filterNotNull()
+            }
+        }
 
     override suspend fun resolvePlayback(track: HomeTrack): PlaybackResolution? =
         withContext(Dispatchers.IO) {
