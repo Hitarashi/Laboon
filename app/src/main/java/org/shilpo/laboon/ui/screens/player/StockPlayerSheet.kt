@@ -7,6 +7,8 @@
 package org.shilpo.laboon.ui.screens.player
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,10 +21,15 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -49,7 +56,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.launch
 import org.shilpo.laboon.R
@@ -60,8 +71,15 @@ import org.shilpo.laboon.playback.AudioQualityInfo
 import org.shilpo.laboon.playback.DiscoveryStatus
 import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.playback.RepeatMode
+import org.shilpo.laboon.theme.LocalVisualTheme
 import org.shilpo.laboon.theme.renderer.materialSymbolPainterResource
 import org.shilpo.laboon.ui.design.painterResource
+import org.shilpo.laboon.ui.design.MiniPlayerHeight
+import org.shilpo.laboon.ui.design.PixelPlayerFacingCornerRadius
+import org.shilpo.laboon.ui.design.PixelMiniPlayerHeight
+import org.shilpo.laboon.ui.design.PixelPlayerOuterCornerRadius
+import org.shilpo.laboon.ui.design.MiniPlayerBottomPadding
+import org.shilpo.laboon.ui.design.NavigationBarMaxWidth
 import org.shilpo.laboon.ui.screens.player.lyrics.LyricsScreen
 import org.shilpo.laboon.ui.screens.queue.QueueBottomSheet
 
@@ -86,60 +104,263 @@ internal fun StockPlayerSheet(
     var queueVisible by rememberSaveable { mutableStateOf(false) }
     var audioVisible by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val usesPixelPlayerChrome = LocalVisualTheme.current == null
+    val miniPlayerHeight = if (usesPixelPlayerChrome) PixelMiniPlayerHeight else MiniPlayerHeight
     LaunchedEffect(expanded) { onExpansionChange?.invoke(if (expanded) 1f else 0f) }
     Box(modifier = modifier, contentAlignment = Alignment.BottomCenter) {
         Surface(
             modifier = Modifier
                 .navigationBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, bottom = 84.dp)
+                .padding(
+                    start = if (usesPixelPlayerChrome) 22.dp else 16.dp,
+                    end = if (usesPixelPlayerChrome) 22.dp else 16.dp,
+                    bottom = MiniPlayerBottomPadding,
+                )
+                .widthIn(max = NavigationBarMaxWidth)
                 .fillMaxWidth()
-                .clickable { expanded = true },
-            shape = MaterialTheme.shapes.extraLarge,
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                .clickable(
+                    role = Role.Button,
+                    onClickLabel = stringResource(R.string.player_open),
+                    onClick = { expanded = true },
+                ),
+            shape = if (usesPixelPlayerChrome) {
+                RoundedCornerShape(
+                    topStart = PixelPlayerOuterCornerRadius,
+                    topEnd = PixelPlayerOuterCornerRadius,
+                    bottomStart = PixelPlayerFacingCornerRadius,
+                    bottomEnd = PixelPlayerFacingCornerRadius,
+                )
+            } else {
+                MaterialTheme.shapes.extraLarge
+            },
+            color = if (usesPixelPlayerChrome) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerHigh
+            },
         ) {
             Row(
-                modifier = Modifier.padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(miniPlayerHeight)
+                    .padding(
+                        start = if (usesPixelPlayerChrome) 10.dp else 12.dp,
+                        end = if (usesPixelPlayerChrome) 8.dp else 12.dp,
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 AsyncImage(
                     model = track.artworkUrl,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .size(48.dp)
-                        .clip(MaterialTheme.shapes.medium)
+                        .size(if (usesPixelPlayerChrome) 44.dp else 48.dp)
+                        .clip(if (usesPixelPlayerChrome) CircleShape else MaterialTheme.shapes.medium),
                 )
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .padding(horizontal = 12.dp)
-                ) {
-                    Text(track.title, style = MaterialTheme.typography.titleSmall, maxLines = 1)
-                    Text(track.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                }
-                FilledIconButton(
-                    onClick = onPlayPause,
-                    modifier = Modifier.size(48.dp),
-                    enabled = durationMs > 0L,
-                ) {
-                    Icon(
-                        painter = painterResource(
-                            if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play,
+                        .padding(
+                            start = 12.dp,
+                            end = if (usesPixelPlayerChrome) 0.dp else 12.dp,
                         ),
-                        contentDescription = if (isPlaying) "Pause" else "Play",
-                        modifier = Modifier.size(28.dp),
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    val titleStyle = if (usesPixelPlayerChrome) {
+                        MaterialTheme.typography.titleSmall.copy(
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = (-0.2).sp,
+                        )
+                    } else {
+                        MaterialTheme.typography.titleSmall
+                    }
+                    val artistStyle = if (usesPixelPlayerChrome) {
+                        MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 13.sp,
+                            letterSpacing = 0.sp,
+                        )
+                    } else {
+                        MaterialTheme.typography.bodySmall
+                    }
+                    Text(
+                        text = track.title,
+                        style = titleStyle,
+                        color = if (usesPixelPlayerChrome) {
+                            MaterialTheme.colorScheme.onPrimaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                        maxLines = 1,
+                        modifier = Modifier.basicMarquee(iterations = if (isPlaying) Int.MAX_VALUE else 0),
+                    )
+                    Text(
+                        text = track.artist,
+                        style = artistStyle,
+                        color = if (usesPixelPlayerChrome) {
+                            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f)
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        maxLines = 1,
+                        modifier = Modifier.basicMarquee(iterations = if (isPlaying) Int.MAX_VALUE else 0),
                     )
                 }
-                IconButton(
-                    onClick = onNext,
-                    modifier = Modifier.size(48.dp),
-                    enabled = queueState?.hasNext == true,
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_skip),
-                        contentDescription = "Next",
-                        modifier = Modifier.size(28.dp),
+                if (usesPixelPlayerChrome) {
+                    val playButtonCorner by animateDpAsState(
+                        targetValue = if (isPlaying) 10.dp else 18.dp,
+                        animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
+                        label = "miniPlayerPlayButtonCorner",
                     )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clickable(
+                                    role = Role.Button,
+                                    onClickLabel = stringResource(R.string.player_previous),
+                                    enabled = canSkipPrevious,
+                                    onClick = onPrevious,
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (canSkipPrevious) {
+                                            MaterialTheme.colorScheme.onPrimary
+                                        } else {
+                                            MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.38f)
+                                        },
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    painter = materialSymbolPainterResource(
+                                        name = "skip_previous",
+                                        slot = "playback.previous",
+                                    ),
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary.copy(
+                                        alpha = if (canSkipPrevious) 1f else 0.38f,
+                                    ),
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clickable(
+                                    role = Role.Button,
+                                    onClickLabel = stringResource(
+                                        if (isPlaying) R.string.player_pause else R.string.player_play,
+                                    ),
+                                    enabled = durationMs > 0L,
+                                    onClick = onPlayPause,
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(RoundedCornerShape(playButtonCorner))
+                                    .background(
+                                        if (durationMs > 0L) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.38f)
+                                        },
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                            if (isBuffering) {
+                                LoadingIndicator(
+                                    modifier = Modifier.size(22.dp),
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                )
+                            } else {
+                                Icon(
+                                    painter = materialSymbolPainterResource(
+                                    name = if (isPlaying) "pause" else "play_arrow",
+                                    slot = if (isPlaying) "playback.pause" else "playback.play",
+                                ),
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                        }
+                        }
+                        val canSkipNext = queueState?.hasNext == true
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clickable(
+                                    role = Role.Button,
+                                    onClickLabel = stringResource(R.string.player_next),
+                                    enabled = canSkipNext,
+                                    onClick = onNext,
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (canSkipNext) {
+                                            MaterialTheme.colorScheme.onPrimary
+                                        } else {
+                                            MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.38f)
+                                        },
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    painter = materialSymbolPainterResource(
+                                        name = "skip_next",
+                                        slot = "playback.skip",
+                                    ),
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary.copy(
+                                        alpha = if (canSkipNext) 1f else 0.38f,
+                                    ),
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                        }
+                    }
+                } else {
+                    FilledIconButton(
+                        onClick = onPlayPause,
+                        modifier = Modifier.size(48.dp),
+                        enabled = durationMs > 0L,
+                    ) {
+                        Icon(
+                            painter = painterResource(
+                                if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play,
+                            ),
+                            contentDescription = if (isPlaying) "Pause" else "Play",
+                            modifier = Modifier.size(28.dp),
+                        )
+                    }
+                    IconButton(
+                        onClick = onNext,
+                        modifier = Modifier.size(48.dp),
+                        enabled = queueState?.hasNext == true,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_skip),
+                            contentDescription = "Next",
+                            modifier = Modifier.size(28.dp),
+                        )
+                    }
                 }
             }
         }

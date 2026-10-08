@@ -3,9 +3,16 @@
 package org.shilpo.laboon.ui.design
 
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -36,8 +43,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -45,26 +51,39 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
+import androidx.compose.ui.unit.sp
 import org.shilpo.laboon.navigation.MainTab
 import org.shilpo.laboon.theme.LocalVisualTheme
 import kotlin.math.roundToInt
 
 internal val NavigationBarMaxWidth = 420.dp
-internal val NavigationBarHeight = 70.dp
+internal val NavigationBarHeight = 80.dp
+internal val PixelNavigationBarHeight = 90.dp
+internal val PixelPlayerOuterCornerRadius = 32.dp
+internal val PixelPlayerFacingCornerRadius = 10.dp
 private val NavigationBarInnerPadding = 6.dp
 internal val NavigationBarBottomPadding = 10.dp
 private val NavigationBarClearanceSlack = 8.dp
 
 internal val MiniPlayerHeight = 72.dp
-internal val MiniPlayerSpacing = 4.dp
+internal val PixelMiniPlayerHeight = 64.dp
+internal val MiniPlayerSpacing = 8.dp
+internal val MiniPlayerBottomPadding =
+    PixelNavigationBarHeight + MiniPlayerSpacing
 
 internal val FloatingNavBarBaseClearance =
     NavigationBarHeight + NavigationBarBottomPadding + NavigationBarClearanceSlack
@@ -121,28 +140,148 @@ internal fun <T> FloatingNavigationBar(
     backdropState: LiquidGlassBackdropState? = null,
 ) {
     if (LocalVisualTheme.current == null) {
-        NavigationBar(modifier = modifier.fillMaxWidth()) {
-            items.forEach { item ->
-                val selected = item.value == selectedItem
-                NavigationBarItem(
-                    selected = selected,
-                    onClick = { onItemSelected(item.value) },
-                    icon = {
-                        Icon(
-                            painter = painterResource(
-                                id = if (selected) item.iconFilled else item.iconOutlined,
+        Column(
+            modifier = modifier
+                .offset(y = NavigationBarBottomPadding)
+                .widthIn(max = NavigationBarMaxWidth)
+                .fillMaxWidth()
+                .padding(horizontal = 6.dp)
+                .height(PixelNavigationBarHeight + MiniPlayerSpacing),
+        ) {
+            Spacer(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(MiniPlayerSpacing),
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(PixelNavigationBarHeight),
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    shape = RoundedCornerShape(
+                        topStart = PixelPlayerFacingCornerRadius,
+                        topEnd = PixelPlayerFacingCornerRadius,
+                        bottomStart = PixelPlayerOuterCornerRadius,
+                        bottomEnd = PixelPlayerOuterCornerRadius,
+                    ),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    tonalElevation = 0.dp,
+                    shadowElevation = 8.dp,
+                ) {}
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    items.forEach { item ->
+                        val selected = item.value == selectedItem
+                        val iconScale by animateFloatAsState(
+                            targetValue = if (selected) 1.1f else 1f,
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                stiffness = Spring.StiffnessMedium,
                             ),
-                            contentDescription = null,
-                            modifier = Modifier.alpha(iconAlpha.coerceIn(0f, 1f)),
+                            label = "navigationIconScale",
                         )
-                    },
-                    label = {
-                        Text(
-                            text = item.title,
-                            modifier = Modifier.alpha(labelAlpha.coerceIn(0f, 1f)),
+                        val iconColor by animateColorAsState(
+                            targetValue = if (selected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            animationSpec = tween(durationMillis = 150),
+                            label = "pixelNavIconColor",
                         )
-                    },
-                )
+                        val textColor by animateColorAsState(
+                            targetValue = if (selected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            animationSpec = tween(durationMillis = 150),
+                            label = "pixelNavTextColor",
+                        )
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clickable(
+                                    interactionSource = remember(item.value) { MutableInteractionSource() },
+                                    indication = null,
+                                    role = Role.Tab,
+                                    onClickLabel = item.title,
+                                    onClick = { onItemSelected(item.value) },
+                                )
+                                .semantics {
+                                    contentDescription = item.title
+                                    this.selected = selected
+                                },
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            Box(
+                                modifier = Modifier.size(width = 64.dp, height = 32.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                androidx.compose.animation.AnimatedVisibility(
+                                    visible = selected,
+                                    enter = androidx.compose.animation.fadeIn(tween(durationMillis = 100)) +
+                                        scaleIn(
+                                            animationSpec = spring(
+                                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                                stiffness = Spring.StiffnessLow,
+                                            ),
+                                        ),
+                                    exit = fadeOut(tween(durationMillis = 100)) +
+                                        scaleOut(animationSpec = tween(durationMillis = 100)),
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(horizontal = 4.dp)
+                                            .background(
+                                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                                shape = RoundedCornerShape(16.dp),
+                                            ),
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .size(width = 48.dp, height = 24.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .graphicsLayer {
+                                            scaleX = iconScale
+                                            scaleY = iconScale
+                                        },
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        painter = painterResource(
+                                            id = if (selected) item.iconFilled else item.iconOutlined,
+                                        ),
+                                        contentDescription = null,
+                                        modifier = Modifier
+                                            .size(24.dp)
+                                            .alpha(iconAlpha.coerceIn(0f, 1f)),
+                                        tint = iconColor,
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = item.title,
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    color = textColor,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                                ),
+                                maxLines = 1,
+                                modifier = Modifier.alpha(labelAlpha.coerceIn(0f, 1f)),
+                            )
+                        }
+                    }
+                }
             }
         }
         return
