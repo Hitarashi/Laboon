@@ -19,18 +19,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,20 +61,22 @@ fun HomeArtistCarousel(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        HomeSectionHeading(title, subtitle, Modifier.padding(horizontal = 24.dp))
+        HomeSectionHeading(title, Modifier.padding(horizontal = 24.dp), subtitle)
 
+        val expressiveShape = MaterialShapes.Cookie6Sided.toShape()
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            items(
+            itemsIndexed(
                 items = artists,
-                key = { it.id },
-            ) { artist ->
+                key = { _, artist -> artist.id },
+            ) { index, artist ->
                 HomeArtistCard(
                     artist = artist,
                     onClick = { onArtistClick(artist) },
+                    imageShape = if (index % 3 == 1) expressiveShape else CircleShape,
                     onLongClick = if (onLongClickArtist != null) {
                         { onLongClickArtist(artist) }
                     } else null,
@@ -87,6 +92,7 @@ fun HomeArtistCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
+    imageShape: Shape = CircleShape,
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -102,7 +108,7 @@ fun HomeArtistCard(
         Box(
             modifier = Modifier
                 .size(112.dp)
-                .clip(CircleShape)
+                .clip(imageShape)
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh),
             contentAlignment = Alignment.Center,
         ) {

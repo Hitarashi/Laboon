@@ -33,7 +33,7 @@ fun HomeAlbumCarousel(
 ) {
     if (albums.isEmpty()) return
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        HomeSectionHeading(title, subtitle, Modifier.padding(horizontal = 24.dp))
+        HomeSectionHeading(title, Modifier.padding(horizontal = 24.dp), subtitle)
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
