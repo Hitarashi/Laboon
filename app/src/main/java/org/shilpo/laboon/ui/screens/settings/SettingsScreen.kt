@@ -60,7 +60,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -71,6 +70,7 @@ import org.shilpo.laboon.auth.AuthSession
 import org.shilpo.laboon.ui.design.AppCardShape
 import org.shilpo.laboon.ui.design.ScreenScaffold
 import org.shilpo.laboon.ui.design.UserAvatar
+import org.shilpo.laboon.ui.design.painterResource
 import org.shilpo.laboon.ui.design.userDisplayName
 import org.shilpo.laboon.ui.screens.about.AboutScreen
 

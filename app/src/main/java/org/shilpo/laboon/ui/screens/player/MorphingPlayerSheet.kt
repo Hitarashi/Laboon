@@ -29,7 +29,6 @@ import androidx.compose.ui.graphics.Matrix
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asComposePath
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
@@ -49,6 +48,7 @@ import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.playback.RepeatMode
 import org.shilpo.laboon.playback.SpectrumFrame
 import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
+import org.shilpo.laboon.ui.design.painterResource
 
 private const val SettleDurationMs = 400
 private const val MotionArtworkRequestProgress = 0.97f

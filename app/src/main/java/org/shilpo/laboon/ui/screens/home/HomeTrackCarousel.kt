@@ -1,54 +1,33 @@
-@file:OptIn(
-    ExperimentalFoundationApi::class,
-    ExperimentalMaterial3Api::class,
-    ExperimentalMaterial3ExpressiveApi::class,
-)
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 
 package org.shilpo.laboon.ui.screens.home
 
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.carousel.CarouselItemScope
-import androidx.compose.material3.carousel.HorizontalMultiBrowseCarousel
-import androidx.compose.material3.carousel.rememberCarouselState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.rememberGraphicsLayer
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil3.compose.AsyncImage
-import coil3.compose.LocalPlatformContext
-import coil3.request.ImageRequest
-import coil3.request.crossfade
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
-import org.shilpo.laboon.ui.design.LiquidGlassPlayButton
 import org.shilpo.laboon.ui.design.TrackCodecBadges
-import org.shilpo.laboon.ui.design.liquidGlassBackdropProducer
-import org.shilpo.laboon.ui.design.rememberLiquidGlassBackdropState
+import org.shilpo.laboon.ui.design.painterResource
 
 @Composable
 fun HomeTrackCarousel(
@@ -62,197 +41,63 @@ fun HomeTrackCarousel(
     onLongClickTrack: ((HomeTrack) -> Unit)? = null,
 ) {
     if (tracks.isEmpty()) return
-
-    val carouselState = rememberCarouselState { tracks.size }
-
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        HomeSectionHeading(title, subtitle, Modifier.padding(horizontal = 24.dp))
+        LazyRow(
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleLargeEmphasized,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            if (!subtitle.isNullOrBlank()) {
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-
-        HorizontalMultiBrowseCarousel(
-            state = carouselState,
-            preferredItemWidth = 186.dp,
-            itemSpacing = 10.dp,
-            contentPadding = PaddingValues(horizontal = 20.dp),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(206.dp),
-        ) { index ->
-            val track = tracks[index]
-            val isPlayable = track.isPlayable
-            val canDownload = !isPlayable &&
-                    !track.providerTrackId.isNullOrBlank() &&
-                    onDownloadTrack != null
-            val onAction = when {
-                isPlayable -> ({
-                    if (onPlayTrack != null) onPlayTrack(track) else onTrackClick(track)
-                })
-
-                canDownload -> ({
-                    onDownloadTrack(track)
-                })
-
-                else -> ({})
-            }
-            HomeTrackCard(
-                track = track,
-                onClick = onAction,
-                onPlayClick = onAction,
-                actionIconRes = if (isPlayable) R.drawable.ic_play else R.drawable.ic_cloud_download,
-                actionEnabled = isPlayable || canDownload,
-                actionDescription = when {
-                    isPlayable -> "Play"
-                    canDownload -> "Add to rip"
-                    else -> "Track unavailable"
-                },
-                onLongClick = if (onLongClickTrack != null) {
-                    { onLongClickTrack(track) }
-                } else null,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-    }
-}
-
-@Composable
-fun CarouselItemScope.HomeTrackCard(
-    track: HomeTrack,
-    onClick: () -> Unit,
-    onPlayClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    actionIconRes: Int = R.drawable.ic_play,
-    actionEnabled: Boolean = true,
-    actionDescription: String = "Play",
-    onLongClick: (() -> Unit)? = null,
-) {
-    val cardBackdropState = rememberLiquidGlassBackdropState()
-    val cardBackdropLayer = rememberGraphicsLayer()
-
-    Surface(
-        shape = MaterialTheme.shapes.extraLarge,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        modifier = modifier
-            .maskClip(MaterialTheme.shapes.extraLarge)
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongClick,
-            ),
-    ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .liquidGlassBackdropProducer(cardBackdropState, cardBackdropLayer),
-            ) {
-                if (!track.artworkUrl.isNullOrBlank()) {
-                    AsyncImage(
-                        model = ImageRequest.Builder(LocalPlatformContext.current)
-                            .data(track.artworkUrl)
-                            .crossfade(true)
-                            .build(),
-                        contentDescription = track.title,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.app_icon_small),
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                            modifier = Modifier.size(48.dp),
-                        )
-                    }
+            items(tracks, key = HomeTrack::id) { track ->
+                val enabled = track.isPlayable ||
+                    (!track.providerTrackId.isNullOrBlank() && onDownloadTrack != null)
+                val action = {
+                    if (track.isPlayable) (onPlayTrack ?: onTrackClick)(track)
+                    else if (enabled) onDownloadTrack?.invoke(track)
+                    Unit
                 }
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                0.0f to Color.Transparent,
-                                0.45f to Color.Transparent,
-                                0.72f to Color.Black.copy(alpha = 0.50f),
-                                1.0f to Color.Black.copy(alpha = 0.90f),
-                            )
-                        ),
-                )
-            }
-
-            Row(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
                 Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(end = 10.dp),
+                    modifier = Modifier.width(168.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text(
-                        text = track.title,
-                        style = MaterialTheme.typography.titleMediumEmphasized,
-                        color = Color.White,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Spacer(modifier = Modifier.height(3.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
+                    Box {
+                        HomeArtwork(
+                            track.artworkUrl,
+                            Modifier.size(168.dp).clip(MaterialTheme.shapes.extraLarge)
+                                .combinedClickable(
+                                    enabled = enabled,
+                                    onClick = action,
+                                    onClickLabel = stringResource(
+                                        if (track.isPlayable) R.string.home_play_track else R.string.home_download_track,
+                                        track.title, track.artist,
+                                    ),
+                                    onLongClick = onLongClickTrack?.let { { it(track) } },
+                                ),
+                        )
+                        FilledTonalIconButton(
+                            onClick = action,
+                            enabled = enabled,
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp).size(48.dp),
+                        ) {
+                            Icon(
+                                painterResource(if (track.isPlayable) R.drawable.ic_play else R.drawable.ic_cloud_download),
+                                contentDescription = stringResource(
+                                    if (track.isPlayable) R.string.home_play_track else R.string.home_download_track,
+                                    track.title, track.artist,
+                                ),
+                                modifier = Modifier.size(28.dp),
+                            )
+                        }
+                    }
+                    Column(Modifier.padding(horizontal = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(track.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text(
-                            text = track.artist,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color.White.copy(alpha = 0.75f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
+                            track.artist, style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
                         )
-                        TrackCodecBadges(
-                            track = track,
-                            height = 9.dp,
-                            tint = Color.White.copy(alpha = 0.75f),
-                        )
+                        TrackCodecBadges(track, height = 12.dp, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-
-                LiquidGlassPlayButton(
-                    onClick = onPlayClick,
-                    backdropState = cardBackdropState,
-                    iconRes = actionIconRes,
-                    enabled = actionEnabled,
-                    contentDescription = actionDescription,
-                    size = 38.dp,
-                    iconSize = 19.dp,
-                )
             }
         }
     }

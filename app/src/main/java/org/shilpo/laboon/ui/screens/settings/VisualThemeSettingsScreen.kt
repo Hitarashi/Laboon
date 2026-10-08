@@ -451,6 +451,14 @@ internal fun ThemeOptionControl(
                         step?.let { ((maximum - minimum) / it).roundToInt().coerceAtLeast(1) }
                     val visibleSteps = intervals?.minus(1)?.takeIf { it in 1..20 } ?: 0
                     val current = value.toFloatOrNull()?.coerceIn(minimum, maximum) ?: minimum
+                    val sliderState = rememberSliderState(
+                        value = current,
+                        steps = visibleSteps,
+                        trackRange = minimum..maximum,
+                    )
+                    LaunchedEffect(current) {
+                        sliderState.value = current
+                    }
                     Text(option.title, style = MaterialTheme.typography.titleSmall)
                     if (option.description.isNotBlank()) Text(
                         option.description,
@@ -458,22 +466,19 @@ internal fun ThemeOptionControl(
                     )
                     Text(value, style = MaterialTheme.typography.labelMedium)
                     Slider(
-                        state = rememberSliderState(
-                            value = current,
-                            steps = visibleSteps, trackRange = minimum..maximum
-                        ),
+                        state = sliderState,
                         onValueChange = { rawValue ->
+                            sliderState.value = rawValue
                             val adjustedValue = step?.let { increment ->
                                 val index = ((rawValue - minimum) / increment).roundToInt()
                                 minimum + index * increment
                             } ?: rawValue
-                            value = adjustedValue.coerceIn(minimum, maximum).toString()
+                            val boundedValue = adjustedValue.coerceIn(minimum, maximum)
+                            sliderState.value = boundedValue
+                            value = boundedValue.toString()
                         },
-                        modifier = COMPILED_CODE,
-                        enabled = COMPILED_CODE,
+                        modifier = Modifier.fillMaxWidth(),
                         onValueChangeFinished = { controller.setOptionValue(theme, option, value) },
-                        colors = COMPILED_CODE,
-                        interactionSource = COMPILED_CODE
                     )
                 }
             }

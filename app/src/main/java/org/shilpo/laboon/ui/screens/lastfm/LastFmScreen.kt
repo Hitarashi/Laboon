@@ -36,7 +36,6 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentType
 import androidx.compose.ui.semantics.semantics
@@ -53,6 +52,7 @@ import org.shilpo.laboon.ui.design.PrimaryActionZone
 import org.shilpo.laboon.ui.design.ScreenError
 import org.shilpo.laboon.ui.design.ScreenScaffold
 import org.shilpo.laboon.ui.design.mergeScreenErrors
+import org.shilpo.laboon.ui.design.painterResource
 import kotlin.math.hypot
 import kotlin.math.sin
 

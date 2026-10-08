@@ -51,13 +51,51 @@ is the reference package, including its API 33 AGSL shader and companion activit
 ## Definition capabilities
 
 The renderer supports boxes and overlays, weighted rows and columns, vertical and horizontal
-scrolling, lazy columns and rows, adaptive lazy grids, text, host-owned text fields, metadata, icon
-glyphs, artwork, packaged images, surfaces, controls, progress, clipping, transforms, gradients,
-Material color roles, Material shapes, and effect attachment. A lazy collection uses
+scrolling, lazy columns and rows, adaptive lazy grids, text, host-owned text fields, metadata,
+Material Symbols, artwork, packaged images, surfaces, controls, progress, clipping, transforms,
+gradients, Material color roles, Material shapes, and effect attachment. A lazy collection uses
 `attributes.itemsBinding`; its first child is a template rendered once for each row. Use a direct
 `binding` attribute (for example, `"binding": "track.title"`) for a single value, or `{{key}}` in
 text for interpolation. `minScreenWidthDp` and `maxScreenWidthDp` let a node appear only at matching
 window widths. Use `weight` inside a row or column to allocate remaining space.
+
+### Material Symbols and icon overrides
+
+Laboon's stock controls use Google's Material Symbols Rounded at the default M3 size, weight, and
+grade. Theme definitions can replace the glyph for a stable app-wide semantic slot using
+`iconOverrides`; actions and accessible labels remain owned by Laboon. The supported slot ids and
+the bundled icon-name catalog are listed
+in [material-symbols-catalog.json](material-symbols-catalog.json). The bundled catalog is
+intentionally offline and bounded. Additions to it are made with a contract release. Laboon's logo
+and codec badge artwork stay bundled by default; extensions can explicitly replace the
+`codec.highResolution`, `codec.lossless`, and `codec.surround` slots when desired.
+
+```json
+{
+  "schemaVersion": 1,
+  "iconOverrides": {
+    "navigation.home": "music_note",
+    "playback.play": "play_circle",
+    "action.download": "download"
+  },
+  "screens": {
+    "player": {
+      "type": "iconButton",
+      "attributes": {
+        "symbol": "play_arrow",
+        "filled": "true",
+        "label": "Play",
+        "action": "playPause"
+      }
+    }
+  }
+}
+```
+
+Use `symbol` on `icon` and `iconButton` nodes. `slot` can connect such a node to a Laboon semantic
+slot; `filled` selects the Material Symbols fill variant. `glyph` remains accepted for plain text
+decoration, but it is not the icon API. Extensions can restyle controls and select catalog symbols;
+they cannot change the host action or its TalkBack label.
 
 Attach `gestureAction`, `gestureAxis` (`horizontal` or `vertical`), and an optional
 `gestureProgressBinding` to a container to recognize a drag. `gestureDirection` can be `positive` or

@@ -61,7 +61,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -79,6 +78,7 @@ import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeAlbum
 import org.shilpo.laboon.home.HomeArtist
 import org.shilpo.laboon.lyricsporn.LyricspornRecordLabel
+import org.shilpo.laboon.ui.design.painterResource
 
 @Composable
 fun RecordLabelScreen(

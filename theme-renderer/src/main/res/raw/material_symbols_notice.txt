@@ -1,0 +1,9 @@
+Material Symbols Rounded
+Copyright Google LLC.
+
+These compact font subsets were generated from Google's Material Symbols Rounded variable font:
+https://github.com/google/material-design-icons/blob/master/variablefont/MaterialSymbolsRounded%5BFILL%2CGRAD%2Copsz%2Cwght%5D.ttf
+
+The bundled variants are pinned to weight 400, grade 0, optical size 24, and fill 0 or 1.
+Only the names listed in Laboon's public Material Symbol catalog are included. The font is
+distributed under the Apache License, Version 2.0; see material_symbols_license.

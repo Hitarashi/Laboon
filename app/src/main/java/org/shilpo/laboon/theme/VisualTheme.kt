@@ -27,6 +27,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.shilpo.laboon.theme.contract.ThemeTextStyle
+import org.shilpo.laboon.theme.renderer.LocalThemeIconOverrides
 
 internal val LocalVisualMotionScale = staticCompositionLocalOf { 1f }
 
@@ -85,7 +86,10 @@ internal fun LaboonExpressiveTheme(
         0f
     }
 
-    CompositionLocalProvider(LocalVisualMotionScale provides motionScale) {
+    CompositionLocalProvider(
+        LocalVisualMotionScale provides motionScale,
+        LocalThemeIconOverrides provides theme?.definition?.iconOverrides.orEmpty(),
+    ) {
         MaterialExpressiveTheme(
             colorScheme = colors,
             motionScheme = androidx.compose.material3.MotionScheme.expressive(),

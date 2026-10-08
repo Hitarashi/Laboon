@@ -72,7 +72,6 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -93,6 +92,7 @@ import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.lyricsporn.LyricspornArtist
 import org.shilpo.laboon.ui.design.TrackCodecBadges
 import org.shilpo.laboon.ui.design.getTrackQualityCodecs
+import org.shilpo.laboon.ui.design.painterResource
 import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.sin

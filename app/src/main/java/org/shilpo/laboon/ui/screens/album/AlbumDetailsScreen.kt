@@ -72,7 +72,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -97,6 +96,7 @@ import org.shilpo.laboon.lyricsporn.LyricspornAlbumVersion
 import org.shilpo.laboon.ui.design.CodecIcon
 import org.shilpo.laboon.ui.design.TrackCodecBadges
 import org.shilpo.laboon.ui.design.getTrackQualityCodecs
+import org.shilpo.laboon.ui.design.painterResource
 import java.net.URI
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -556,7 +556,12 @@ private fun AlbumArtwork(album: LyricspornAlbum, modifier: Modifier = Modifier) 
             )
         } else {
             Box(contentAlignment = Alignment.Center) {
-                Text("♪", style = MaterialTheme.typography.displayMedium)
+                Icon(
+                    painter = painterResource(R.drawable.app_icon_small),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(48.dp),
+                )
             }
         }
     }

@@ -34,9 +34,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -52,7 +51,9 @@ import org.shilpo.laboon.playback.DiscoveryStatus
 import org.shilpo.laboon.playback.QueueOrigin
 import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.playback.RepeatMode
+import org.shilpo.laboon.theme.renderer.materialSymbolPainterResource
 import org.shilpo.laboon.ui.design.TrackCodecBadges
+import org.shilpo.laboon.ui.design.painterResource
 
 @Composable
 fun QueueBottomSheet(
@@ -214,16 +215,16 @@ fun QueueBottomSheet(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 QueueToggleIcon(
-                    imageVector = QueueIcons.Shuffle,
+                    painter = painterResource(R.drawable.ic_shuffle),
                     contentDescription = if (queueState.isShuffle) "Shuffle on" else "Shuffle off",
                     active = queueState.isShuffle,
                     onClick = onToggleShuffle,
                 )
                 QueueToggleIcon(
-                    imageVector = if (queueState.repeatMode == RepeatMode.ONE) {
-                        QueueIcons.RepeatOne
+                    painter = if (queueState.repeatMode == RepeatMode.ONE) {
+                        painterResource(R.drawable.ic_repeat_one)
                     } else {
-                        QueueIcons.Repeat
+                        painterResource(R.drawable.ic_repeat)
                     },
                     contentDescription = "Repeat ${queueState.repeatMode.name.lowercase()}",
                     active = queueState.repeatMode != RepeatMode.OFF,
@@ -386,14 +387,14 @@ private fun RepeatMode.label(): String = when (this) {
 
 @Composable
 private fun QueueToggleIcon(
-    imageVector: ImageVector,
+    painter: Painter,
     contentDescription: String,
     active: Boolean,
     onClick: () -> Unit,
 ) {
     IconButton(onClick = onClick, modifier = Modifier.size(32.dp)) {
         Icon(
-            imageVector = imageVector,
+            painter = painter,
             contentDescription = contentDescription,
             tint = if (active) {
                 MaterialTheme.colorScheme.primary
@@ -570,19 +571,27 @@ private fun QueueTrackRow(
             ) {
                 if (onMoveUp != null) {
                     IconButton(onClick = onMoveUp, modifier = Modifier.size(28.dp)) {
-                        Text(
-                            "▲",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        Icon(
+                            painter = materialSymbolPainterResource(
+                                name = "keyboard_arrow_up",
+                                slot = "queue.moveEarlier",
+                            ),
+                            contentDescription = "Move earlier",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
                 if (onMoveDown != null) {
                     IconButton(onClick = onMoveDown, modifier = Modifier.size(28.dp)) {
-                        Text(
-                            "▼",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        Icon(
+                            painter = materialSymbolPainterResource(
+                                name = "keyboard_arrow_down",
+                                slot = "queue.moveLater",
+                            ),
+                            contentDescription = "Move later",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }

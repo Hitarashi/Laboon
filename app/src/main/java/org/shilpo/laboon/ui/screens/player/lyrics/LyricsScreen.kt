@@ -85,7 +85,6 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineBreak
@@ -103,6 +102,7 @@ import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.lyrics.LyricsLine
 import org.shilpo.laboon.playback.SpectrumFrame
+import org.shilpo.laboon.ui.design.painterResource
 import org.shilpo.laboon.ui.design.theme.GoogleSansFlex
 import kotlin.math.abs
 import kotlin.math.roundToInt

@@ -36,6 +36,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -616,12 +617,10 @@ private fun Node(
                         ?: Modifier.height(dp(attributes["heightDp"]))
                 ))
 
-            "text", "metadata", "icon" -> Text(
+            "text", "metadata" -> Text(
                 text = attributes["binding"]?.let { bindingValue(it, bindings) }
                     ?: value(attributes["glyph"] ?: attributes["text"], bindings),
-                modifier = nodeModifier.then(attributes["description"]?.let { description ->
-                    Modifier.semantics { contentDescription = value(description, bindings) }
-                } ?: Modifier),
+                modifier = nodeModifier,
                 style = textStyle(attributes["style"]),
                 color = color(attributes["color"], bindings),
                 fontWeight = attributes["weight"]?.toIntOrNull()?.coerceIn(100, 900)
@@ -631,6 +630,36 @@ private fun Node(
                 maxLines = attributes["maxLines"]?.toIntOrNull()?.coerceIn(1, 20) ?: Int.MAX_VALUE,
                 overflow = TextOverflow.Ellipsis,
             )
+
+            "icon" -> {
+                val symbol = attributes["symbol"]
+                if (symbol != null) {
+                    val description = attributes["description"]?.let { value(it, bindings) }
+                    Icon(
+                        painter = materialSymbolPainterResource(
+                            name = symbol,
+                            slot = attributes["slot"],
+                            filled = attributes["filled"] == "true",
+                        ),
+                        contentDescription = description?.takeIf(String::isNotBlank),
+                        modifier = nodeModifier,
+                        tint = color(attributes["color"], bindings),
+                    )
+                } else {
+                    Text(
+                        text = attributes["glyph"] ?: attributes["text"].orEmpty(),
+                        modifier = nodeModifier.then(attributes["description"]?.let { description ->
+                            Modifier.semantics { contentDescription = value(description, bindings) }
+                        } ?: Modifier),
+                        style = textStyle(attributes["style"]),
+                        color = color(attributes["color"], bindings),
+                        fontWeight = attributes["weight"]?.toIntOrNull()?.coerceIn(100, 900)
+                            ?.let(::FontWeight),
+                        fontSize = finiteFloat(attributes["sizeSp"])?.coerceIn(8f, 96f)?.sp
+                            ?: TextUnit.Unspecified,
+                    )
+                }
+            }
 
             "textField" -> {
                 val fieldId = attributes["field"]
@@ -778,7 +807,19 @@ private fun Node(
                         }
                     },
                 ) {
-                    Text(value(attributes["glyph"], bindings).ifBlank { "•" })
+                    val symbol = attributes["symbol"]
+                    if (symbol != null) {
+                        Icon(
+                            painter = materialSymbolPainterResource(
+                                name = symbol,
+                                slot = attributes["slot"],
+                                filled = attributes["filled"] == "true",
+                            ),
+                            contentDescription = null,
+                        )
+                    } else {
+                        Text(value(attributes["glyph"], bindings).ifBlank { "•" })
+                    }
                 }
             }
 
@@ -787,18 +828,15 @@ private fun Node(
                     finiteFloat(bindingValue(attributes["binding"], bindings))?.coerceIn(0f, 1f)
                         ?: 0f
                 if (attributes["action"] == VisualThemeAction.SEEK.id && VisualThemeAction.SEEK in availableActions) {
+                    val sliderState = rememberSliderState(value = progress, trackRange = 0f..1f)
+                    LaunchedEffect(progress) { sliderState.value = progress }
                     Slider(
-                        state = rememberSliderState(
-                            value = progress,
-                            steps = COMPILED_CODE,
-                            trackRange = COMPILED_CODE
-                        ),
-                        onValueChange = onSeek,
+                        state = sliderState,
+                        onValueChange = { value ->
+                            sliderState.value = value
+                            onSeek(value)
+                        },
                         modifier = nodeModifier.fillMaxWidth(),
-                        enabled = COMPILED_CODE,
-                        onValueChangeFinished = COMPILED_CODE,
-                        colors = COMPILED_CODE,
-                        interactionSource = COMPILED_CODE
                     )
                 } else if (attributes["indeterminate"] == "true") CircularProgressIndicator(
                     modifier = nodeModifier.size(

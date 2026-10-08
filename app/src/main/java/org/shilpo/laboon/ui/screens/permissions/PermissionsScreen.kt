@@ -3,7 +3,6 @@
 package org.shilpo.laboon.ui.screens.permissions
 
 import android.os.Build
-
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -44,7 +43,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -58,6 +56,7 @@ import org.shilpo.laboon.permissions.permissionCatalogueForAndroidApi
 import org.shilpo.laboon.ui.design.ScreenHeadline
 import org.shilpo.laboon.ui.design.ScreenScaffold
 import org.shilpo.laboon.ui.design.SegmentedSection
+import org.shilpo.laboon.ui.design.painterResource
 
 @Composable
 internal fun PermissionsScreen(

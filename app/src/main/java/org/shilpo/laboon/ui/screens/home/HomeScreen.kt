@@ -86,7 +86,6 @@ import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -158,6 +157,7 @@ import org.shilpo.laboon.ui.design.SkeletonSegmentedList
 import org.shilpo.laboon.ui.design.SkeletonTrackCarousel
 import org.shilpo.laboon.ui.design.UserAvatar
 import org.shilpo.laboon.ui.design.liquidGlassBackdropProducer
+import org.shilpo.laboon.ui.design.painterResource
 import org.shilpo.laboon.ui.design.rememberLiquidGlassBackdropState
 import org.shilpo.laboon.ui.design.rememberPredictiveBackState
 import org.shilpo.laboon.ui.design.userDisplayName
@@ -1490,11 +1490,12 @@ fun HomeScreen(
                                         VisualThemeAction.COPY_BUILD_INFO -> {
                                             val clipboard =
                                                 context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
-                                            clipboard?.primaryClip =
+                                            clipboard?.setPrimaryClip(
                                                 android.content.ClipData.newPlainText(
                                                     "Laboon version",
                                                     org.shilpo.laboon.BuildConfig.VERSION_NAME
                                                 )
+                                            )
                                         }
 
                                         VisualThemeAction.SEARCH -> {
@@ -1663,7 +1664,6 @@ fun HomeScreen(
                 ) { tab ->
                     when (tab) {
                         MainTab.Home -> HomeContent(
-                            session = session,
                             onOpenSettings = { onEvent(RouteEvent.SettingsOpened) },
                             onNavigate = { onEvent(RouteEvent.TabSelected(it)) },
                             feedState = feedState,
@@ -1672,6 +1672,12 @@ fun HomeScreen(
                             onLoadTopTracks = loadTopTracks,
                             onLoadTrending = loadTrending,
                             onLoadWeeklyPicks = loadWeeklyPicks,
+                            onPlayMix = { tracks ->
+                                val shuffledTracks = tracks.shuffled()
+                                shuffledTracks.firstOrNull()?.let { track ->
+                                    playbackManager.play(track, shuffledTracks)
+                                }
+                            },
                             onTrackClick = { track ->
                                 playbackManager.play(track)
                             },
@@ -1754,7 +1760,7 @@ fun HomeScreen(
                     session = session,
                     onOpenSettings = { onEvent(RouteEvent.SettingsOpened) },
                     onOpenRipVisualizer = { showRipVisualizer = true },
-                    backdropState = liquidGlassBackdropState,
+                    onSearch = { onEvent(RouteEvent.TabSelected(MainTab.Search)) },
                     collapseProgress = topBarCollapseProgress,
                 )
             }
@@ -2095,544 +2101,6 @@ fun HomeScreen(
             isOpen = true, onDismiss = { showThemeAudioInfo = false }, track = activeTrack,
             pipeline = playbackState.audioQuality?.pipelineDetails, durationMs = currentDurationMs,
         )
-    }
-}
-
-@Composable
-private fun HomeTopBar(
-    session: AuthSession?,
-    onOpenSettings: () -> Unit,
-    onOpenRipVisualizer: () -> Unit,
-    backdropState: LiquidGlassBackdropState?,
-    modifier: Modifier = Modifier,
-    collapseProgress: Float = 0f,
-) {
-    val topPadding = (16 - 8 * collapseProgress).dp
-    val bottomPadding = (20 - 8 * collapseProgress).dp
-    val iconSize = (42 - 8 * collapseProgress).dp
-    val avatarSize = (48 - 10 * collapseProgress).dp
-    val iconSpacing = (12 - 2 * collapseProgress).dp
-    val titleFontSize = (25 - 5 * collapseProgress).sp
-    val titleLineHeight = (30 - 6 * collapseProgress).sp
-    val subtitleFontSize = (14 - 2 * collapseProgress).sp
-
-    LiquidGlassSurface(
-        modifier = modifier.fillMaxWidth(),
-        backdropState = backdropState,
-        shape = RectangleShape,
-        cornerRadius = 0.dp,
-        topRadius = 0.dp,
-        bottomRadius = 0.dp,
-        tintColor = MaterialTheme.colorScheme.background,
-        tintAlpha = 0.85f,
-        shadowElevation = 0.dp,
-        refractIntensity = 0f,
-        thicknessDp = 0.dp,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, top = topPadding, bottom = bottomPadding),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(iconSpacing),
-                modifier = Modifier.weight(1f),
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.app_icon_small),
-                    contentDescription = "Rip Mission Control",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .size(iconSize)
-                        .clip(CircleShape)
-                        .clickable { onOpenRipVisualizer() },
-                )
-                Column {
-                    Text(
-                        text = stringResource(R.string.home_title),
-                        style = MaterialTheme.typography.titleLargeEmphasized.copy(
-                            fontSize = titleFontSize,
-                            lineHeight = titleLineHeight,
-                        ),
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Text(
-                        text = stringResource(
-                            R.string.home_welcome,
-                            userDisplayName(session?.user)
-                                ?: stringResource(R.string.home_user_fallback),
-                        ),
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            fontSize = subtitleFontSize,
-                        ),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            UserAvatar(
-                session = session,
-                onClick = onOpenSettings,
-                size = avatarSize,
-                modifier = Modifier.padding(end = 4.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun HomeContent(
-    session: AuthSession?,
-    onOpenSettings: () -> Unit,
-    onNavigate: (MainTab) -> Unit,
-    modifier: Modifier = Modifier,
-    lazyListState: LazyListState = rememberLazyListState(),
-    feedState: HomeFeedState = HomeFeedDefaults.defaultFeed,
-    isRefreshing: Boolean = false,
-    onRefresh: () -> Unit = {},
-    onLoadTopTracks: () -> Unit = {},
-    onLoadTrending: () -> Unit = {},
-    onLoadWeeklyPicks: () -> Unit = {},
-    onTrackClick: (HomeTrack) -> Unit = {},
-    onDownloadTrack: (HomeTrack) -> Unit = {},
-    onArtistClick: (HomeArtist) -> Unit = {},
-    onAlbumClick: (HomeAlbum) -> Unit = {},
-) {
-    val motionScheme = MaterialTheme.motionScheme
-    var isGlobalTrending by remember { mutableStateOf(false) }
-
-    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val topClearance = statusBarTop + 84.dp
-    val navBarBottomInset =
-        WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    val bottomClearance = FloatingCombinedClearance + navBarBottomInset + 16.dp
-
-    val pullToRefreshState = rememberPullToRefreshState()
-
-    PullToRefreshBox(
-        isRefreshing = isRefreshing,
-        onRefresh = onRefresh,
-        state = pullToRefreshState,
-        modifier = modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-        indicator = {
-            PullToRefreshDefaults.LoadingIndicator(
-                state = pullToRefreshState,
-                isRefreshing = isRefreshing,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = topClearance),
-            )
-        },
-    ) {
-        if (feedState.isAllEmpty && !feedState.isInitialLoading && feedState.regionalTrending.status == SectionLoadState.LOADED) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(
-                        top = topClearance + 8.dp,
-                        bottom = bottomClearance,
-                    )
-                    .padding(horizontal = 24.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Surface(
-                    shape = MaterialTheme.shapes.extraLarge,
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(28.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primaryContainer),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                painter = painterResource(R.drawable.app_icon_small),
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                modifier = Modifier.size(36.dp),
-                            )
-                        }
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(
-                                text = stringResource(R.string.home_title),
-                                style = MaterialTheme.typography.titleLargeEmphasized,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                textAlign = TextAlign.Center,
-                            )
-                            Text(
-                                text = "Start listening to songs or connect your Last.fm / ListenBrainz in Settings to see your personal rotation and charts here.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center,
-                            )
-                        }
-                        FilledTonalButton(
-                            onClick = onOpenSettings,
-                            shape = MaterialTheme.shapes.large,
-                        ) {
-                            Text(
-                                text = stringResource(R.string.settings_title),
-                                style = MaterialTheme.typography.labelLarge,
-                            )
-                        }
-                    }
-                }
-            }
-        } else {
-            val matchedTopAlbums = feedState.topAlbums.items
-                .filter { !it.appleCatalogId.isNullOrBlank() }
-
-            LazyColumn(
-                state = lazyListState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(
-                    top = topClearance + 8.dp,
-                    bottom = bottomClearance,
-                ),
-                verticalArrangement = Arrangement.spacedBy(28.dp),
-            ) {
-                if (feedState.rotation.status == SectionLoadState.LOADING) {
-                    item(key = "rotation_skeleton") {
-                        SkeletonTrackCarousel(
-                            titleWidth = 140.dp,
-                            subtitleWidth = 200.dp,
-                            isArtist = false,
-                        )
-                    }
-                } else if (feedState.rotation.status == SectionLoadState.LOADED && feedState.rotation.items.isNotEmpty()) {
-                    item(key = "rotation_live") {
-                        HomeTrackCarousel(
-                            title = stringResource(R.string.home_your_rotation),
-                            subtitle = stringResource(R.string.home_your_rotation_subtitle),
-                            tracks = feedState.rotation.items,
-                            onTrackClick = onTrackClick,
-                            onDownloadTrack = onDownloadTrack,
-                        )
-                    }
-                }
-
-                if (feedState.recommended.status == SectionLoadState.LOADING) {
-                    item(key = "recommended_skeleton") {
-                        SkeletonTrackCarousel(
-                            titleWidth = 150.dp,
-                            subtitleWidth = 220.dp,
-                            isArtist = false,
-                        )
-                    }
-                } else if (feedState.recommended.status == SectionLoadState.LOADED && feedState.recommended.items.isNotEmpty()) {
-                    item(key = "recommended_live") {
-                        HomeTrackCarousel(
-                            title = stringResource(R.string.home_recommended),
-                            subtitle = stringResource(R.string.home_recommended_subtitle),
-                            tracks = feedState.recommended.items,
-                            onTrackClick = onTrackClick,
-                            onDownloadTrack = onDownloadTrack,
-                        )
-                    }
-                }
-
-                if (feedState.topArtists.status == SectionLoadState.LOADING) {
-                    item(key = "top_artists_skeleton") {
-                        SkeletonTrackCarousel(
-                            titleWidth = 120.dp,
-                            subtitleWidth = 180.dp,
-                            isArtist = true,
-                        )
-                    }
-                } else if (feedState.topArtists.status == SectionLoadState.LOADED && feedState.topArtists.items.isNotEmpty()) {
-                    item(key = "top_artists_live") {
-                        HomeArtistCarousel(
-                            title = stringResource(R.string.home_top_artists),
-                            subtitle = stringResource(R.string.home_top_artists_subtitle),
-                            artists = feedState.topArtists.items,
-                            onArtistClick = onArtistClick,
-                        )
-                    }
-                }
-
-                if (feedState.topAlbums.status == SectionLoadState.LOADING) {
-                    item(key = "top_albums_skeleton") {
-                        SkeletonTrackCarousel(
-                            titleWidth = 130.dp,
-                            subtitleWidth = 190.dp,
-                            isArtist = false,
-                        )
-                    }
-                } else if (feedState.topAlbums.status == SectionLoadState.LOADED && matchedTopAlbums.isNotEmpty()) {
-                    item(key = "top_albums_live") {
-                        HomeAlbumCarousel(
-                            title = stringResource(R.string.home_top_albums),
-                            subtitle = stringResource(R.string.home_top_albums_subtitle),
-                            albums = matchedTopAlbums,
-                            onAlbumClick = onAlbumClick,
-                        )
-                    }
-                }
-
-                item(key = "top_tracks") {
-                    LaunchedEffect(Unit) {
-                        onLoadTopTracks()
-                    }
-                    when (feedState.topTracks.status) {
-                        SectionLoadState.LOADING -> {
-                            SkeletonTrackCarousel(
-                                titleWidth = 130.dp,
-                                subtitleWidth = 190.dp,
-                                isArtist = false,
-                            )
-                        }
-
-                        SectionLoadState.LOADED -> {
-                            if (feedState.topTracks.items.isNotEmpty()) {
-                                HomeTrackCarousel(
-                                    title = stringResource(R.string.home_top_tracks),
-                                    subtitle = stringResource(R.string.home_top_tracks_subtitle),
-                                    tracks = feedState.topTracks.items,
-                                    onTrackClick = onTrackClick,
-                                    onDownloadTrack = onDownloadTrack,
-                                )
-                            }
-                        }
-
-                        else -> Unit
-                    }
-                }
-
-                item(key = "trending") {
-                    LaunchedEffect(Unit) {
-                        onLoadTrending()
-                    }
-                    if (feedState.regionalTrending.status == SectionLoadState.LOADING || feedState.globalTrending.status == SectionLoadState.LOADING) {
-                        SkeletonSegmentedList()
-                    } else if (feedState.regionalTrending.status == SectionLoadState.LOADED || feedState.globalTrending.status == SectionLoadState.LOADED) {
-                        val hasRegional = feedState.regionalTrending.items.isNotEmpty()
-                        val effectiveIsGlobal = isGlobalTrending || !hasRegional
-                        val currentTrending = if (effectiveIsGlobal) {
-                            feedState.globalTrending.items
-                        } else {
-                            feedState.regionalTrending.items
-                        }
-                        if (currentTrending.isNotEmpty() || feedState.globalTrending.items.isNotEmpty() || feedState.regionalTrending.items.isNotEmpty()) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 20.dp),
-                                verticalArrangement = Arrangement.spacedBy(14.dp),
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.home_trending),
-                                    style = MaterialTheme.typography.titleMediumEmphasized.copy(
-                                        color = MaterialTheme.colorScheme.primary,
-                                    ),
-                                )
-
-                                if (hasRegional) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(
-                                            ButtonGroupDefaults.ConnectedSpaceBetween
-                                        ),
-                                    ) {
-                                        FilledTonalToggleButton(
-                                            checked = !effectiveIsGlobal,
-                                            onCheckedChange = { isGlobalTrending = false },
-                                            shapes = ButtonGroupDefaults.connectedLeadingButtonShapes(),
-                                            modifier = Modifier.weight(1f),
-                                        ) {
-                                            Text(
-                                                text = feedState.regionName.ifBlank {
-                                                    stringResource(
-                                                        R.string.home_trending_regional
-                                                    )
-                                                },
-                                                style = MaterialTheme.typography.labelLarge,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
-                                        }
-                                        FilledTonalToggleButton(
-                                            checked = effectiveIsGlobal,
-                                            onCheckedChange = { isGlobalTrending = true },
-                                            shapes = ButtonGroupDefaults.connectedTrailingButtonShapes(),
-                                            modifier = Modifier.weight(1f),
-                                        ) {
-                                            Text(
-                                                text = stringResource(R.string.home_trending_global),
-                                                style = MaterialTheme.typography.labelLarge,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
-                                        }
-                                    }
-                                }
-
-                                AnimatedContent(
-                                    targetState = effectiveIsGlobal,
-                                    transitionSpec = {
-                                        fadeIn(animationSpec = motionScheme.defaultEffectsSpec()) togetherWith
-                                                fadeOut(animationSpec = motionScheme.defaultEffectsSpec())
-                                    },
-                                    label = "trendingSongsTransition",
-                                ) { showGlobal ->
-                                    val displayList = if (showGlobal) {
-                                        feedState.globalTrending.items
-                                    } else {
-                                        feedState.regionalTrending.items
-                                    }
-
-                                    Column(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
-                                    ) {
-                                        displayList.forEachIndexed { index, track ->
-                                            SegmentedListItem(
-                                                shapes = ListItemDefaults.segmentedShapes(
-                                                    index = index,
-                                                    count = displayList.size,
-                                                ),
-                                                colors = ListItemDefaults.segmentedColors(
-                                                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                                                ),
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                modifier = Modifier.fillMaxWidth(),
-                                                leadingContent = {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .size(48.dp)
-                                                            .clip(RoundedCornerShape(12.dp))
-                                                            .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-                                                    ) {
-                                                        if (!track.artworkUrl.isNullOrBlank()) {
-                                                            AsyncImage(
-                                                                model = ImageRequest.Builder(
-                                                                    LocalPlatformContext.current
-                                                                )
-                                                                    .data(track.artworkUrl)
-                                                                    .crossfade(true)
-                                                                    .build(),
-                                                                contentDescription = track.title,
-                                                                contentScale = ContentScale.Crop,
-                                                                modifier = Modifier.fillMaxSize(),
-                                                            )
-                                                        } else {
-                                                            Icon(
-                                                                painter = painterResource(R.drawable.app_icon_small),
-                                                                contentDescription = null,
-                                                                tint = MaterialTheme.colorScheme.primary.copy(
-                                                                    alpha = 0.6f
-                                                                ),
-                                                                modifier = Modifier
-                                                                    .size(24.dp)
-                                                                    .align(Alignment.Center),
-                                                            )
-                                                        }
-                                                    }
-                                                },
-                                                content = {
-                                                    Text(
-                                                        text = track.title,
-                                                        style = MaterialTheme.typography.titleMediumEmphasized,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
-                                                    )
-                                                },
-                                                supportingContent = {
-                                                    Text(
-                                                        text = track.artist,
-                                                        style = MaterialTheme.typography.bodyMedium,
-                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
-                                                    )
-                                                },
-                                                trailingContent = {
-                                                    FilledTonalIconButton(
-                                                        onClick = {
-                                                            if (track.isPlayable) {
-                                                                onTrackClick(track)
-                                                            } else if (!track.providerTrackId.isNullOrBlank()) {
-                                                                onDownloadTrack(track)
-                                                            }
-                                                        },
-                                                        enabled = track.isPlayable ||
-                                                                !track.providerTrackId.isNullOrBlank(),
-                                                        modifier = Modifier.size(36.dp),
-                                                    ) {
-                                                        Icon(
-                                                            painter = painterResource(
-                                                                if (track.isPlayable) {
-                                                                    R.drawable.ic_play
-                                                                } else {
-                                                                    R.drawable.ic_cloud_download
-                                                                },
-                                                            ),
-                                                            contentDescription = if (track.isPlayable) {
-                                                                "Play"
-                                                            } else if (!track.providerTrackId.isNullOrBlank()) {
-                                                                "Add to rip"
-                                                            } else {
-                                                                "Track unavailable"
-                                                            },
-                                                            modifier = Modifier.size(18.dp),
-                                                        )
-                                                    }
-                                                },
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                item(key = "weekly_picks") {
-                    LaunchedEffect(Unit) {
-                        onLoadWeeklyPicks()
-                    }
-                    when (feedState.weeklyPicks.status) {
-                        SectionLoadState.LOADING -> {
-                            SkeletonTrackCarousel(
-                                titleWidth = 140.dp,
-                                subtitleWidth = 200.dp,
-                                isArtist = false,
-                            )
-                        }
-
-                        SectionLoadState.LOADED -> {
-                            if (feedState.weeklyPicks.items.isNotEmpty()) {
-                                HomeTrackCarousel(
-                                    title = stringResource(R.string.home_weekly_picks),
-                                    subtitle = stringResource(R.string.home_weekly_picks_subtitle),
-                                    tracks = feedState.weeklyPicks.items,
-                                    onTrackClick = onTrackClick,
-                                    onDownloadTrack = onDownloadTrack,
-                                )
-                            }
-                        }
-
-                        else -> Unit
-                    }
-                }
-            }
-        }
     }
 }
 

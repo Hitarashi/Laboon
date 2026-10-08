@@ -58,7 +58,6 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -66,6 +65,7 @@ import coil3.compose.AsyncImage
 import org.shilpo.laboon.R
 import org.shilpo.laboon.ui.design.AppCardShape
 import org.shilpo.laboon.ui.design.ScreenScaffold
+import org.shilpo.laboon.ui.design.painterResource
 
 private val TopBarOuterVerticalPadding = 8.dp
 private val TopBarInnerVerticalPadding = 6.dp
@@ -119,9 +119,8 @@ fun AboutScreen(
                     onCopyBuildInfo = { versionText ->
                         val clipboard =
                             context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                        clipboard?.primaryClip = ClipData.newPlainText(
-                            "Laboon Version",
-                            versionText
+                        clipboard?.setPrimaryClip(
+                            ClipData.newPlainText("Laboon Version", versionText)
                         )
                         Toast.makeText(
                             context,

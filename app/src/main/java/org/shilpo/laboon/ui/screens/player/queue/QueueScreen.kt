@@ -57,7 +57,6 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -74,6 +73,7 @@ import org.shilpo.laboon.playback.DiscoveryStatus
 import org.shilpo.laboon.playback.QueueEntry
 import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.ui.design.TrackCodecBadges
+import org.shilpo.laboon.ui.design.painterResource
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 

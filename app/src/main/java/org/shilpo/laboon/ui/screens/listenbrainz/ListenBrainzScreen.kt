@@ -30,7 +30,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -43,6 +42,7 @@ import org.shilpo.laboon.ui.design.PrimaryActionZone
 import org.shilpo.laboon.ui.design.ScreenError
 import org.shilpo.laboon.ui.design.ScreenScaffold
 import org.shilpo.laboon.ui.design.mergeScreenErrors
+import org.shilpo.laboon.ui.design.painterResource
 
 @Composable
 fun ListenBrainzScreen(

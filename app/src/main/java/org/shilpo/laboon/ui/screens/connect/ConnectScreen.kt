@@ -17,7 +17,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -28,6 +27,7 @@ import org.shilpo.laboon.ui.design.LandingReveal
 import org.shilpo.laboon.ui.design.PrimaryActionZone
 import org.shilpo.laboon.ui.design.ScreenError
 import org.shilpo.laboon.ui.design.ScreenScaffold
+import org.shilpo.laboon.ui.design.painterResource
 
 internal fun openTelegramApp(context: Context) {
     val telegramIntent = Intent(Intent.ACTION_VIEW).apply {

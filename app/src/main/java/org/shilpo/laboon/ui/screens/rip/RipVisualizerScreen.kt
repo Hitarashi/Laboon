@@ -42,7 +42,6 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,6 +60,7 @@ import org.shilpo.laboon.rip.RipTaskUploadLane
 import org.shilpo.laboon.rip.RipWebSocketClient
 import org.shilpo.laboon.ui.design.CodecIcon
 import org.shilpo.laboon.ui.design.UserAvatar
+import org.shilpo.laboon.ui.design.painterResource
 import java.util.Locale
 
 @Composable

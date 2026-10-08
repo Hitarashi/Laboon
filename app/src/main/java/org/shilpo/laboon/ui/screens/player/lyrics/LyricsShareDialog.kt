@@ -66,7 +66,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -89,6 +88,7 @@ import kotlinx.coroutines.withContext
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.lyrics.LyricsLine
+import org.shilpo.laboon.ui.design.painterResource
 import java.io.File
 import java.io.FileOutputStream
 
@@ -986,7 +986,7 @@ suspend fun renderCardBitmap(
         typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
     }
     val footerY = cardRect.bottom - 46f
-    canvas.drawText("♪  Laboon Music", innerLeft, footerY, footerPaint)
+    canvas.drawText("Laboon Music", innerLeft, footerY, footerPaint)
 
     bitmap
 }

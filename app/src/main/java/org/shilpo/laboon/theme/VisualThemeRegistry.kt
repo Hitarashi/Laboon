@@ -13,8 +13,11 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import org.shilpo.laboon.theme.contract.CURRENT_THEME_CONTRACT_VERSION
+import org.shilpo.laboon.theme.contract.MaterialSymbolCatalog
 import org.shilpo.laboon.theme.contract.ThemeDefinition
 import org.shilpo.laboon.theme.contract.ThemeEffect
+import org.shilpo.laboon.theme.contract.ThemeIconOverrideValidator
+import org.shilpo.laboon.theme.contract.ThemeIconSlots
 import org.shilpo.laboon.theme.contract.ThemeKeyframe
 import org.shilpo.laboon.theme.contract.ThemeKeyframeAnimation
 import org.shilpo.laboon.theme.contract.ThemeKeyframeValidator
@@ -273,6 +276,9 @@ internal class VisualThemeRegistry(context: Context) {
         val screens = json.optJSONObject("screens").toNameObjectMap().mapValues { (_, value) ->
             parseNode(value, depth = 0, count = nodeCount)
         }
+        val iconOverrides = json.optJSONObject("iconOverrides").toStringMap()
+        val iconValidation = ThemeIconOverrideValidator.validate(iconOverrides)
+        require(iconValidation.isValid) { "Invalid theme icon overrides: ${iconValidation.issues}" }
 
         fun validateAnimations(node: VisualNode) {
             listOf(
@@ -335,6 +341,7 @@ internal class VisualThemeRegistry(context: Context) {
             effects = effects,
             screens = screens,
             options = json.optJSONArray("options").toThemeOptions(),
+            iconOverrides = iconOverrides,
         )
     }
 
@@ -347,6 +354,12 @@ internal class VisualThemeRegistry(context: Context) {
         val attributes = json.optJSONObject("attributes").toStringMap()
         attributes.values.forEach { require(it.length <= MAX_ATTRIBUTE_LENGTH) }
         if (type == "hostControl") require(attributes["id"] == "themeOptions") { "Unsupported host control" }
+        attributes["slot"]?.let { slot ->
+            require(slot in ThemeIconSlots.supported) { "Unsupported semantic icon slot: $slot" }
+        }
+        attributes["symbol"]?.let { symbol ->
+            require(symbol in MaterialSymbolCatalog.supported) { "Unsupported Material Symbol: $symbol" }
+        }
         val polygon = attributes["polygonPoints"]?.let {
             requireNotNull(
                 org.shilpo.laboon.theme.contract.VisualPolygon.parse(it)

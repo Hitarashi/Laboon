@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,7 +28,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ButtonGroupDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedListItem
@@ -45,10 +43,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import org.shilpo.laboon.R
 import org.shilpo.laboon.theme.LocalVisualTheme
 
 @Composable
@@ -241,16 +237,6 @@ fun SkeletonTrackCard(
             .frostedGlassShimmer()
             .border(width = 0.75.dp, brush = borderBrush, shape = shape),
     ) {
-        Icon(
-            painter = painterResource(R.drawable.app_icon_small),
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.20f else 0.28f),
-            modifier = Modifier
-                .size(44.dp)
-                .align(Alignment.Center)
-                .offset(y = (-18).dp),
-        )
-
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -296,17 +282,7 @@ fun SkeletonTrackCard(
                     .clip(CircleShape)
                     .frostedGlassShimmer()
                     .border(width = 0.75.dp, brush = borderBrush, shape = CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_play),
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface.copy(alpha = if (isDark) 0.35f else 0.45f),
-                    modifier = Modifier
-                        .size(17.dp)
-                        .offset(x = 1.dp),
-                )
-            }
+            )
         }
     }
 }
@@ -329,15 +305,7 @@ fun SkeletonArtistItem(
                 .clip(CircleShape)
                 .frostedGlassShimmer()
                 .border(width = 0.75.dp, brush = borderBrush, shape = CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_user_headshot),
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (isDark) 0.25f else 0.35f),
-                modifier = Modifier.size(48.dp),
-            )
-        }
+        )
         SkeletonTextLine(
             width = 72.dp,
             height = 12.dp,
@@ -470,17 +438,7 @@ fun SkeletonSegmentedList(
                                     brush = borderBrush,
                                     shape = RoundedCornerShape(12.dp),
                                 ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                painter = painterResource(R.drawable.app_icon_small),
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary.copy(
-                                    alpha = if (isDark) 0.25f else 0.35f
-                                ),
-                                modifier = Modifier.size(22.dp),
-                            )
-                        }
+                        )
                     },
                     content = {
                         SkeletonTextLine(
@@ -507,19 +465,7 @@ fun SkeletonSegmentedList(
                                     brush = borderBrush,
                                     shape = CircleShape,
                                 ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_play),
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurface.copy(
-                                    alpha = if (isDark) 0.30f else 0.40f
-                                ),
-                                modifier = Modifier
-                                    .size(16.dp)
-                                    .offset(x = 1.dp),
-                            )
-                        }
+                        )
                     },
                 )
             }

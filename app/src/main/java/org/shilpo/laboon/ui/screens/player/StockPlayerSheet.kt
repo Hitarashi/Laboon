@@ -7,16 +7,44 @@
 package org.shilpo.laboon.ui.screens.player
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LoadingIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.SheetValue
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberBottomSheetState
-import androidx.compose.runtime.*
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.rememberSliderState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -24,10 +52,16 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.launch
+import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.lyrics.LyricsLine
-import org.shilpo.laboon.playback.*
+import org.shilpo.laboon.playback.AudioQualityInfo
+import org.shilpo.laboon.playback.DiscoveryStatus
+import org.shilpo.laboon.playback.QueueState
+import org.shilpo.laboon.playback.RepeatMode
+import org.shilpo.laboon.theme.renderer.materialSymbolPainterResource
+import org.shilpo.laboon.ui.design.painterResource
 import org.shilpo.laboon.ui.screens.player.lyrics.LyricsScreen
 import org.shilpo.laboon.ui.screens.queue.QueueBottomSheet
 
@@ -83,8 +117,30 @@ internal fun StockPlayerSheet(
                     Text(track.title, style = MaterialTheme.typography.titleSmall, maxLines = 1)
                     Text(track.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1)
                 }
-                FilledTonalButton(onClick = onPlayPause) { Text(if (isPlaying) "Pause" else "Play") }
-                TextButton(onClick = onNext) { Text("Next") }
+                FilledIconButton(
+                    onClick = onPlayPause,
+                    modifier = Modifier.size(48.dp),
+                    enabled = durationMs > 0L,
+                ) {
+                    Icon(
+                        painter = painterResource(
+                            if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play,
+                        ),
+                        contentDescription = if (isPlaying) "Pause" else "Play",
+                        modifier = Modifier.size(28.dp),
+                    )
+                }
+                IconButton(
+                    onClick = onNext,
+                    modifier = Modifier.size(48.dp),
+                    enabled = queueState?.hasNext == true,
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_skip),
+                        contentDescription = "Next",
+                        modifier = Modifier.size(28.dp),
+                    )
+                }
             }
         }
     }
@@ -149,17 +205,21 @@ internal fun StockPlayerSheet(
                             }) { Text(album) }
                         }
                         if (isBuffering) LoadingIndicator()
+                        val seekSliderState = rememberSliderState(
+                            value = progress.coerceIn(0f, 1f),
+                            trackRange = 0f..1f,
+                        )
+                        LaunchedEffect(progress) {
+                            seekSliderState.value = progress.coerceIn(0f, 1f)
+                        }
                         Slider(
-                            state = rememberSliderState(
-                                value = progress.coerceIn(0f, 1f),
-                                steps = COMPILED_CODE, trackRange = COMPILED_CODE
-                            ),
-                            onValueChange = onSeek,
-                            modifier = COMPILED_CODE,
-                            enabled = COMPILED_CODE,
-                            onValueChangeFinished = COMPILED_CODE,
-                            colors = COMPILED_CODE,
-                            interactionSource = COMPILED_CODE
+                            state = seekSliderState,
+                            onValueChange = { value ->
+                                seekSliderState.value = value
+                                onSeek(value)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = durationMs > 0L,
                         )
                         Text(
                             "${currentPositionMs / 1000}s / ${durationMs / 1000}s",
@@ -169,15 +229,44 @@ internal fun StockPlayerSheet(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceEvenly
                         ) {
-                            FilledTonalButton(
+                            IconButton(
                                 onClick = onPrevious,
-                                enabled = canSkipPrevious
-                            ) { Text("Previous") }
-                            Button(onClick = onPlayPause) { Text(if (isPlaying) "Pause" else "Play") }
-                            FilledTonalButton(
+                                enabled = canSkipPrevious,
+                                modifier = Modifier.size(48.dp),
+                            ) {
+                                Icon(
+                                    painter = materialSymbolPainterResource(
+                                        name = "skip_previous",
+                                        slot = "playback.previous",
+                                    ),
+                                    contentDescription = "Previous",
+                                    modifier = Modifier.size(28.dp),
+                                )
+                            }
+                            FilledIconButton(
+                                onClick = onPlayPause,
+                                modifier = Modifier.size(56.dp),
+                                enabled = durationMs > 0L,
+                            ) {
+                                Icon(
+                                    painter = painterResource(
+                                        if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play,
+                                    ),
+                                    contentDescription = if (isPlaying) "Pause" else "Play",
+                                    modifier = Modifier.size(32.dp),
+                                )
+                            }
+                            IconButton(
                                 onClick = onNext,
-                                enabled = queueState?.hasNext == true
-                            ) { Text("Next") }
+                                enabled = queueState?.hasNext == true,
+                                modifier = Modifier.size(48.dp),
+                            ) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_skip),
+                                    contentDescription = "Next",
+                                    modifier = Modifier.size(28.dp),
+                                )
+                            }
                         }
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),

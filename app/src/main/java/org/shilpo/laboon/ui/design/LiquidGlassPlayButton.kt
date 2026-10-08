@@ -25,7 +25,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.shilpo.laboon.R
@@ -40,13 +39,13 @@ fun LiquidGlassPlayButton(
     iconRes: Int? = null,
     enabled: Boolean = true,
     contentDescription: String? = if (isPlaying) "Pause" else "Play",
-    size: Dp = 38.dp,
-    iconSize: Dp = 19.dp,
+    size: Dp = 48.dp,
+    iconSize: Dp = 28.dp,
 ) {
     if (LocalVisualTheme.current == null) {
         FilledIconButton(
             onClick = onClick,
-            modifier = modifier,
+            modifier = modifier.size(size),
             enabled = enabled,
         ) {
             Icon(
@@ -54,6 +53,7 @@ fun LiquidGlassPlayButton(
                     id = iconRes ?: if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play,
                 ),
                 contentDescription = contentDescription,
+                modifier = Modifier.size(iconSize),
             )
         }
         return

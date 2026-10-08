@@ -19,6 +19,43 @@ class ThemeManifestValidatorTest {
     }
 
     @Test
+    fun acceptsIconOverridesForKnownSlotsAndMaterialSymbols() {
+        val result = ThemeIconOverrideValidator.validate(
+            mapOf(
+                "navigation.home" to "home",
+                "playback.play" to "play_circle",
+                "playback.previous" to "skip_previous",
+                "queue.moveEarlier" to "keyboard_arrow_up",
+            ),
+        )
+
+        assertTrue(result.isValid)
+    }
+
+    @Test
+    fun rejectsUnknownIconSlotsAndSymbols() {
+        val result = ThemeIconOverrideValidator.validate(
+            mapOf("navigation.notARealSlot" to "not_a_material_symbol"),
+        )
+
+        assertEquals(
+            setOf(ThemeIconOverrideIssue.UnknownSlot, ThemeIconOverrideIssue.UnknownSymbol),
+            result.issues,
+        )
+    }
+
+    @Test
+    fun rejectsMoreIconOverridesThanTheContractBudget() {
+        val overrides = (0..MAX_THEME_ICON_OVERRIDES).associate { index ->
+            "unknown.$index" to "home"
+        }
+
+        assertTrue(
+            ThemeIconOverrideIssue.TooManyOverrides in ThemeIconOverrideValidator.validate(overrides).issues,
+        )
+    }
+
+    @Test
     fun acceptsAnApi29ThemeWithTheCurrentContract() {
         val result = ThemeManifestValidator.validate(validManifest(), androidApi = 29)
 
