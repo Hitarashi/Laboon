@@ -4,7 +4,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import org.shilpo.laboon.lyricsporn.LyricspornCatalogItem
 import org.shilpo.laboon.lyricsporn.LyricspornClient
+import org.shilpo.laboon.net.HttpErrorKind
+import org.shilpo.laboon.net.HttpOutcome
 import org.shilpo.laboon.net.arrOrNull
 import org.shilpo.laboon.net.objAtOrNull
 import org.shilpo.laboon.net.objOrNull
@@ -16,24 +19,29 @@ internal class LyricsRepositoryImpl(
     private val lyricspornApiUrlProvider: () -> String?,
     private val nowMs: () -> Long = System::currentTimeMillis,
     private val diskCache: LyricsDiskCache? = null,
+    private val searchSongsForLyrics: suspend (String?, String) -> HttpOutcome<List<LyricspornCatalogItem>> =
+        { apiBaseUrl, term -> LyricspornClient.searchSongsForLyrics(apiBaseUrl, term) },
+    private val getTrackLyrics: suspend (String?, String) -> HttpOutcome<JSONObject> =
+        { apiBaseUrl, appleTrackId -> LyricspornClient.getTrackLyricsOutcome(apiBaseUrl, appleTrackId) },
 ) : LyricsRepository {
 
     private data class Cached(val value: LyricsResult, val expiresAt: Long)
 
     private val cache = LinkedHashMap<String, Cached>(16, 0.75f, true)
 
-    override suspend fun lookup(track: LyricsLookup): LyricsResult = withContext(Dispatchers.IO) {
-        val durationMs = track.durationSeconds?.coerceAtLeast(0L)?.times(1_000L) ?: 0L
-        if (track.title.isBlank() || track.artistString.isBlank()) {
-            return@withContext fallbackLyrics(track, durationMs).withGeneratedRomanization()
-        }
+    override suspend fun lookup(track: LyricsLookup): LyricsLookupResult = withContext(Dispatchers.IO) {
         val apiBaseUrl = LyricspornClient.normalizeApiBaseUrl(lyricspornApiUrlProvider())
-            ?: return@withContext fallbackLyrics(track, durationMs).withGeneratedRomanization()
+            ?: return@withContext LyricsLookupResult.Failed
+
+        val directAppleId = track.appleTrackId?.takeIf { it.isNumericId() }
+        if (directAppleId == null && (track.title.isBlank() || track.artistString.isBlank())) {
+            return@withContext LyricsLookupResult.NotFound
+        }
 
         val key = listOf(
             apiBaseUrl,
             LyricspornClient.currentStorefront(),
-            track.appleTrackId.orEmpty(),
+            directAppleId.orEmpty(),
             track.title.trim().lowercase(Locale.ROOT),
             track.artistString.trim().lowercase(Locale.ROOT),
             track.album.orEmpty().trim().lowercase(Locale.ROOT),
@@ -44,42 +52,47 @@ internal class LyricsRepositoryImpl(
         cached?.takeIf { it.expiresAt > nowMs() }?.let { cachedValue ->
             val value = cachedValue.value.withGeneratedRomanization()
             if (value != cachedValue.value) remember(key, value, cachedValue.expiresAt)
-            return@withContext value
+            return@withContext LyricsLookupResult.Found(value)
         }
 
         diskCache?.get(key)?.takeIf { it.expiresAt > nowMs() }?.let { persisted ->
             val value = persisted.value.withGeneratedRomanization()
             remember(key, value, persisted.expiresAt)
             if (value != persisted.value) diskCache.put(key, value, persisted.expiresAt)
-            return@withContext value
+            return@withContext LyricsLookupResult.Found(value)
         }
 
-        val appleId = track.appleTrackId?.takeIf { it.isNumericId() }
-            ?: LyricspornClient.searchCatalog(
-                apiBaseUrl = apiBaseUrl,
-                term = listOf(track.title.trim(), track.artistString.trim()).joinToString(" "),
-                limit = 1,
-            ).songs.firstOrNull()?.id
-        if (appleId.isNullOrBlank()) {
-            return@withContext fallbackLyrics(track, durationMs).withGeneratedRomanization()
+        val appleId = directAppleId ?: when (
+            val search = searchSongsForLyrics(
+                apiBaseUrl,
+                listOf(track.title.trim(), track.artistString.trim()).joinToString(" "),
+            )
+        ) {
+            is HttpOutcome.Failure -> return@withContext LyricsLookupResult.Failed
+            is HttpOutcome.Success -> search.value.firstOrNull()?.id
+                ?: return@withContext LyricsLookupResult.NotFound
         }
+        if (!appleId.isNumericId()) return@withContext LyricsLookupResult.Failed
 
-        val response = LyricspornClient.getTrackLyrics(apiBaseUrl, appleId)
-        val result = response?.objOrNull("lyrics")
-            ?.objOrNull("formats")
-            ?.objOrNull("json")
-            ?.takeIf { it.optString("status") == "available" }
-            ?.objOrNull("content")
-            ?.toLyricsResult()
-            ?: fallbackLyrics(track, durationMs)
-        val resultWithRomanization = result.withGeneratedRomanization()
+        val result = when (val response = getTrackLyrics(apiBaseUrl, appleId)) {
+            is HttpOutcome.Failure -> {
+                if (response.error.kind == HttpErrorKind.STATUS && response.error.statusCode == 404) {
+                    LyricsLookupResult.NotFound
+                } else {
+                    LyricsLookupResult.Failed
+                }
+            }
+            is HttpOutcome.Success -> response.value.toLyricsLookupResult()
+        }
+        val found = result as? LyricsLookupResult.Found ?: return@withContext result
+        val resultWithRomanization = found.lyrics.withGeneratedRomanization()
 
         if (resultWithRomanization.provider != null) {
             val expiresAt = nowMs() + CACHE_TTL_MS
             remember(key, resultWithRomanization, expiresAt)
             diskCache?.put(key, resultWithRomanization, expiresAt)
         }
-        resultWithRomanization
+        LyricsLookupResult.Found(resultWithRomanization)
     }
 
     private fun LyricsResult.withGeneratedRomanization(): LyricsResult {
@@ -94,15 +107,34 @@ internal class LyricsRepositoryImpl(
         }
     }
 
-    private fun fallbackLyrics(track: LyricsLookup, durationMs: Long): LyricsResult {
-        val text = "${track.title.trim()} - ${track.artistString.trim()}"
-        return LyricsResult(
-            provider = null,
-            format = LyricsFormat.Plain,
-            syncLevel = LyricsSyncLevel.Plain,
-            plainText = text,
-            lines = listOf(LyricsLine(text, 0L, durationMs)),
-        )
+    private fun JSONObject.toLyricsLookupResult(): LyricsLookupResult {
+        val lyrics = objOrNull("lyrics") ?: return LyricsLookupResult.Failed
+        val lyricsStatus = lyrics.stringOrNull("status")?.lowercase(Locale.ROOT)
+        if (lyricsStatus in NOT_FOUND_STATUSES) return LyricsLookupResult.NotFound
+
+        val jsonFormat = lyrics.objOrNull("formats")?.objOrNull("json")
+            ?: return LyricsLookupResult.Failed
+        val formatStatus = jsonFormat.stringOrNull("status")?.lowercase(Locale.ROOT)
+        if (formatStatus in NOT_FOUND_STATUSES) return LyricsLookupResult.NotFound
+        if (formatStatus != "available") {
+            return if (jsonFormat.stringOrNull("reason").orEmpty().indicatesNoLyrics()) {
+                LyricsLookupResult.NotFound
+            } else {
+                LyricsLookupResult.Failed
+            }
+        }
+
+        val content = jsonFormat.objOrNull("content") ?: return LyricsLookupResult.Failed
+        val result = content.toLyricsResult() ?: return LyricsLookupResult.Failed
+        return LyricsLookupResult.Found(result)
+    }
+
+    private fun String.indicatesNoLyrics(): Boolean {
+        val normalized = lowercase(Locale.ROOT)
+        return normalized.contains("no lyrics") ||
+                normalized.contains("lyrics not found") ||
+                normalized.contains("lyrics unavailable") ||
+                normalized.contains("lyrics are unavailable")
     }
 
     private fun JSONObject.toLyricsResult(): LyricsResult? {
@@ -185,6 +217,7 @@ internal class LyricsRepositoryImpl(
     private fun String.isNumericId(): Boolean = isNotBlank() && all(Char::isDigit)
 
     private companion object {
+        val NOT_FOUND_STATUSES = setOf("not_found", "notfound", "missing")
         const val CACHE_TTL_MS = 12 * 60 * 60 * 1_000L
         const val MAX_CACHE_ENTRIES = 256
     }

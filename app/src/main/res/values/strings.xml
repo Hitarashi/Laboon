@@ -121,4 +121,31 @@
     <string name="home_trending_global">Global</string>
     <string name="home_weekly_picks">Weekly picks</string>
     <string name="home_weekly_picks_subtitle">Algorithmic and community discoveries</string>
+
+    <!-- Sleep Timer -->
+    <string name="sleep_timer_n_minutes_format">%1$d minutes</string>
+    <string name="sleep_timer_display_eot">End of track</string>
+    <string name="sleep_timer_set_for_minutes_toast">Timer set for %1$d minutes.</string>
+    <string name="sleep_timer_cancelled_toast">Timer cancelled.</string>
+    <string name="sleep_timer_eot_no_song_toast">Cannot enable end of track: no active song.</string>
+    <string name="sleep_timer_eot_song_changed_toast">End of track timer deactivated: song changed from %1$s to %2$s.</string>
+    <string name="sleep_timer_eot_stop_at_end_toast">Playback will stop at end of track.</string>
+    <string name="sleep_timer_label_previous_track">Previous track</string>
+    <string name="sleep_timer_label_current_track">Current track</string>
+    <string name="sleep_timer_ui_title">Sleep timer</string>
+    <string name="sleep_timer_ui_slider_label_timer">Timer</string>
+    <string name="sleep_timer_ui_end_of_current_track">End of current track</string>
+    <string name="sleep_timer_ui_custom_time">Custom time</string>
+    <string name="sleep_timer_ui_cancel_timer">Cancel timer</string>
+    <string name="sleep_timer_ui_set_custom_duration">Set custom duration</string>
+    <string name="sleep_timer_ui_play_count_label">Play count: %1$s</string>
+    <string name="sleep_timer_ui_play_count_one_time">1 time</string>
+    <string name="ok">OK</string>
+    <string name="cancel">Cancel</string>
+    <string name="cd_switch_on">Switch on</string>
+
+    <!-- Artist Picker -->
+    <string name="artist_picker_title">Pick an Artist</string>
+    <string name="artist_picker_primary_label">Primary artist</string>
+    <string name="artist_picker_shortcut_label">Artist page</string>
 </resources>

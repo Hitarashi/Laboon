@@ -156,6 +156,13 @@ object MaterialSymbolCatalog {
         "graphic_eq",
         "add",
         "remove",
+        "abc",
+        "brightness_high",
+        "format_align_left",
+        "format_align_center",
+        "format_align_right",
+        "restart_alt",
+        "save",
         "translate",
         "send",
         "palette",
@@ -253,6 +260,10 @@ object MaterialSymbolCatalog {
         "fast_forward",
         "library_add_check",
         "track_changes",
+        "clear_all",
+        "more_horiz",
+        "my_location",
+        "unfold_more",
     )
 }
 

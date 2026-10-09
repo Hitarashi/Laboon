@@ -76,6 +76,30 @@ internal fun shouldOpenQueueSheetFromUpwardDrag(
     !queueSwipeAlreadyConsumed &&
     accumulatedDragY < -activationThresholdPx
 
+internal fun playerPanelProgressForDrag(
+    panelOpenAtStart: Boolean,
+    accumulatedDragY: Float,
+    panelHeightPx: Float,
+): Float {
+    val dragProgress = accumulatedDragY / panelHeightPx.coerceAtLeast(1f)
+    return if (panelOpenAtStart) {
+        (1f - dragProgress.coerceAtLeast(0f)).coerceIn(0f, 1f)
+    } else {
+        (-dragProgress).coerceAtLeast(0f).coerceIn(0f, 1f)
+    }
+}
+
+internal fun shouldSettlePlayerPanelOpen(
+    panelProgress: Float,
+    verticalVelocity: Float,
+    progressThreshold: Float,
+    velocityThreshold: Float,
+): Boolean = when {
+    verticalVelocity > velocityThreshold -> false
+    verticalVelocity < -velocityThreshold -> true
+    else -> panelProgress >= progressThreshold
+}
+
 /** Resolves release exactly like Pixel Player: direction, then velocity, then the halfway point. */
 internal fun resolvePlayerSheetTargetState(
     currentState: PlayerSheetTargetState,
@@ -167,7 +191,7 @@ internal class PlayerSheetMotionController(
     }
 }
 
-/** Player drag handling with Pixel Player's upward-swipe handoff to the queue. */
+/** Intercepts panel swipes before they can collapse the expanded player sheet. */
 internal class PlayerSheetVerticalDragGestureHandler(
     private val scope: CoroutineScope,
     private val densityProvider: () -> Density,
@@ -179,7 +203,11 @@ internal class PlayerSheetVerticalDragGestureHandler(
     private val miniHeightPxProvider: () -> Float,
     private val queueGestureBottomExclusionPxProvider: () -> Float,
     private val currentStateProvider: () -> PlayerSheetTargetState,
-    private val onOpenQueueSheet: () -> Unit,
+    private val isQueueOrLyricsPanelOpenProvider: () -> Boolean,
+    private val onPanelDragStart: () -> Unit,
+    private val onBeginQueuePanelDrag: () -> Unit,
+    private val onPanelDragProgress: (Float) -> Unit,
+    private val onPanelDragSettle: (Boolean) -> Unit,
     private val onAnimateSheet: suspend (Boolean, AnimationSpec<Float>?, Float) -> Unit,
     private val onExpandSheetState: () -> Unit,
     private val onCollapseSheetState: () -> Unit,
@@ -188,8 +216,10 @@ internal class PlayerSheetVerticalDragGestureHandler(
     private var initialFractionOnDragStart = 0f
     private var initialYOnDragStart = 0f
     private var accumulatedDragY = 0f
+    private var panelHeightPx = 1f
+    private var panelOpenAtDragStart = false
     private var queueGestureEligibleAtStart = false
-    private var queueSwipeConsumed = false
+    private var panelDragActive = false
     private var dragSnapJob: Job? = null
 
     fun onDragStart(startPosition: Offset, hostHeightPx: Float) {
@@ -200,31 +230,46 @@ internal class PlayerSheetVerticalDragGestureHandler(
         initialFractionOnDragStart = expansionFraction.value
         initialYOnDragStart = translationY.value
         accumulatedDragY = 0f
+        panelHeightPx = hostHeightPx.coerceAtLeast(1f)
+        panelOpenAtDragStart = isQueueOrLyricsPanelOpenProvider()
+        panelDragActive = panelOpenAtDragStart &&
+            currentStateProvider() == PlayerSheetTargetState.EXPANDED
+        if (panelDragActive) onPanelDragStart()
         queueGestureEligibleAtStart = isExpandedPlayerQueueSwipeEligible(
             currentState = currentStateProvider(),
             expansionFraction = expansionFraction.value,
             touchY = startPosition.y,
             hostHeightPx = hostHeightPx,
             bottomGestureExclusionPx = queueGestureBottomExclusionPxProvider(),
-        )
-        queueSwipeConsumed = false
+        ) && !panelOpenAtDragStart
     }
 
     fun onVerticalDrag(uptimeMillis: Long, position: Offset, dragAmount: Float, velocityTracker: VelocityTracker) {
         accumulatedDragY += dragAmount
         velocityTracker.addPosition(uptimeMillis, position)
         val queueDragThresholdPx = with(densityProvider()) { 4.dp.toPx() }
-        if (shouldOpenQueueSheetFromUpwardDrag(
+        if (!panelDragActive && shouldOpenQueueSheetFromUpwardDrag(
                 gestureEligibleAtStart = queueGestureEligibleAtStart,
-                queueSwipeAlreadyConsumed = queueSwipeConsumed,
+                queueSwipeAlreadyConsumed = false,
                 accumulatedDragY = accumulatedDragY,
                 activationThresholdPx = queueDragThresholdPx,
             )
         ) {
-            queueSwipeConsumed = true
-            onOpenQueueSheet()
+            panelOpenAtDragStart = false
+            panelDragActive = true
+            onPanelDragStart()
+            onBeginQueuePanelDrag()
         }
-        if (queueSwipeConsumed) return
+        if (panelDragActive) {
+            onPanelDragProgress(
+                playerPanelProgressForDrag(
+                    panelOpenAtStart = panelOpenAtDragStart,
+                    accumulatedDragY = accumulatedDragY,
+                    panelHeightPx = panelHeightPx,
+                )
+            )
+            return
+        }
 
         val frame = computePlayerSheetDragFrame(
             currentTranslationY = translationY.value,
@@ -244,14 +289,30 @@ internal class PlayerSheetVerticalDragGestureHandler(
     fun onDragEnd(velocityTracker: VelocityTracker) {
         dragSnapJob?.cancel()
         dragSnapJob = null
+        if (panelDragActive) {
+            val velocityY = velocityTracker.calculateVelocity().y
+            val panelProgress = playerPanelProgressForDrag(
+                panelOpenAtStart = panelOpenAtDragStart,
+                accumulatedDragY = accumulatedDragY,
+                panelHeightPx = panelHeightPx,
+            )
+            onPanelDragSettle(
+                shouldSettlePlayerPanelOpen(
+                    panelProgress = panelProgress,
+                    verticalVelocity = velocityY,
+                    progressThreshold = if (panelOpenAtDragStart) 0.72f else 0.35f,
+                    velocityThreshold = 150f,
+                )
+            )
+            resetGestureState()
+            return
+        }
         val expandedPlayerDraggedUpward =
             currentStateProvider() == PlayerSheetTargetState.EXPANDED &&
                 expansionFraction.value >= 0.99f &&
                 accumulatedDragY < 0f
-        if (queueSwipeConsumed || expandedPlayerDraggedUpward) {
-            accumulatedDragY = 0f
-            queueGestureEligibleAtStart = false
-            queueSwipeConsumed = false
+        if (expandedPlayerDraggedUpward) {
+            resetGestureState()
             return
         }
         val velocityY = velocityTracker.calculateVelocity().y
@@ -282,12 +343,18 @@ internal class PlayerSheetVerticalDragGestureHandler(
                 onCollapseSheetState()
             }
         }
-        accumulatedDragY = 0f
-        queueGestureEligibleAtStart = false
-        queueSwipeConsumed = false
+        resetGestureState()
     }
 
     fun onDragCancel(velocityTracker: VelocityTracker) = onDragEnd(velocityTracker)
+
+    private fun resetGestureState() {
+        accumulatedDragY = 0f
+        panelHeightPx = 1f
+        panelOpenAtDragStart = false
+        queueGestureEligibleAtStart = false
+        panelDragActive = false
+    }
 }
 
 internal fun Modifier.playerSheetVerticalDragGesture(

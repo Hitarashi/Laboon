@@ -1,16 +1,11 @@
 package org.shilpo.laboon.ui.screens.player
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -19,10 +14,9 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -30,9 +24,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,31 +34,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil3.compose.AsyncImage
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.playback.AudioPipelineDetails
 import org.shilpo.laboon.playback.OutputDeviceType
-import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
-import org.shilpo.laboon.ui.design.LiquidGlassSurface
 import org.shilpo.laboon.ui.design.MiniPlayerSpacing
-import org.shilpo.laboon.ui.design.painterResource
-import androidx.compose.ui.unit.lerp as lerpDp
-import androidx.compose.ui.util.lerp as lerpFloat
 
 @Composable
 internal fun AudioInfoDialog(
@@ -73,17 +61,12 @@ internal fun AudioInfoDialog(
     pipeline: AudioPipelineDetails?,
     track: HomeTrack? = null,
     durationMs: Long = 0L,
-    originBounds: Rect? = null,
-    backdropState: LiquidGlassBackdropState? = null,
-    isDark: Boolean = isSystemInDarkTheme(),
     modifier: Modifier = Modifier,
-    onProgress: ((Float) -> Unit)? = null,
 ) {
     val theme = org.shilpo.laboon.theme.LocalVisualTheme.current
     if (theme?.definition?.screens?.containsKey("audioInfo") == true) {
         if (!isOpen) return
         BackHandler(onBack = onDismiss)
-        LaunchedEffect(isOpen) { onProgress?.invoke(1f) }
         val details = pipeline ?: AudioPipelineDetails()
         org.shilpo.laboon.theme.ThemeRouteContent(
             theme = theme,
@@ -108,184 +91,74 @@ internal fun AudioInfoDialog(
                 )
             ),
             availableActions = setOf(org.shilpo.laboon.theme.contract.VisualThemeAction.BACK),
-            onAction = { _, _ -> onDismiss() }, modifier = modifier.fillMaxSize(), fallback = {},
+            onAction = { _, _ -> onDismiss() },
+            modifier = modifier.fillMaxSize(),
+            fallback = {},
         )
         return
     }
-    if (theme?.definition?.screens?.containsKey("audioInfo") != true) {
-        if (!isOpen) return
-        LaunchedEffect(isOpen) { onProgress?.invoke(1f) }
-        val details = pipeline ?: AudioPipelineDetails()
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = onDismiss,
-            title = { Text("Audio pipeline") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    track?.let { Text(it.title, style = MaterialTheme.typography.titleMedium) }
-                    Text("${details.trackCodec.orEmpty()} · ${details.bitDepth.orEmpty()} bit · ${details.sampleRateHz ?: 0} Hz")
-                    Text("${details.container.orEmpty()} · ${details.bitrateKbps ?: 0} kbps")
-                    Text("Decoder: ${details.decoderName.orEmpty()}")
-                    Text(details.outputEngine)
-                    Text(details.deviceName)
-                    Text("Output: ${details.outputSampleRateHz ?: 0} Hz · ${details.channelCount ?: 0} channels")
-                    Text("Latency: ${details.latencyMs ?: 0} ms")
-                }
-            },
-            confirmButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Close") } },
-        )
-        return
-    }
-    val animatable = remember { Animatable(0f) }
-    var dialogSize by remember { mutableStateOf<IntSize?>(null) }
-    var boxBounds by remember { mutableStateOf<Rect?>(null) }
+    if (!isOpen) return
 
-    LaunchedEffect(isOpen, dialogSize != null, boxBounds != null) {
-        if (isOpen) {
-            if (dialogSize != null && boxBounds != null) {
-                animatable.animateTo(
-                    targetValue = 1f,
-                    animationSpec = spring(
-                        dampingRatio = 0.82f,
-                        stiffness = 380f,
-                    ),
-                )
-            }
-        } else {
-            animatable.animateTo(
-                targetValue = 0f,
-                animationSpec = tween(
-                    durationMillis = 200,
-                    easing = FastOutSlowInEasing,
-                ),
-            )
-        }
-    }
+    val details = pipeline ?: AudioPipelineDetails()
+    val hasTrack = track != null
+    val headerShape = RoundedCornerShape(
+        topStart = 28.dp,
+        topEnd = 28.dp,
+        bottomStart = 12.dp,
+        bottomEnd = 12.dp,
+    )
+    val detailsShape = RoundedCornerShape(
+        topStart = if (hasTrack) 12.dp else 28.dp,
+        topEnd = if (hasTrack) 12.dp else 28.dp,
+        bottomStart = 28.dp,
+        bottomEnd = 28.dp,
+    )
+    var dialogBounds by remember { mutableStateOf<Rect?>(null) }
+    var rootCoordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
 
-    val progress = animatable.value
-
-    LaunchedEffect(progress) {
-        onProgress?.invoke(progress)
-    }
-
-    if (!isOpen && progress <= 0.001f) return
-
-    BackHandler(enabled = isOpen) {
-        onDismiss()
-    }
-
-    val density = LocalDensity.current
-    val startRadius = with(density) {
-        originBounds?.let { (it.height / 2f).toDp() } ?: 14.dp
-    }
-
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = onDismiss,
-            )
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .onGloballyPositioned { coordinates ->
-                boxBounds = coordinates.boundsInRoot()
-            },
-        contentAlignment = Alignment.Center,
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        val details = pipeline ?: AudioPipelineDetails()
-        val targetCenter = boxBounds?.center ?: originBounds?.center ?: Offset.Zero
-        val targetW = dialogSize?.width?.toFloat() ?: with(density) { 380.dp.toPx() }
-        val targetH = dialogSize?.height?.toFloat() ?: with(density) { 500.dp.toPx() }
-
-        val scaleX: Float
-        val scaleY: Float
-        val transX: Float
-        val transY: Float
-
-        if (originBounds != null && boxBounds != null && dialogSize != null) {
-            val originCenter = originBounds.center
-            val originW = originBounds.width
-            val originH = originBounds.height
-
-            scaleX = lerpFloat(originW / targetW, 1f, progress)
-            scaleY = lerpFloat(originH / targetH, 1f, progress)
-            transX = lerpFloat(originCenter.x - targetCenter.x, 0f, progress)
-            transY = lerpFloat(originCenter.y - targetCenter.y, 0f, progress)
-        } else {
-            scaleX = lerpFloat(0.70f, 1f, progress)
-            scaleY = lerpFloat(0.70f, 1f, progress)
-            transX = 0f
-            transY = lerpFloat(with(density) { 90.dp.toPx() }, 0f, progress)
-        }
-
-        val contentAlpha = ((progress - 0.20f) / 0.80f).coerceIn(0f, 1f)
-        val dialogAlpha = if (originBounds != null) {
-            1f
-        } else {
-            ((progress - 0.06f) / 0.18f).coerceIn(0f, 1f)
-        }
-
-        val hasTrack = track != null
-        val headerRadius = lerpDp(startRadius, 28.dp, progress)
-        val segmentRadius = lerpDp(startRadius, 12.dp, progress)
-        val detailsRadius = lerpDp(startRadius, 35.dp, progress)
-        val headerShape = RoundedCornerShape(
-            topStart = headerRadius,
-            topEnd = headerRadius,
-            bottomStart = segmentRadius,
-            bottomEnd = segmentRadius,
-        )
-        val detailsShape = RoundedCornerShape(
-            topStart = if (hasTrack) segmentRadius else detailsRadius,
-            topEnd = if (hasTrack) segmentRadius else detailsRadius,
-            bottomStart = detailsRadius,
-            bottomEnd = detailsRadius,
-        )
-
-        Column(
+        BoxWithConstraints(
             modifier = Modifier
-                .padding(horizontal = 20.dp, vertical = 24.dp)
-                .widthIn(max = 420.dp)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .onSizeChanged { size ->
-                    dialogSize = size
+                .fillMaxSize()
+                .onGloballyPositioned { coordinates ->
+                    rootCoordinates = coordinates
                 }
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = {},
-                )
-                .graphicsLayer {
-                    this.scaleX = scaleX
-                    this.scaleY = scaleY
-                    this.translationX = transX
-                    this.translationY = transY
-                    this.alpha = dialogAlpha
+                .pointerInput(dialogBounds, rootCoordinates) {
+                    detectTapGestures { tapPosition ->
+                        val positionInRoot = rootCoordinates?.localToRoot(tapPosition)
+                        if (positionInRoot != null && dialogBounds?.contains(positionInRoot) != true) {
+                            onDismiss()
+                        }
+                    }
                 },
-            verticalArrangement = Arrangement.spacedBy(MiniPlayerSpacing),
+            contentAlignment = Alignment.Center,
         ) {
-            if (hasTrack) {
-                LiquidGlassSurface(
-                    modifier = Modifier.fillMaxWidth(),
-                    backdropState = backdropState,
-                    shape = headerShape,
-                    cornerRadius = headerRadius,
-                    topRadius = headerRadius,
-                    bottomRadius = segmentRadius,
-                    tintColor = MaterialTheme.colorScheme.surfaceContainer,
-                    tintAlpha = 0.85f,
-                    shadowElevation = lerpDp(2.dp, 6.dp, progress),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 18.dp, vertical = 14.dp)
-                            .graphicsLayer { alpha = contentAlpha },
+            Column(
+                modifier = Modifier
+                    .padding(horizontal = 20.dp, vertical = 24.dp)
+                    .widthIn(max = 420.dp)
+                    .fillMaxWidth()
+                    .heightIn(max = maxHeight * 0.9f)
+                    .onGloballyPositioned { coordinates ->
+                        dialogBounds = coordinates.boundsInRoot()
+                    }
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(MiniPlayerSpacing),
+            ) {
+                if (track != null) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = headerShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        shadowElevation = 1.dp,
                     ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 18.dp, vertical = 14.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(14.dp),
                         ) {
@@ -303,18 +176,13 @@ internal fun AudioInfoDialog(
                                     modifier = Modifier
                                         .size(52.dp)
                                         .clip(RoundedCornerShape(12.dp))
-                                        .background(
-                                            if (isDark) Color.White.copy(alpha = 0.08f)
-                                            else Color.Black.copy(alpha = 0.05f)
-                                        ),
+                                        .background(MaterialTheme.colorScheme.surfaceContainerHighest),
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     Icon(
                                         painter = painterResource(R.drawable.ic_song_wave),
                                         contentDescription = null,
-                                        tint = if (isDark) Color.White.copy(alpha = 0.6f) else Color.Black.copy(
-                                            alpha = 0.6f
-                                        ),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(24.dp),
                                     )
                                 }
@@ -328,7 +196,7 @@ internal fun AudioInfoDialog(
                                     text = track.title,
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (isDark) Color.White else Color(0xFF191C1E),
+                                    color = MaterialTheme.colorScheme.onSurface,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -342,9 +210,7 @@ internal fun AudioInfoDialog(
                                 Text(
                                     text = subtitle,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = if (isDark) Color.White.copy(alpha = 0.70f) else Color(
-                                        0xFF43474E
-                                    ),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                 )
@@ -352,120 +218,68 @@ internal fun AudioInfoDialog(
                                     Text(
                                         text = formatDuration(durationMs),
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = if (isDark) Color.White.copy(alpha = 0.50f) else Color(
-                                            0xFF5A5D63
-                                        ),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            LiquidGlassSurface(
-                modifier = Modifier.fillMaxWidth(),
-                backdropState = backdropState,
-                shape = detailsShape,
-                cornerRadius = detailsRadius,
-                topRadius = if (hasTrack) segmentRadius else detailsRadius,
-                bottomRadius = detailsRadius,
-                tintColor = MaterialTheme.colorScheme.surfaceContainer,
-                tintAlpha = 0.85f,
-                shadowElevation = lerpDp(2.dp, 6.dp, progress),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 20.dp)
-                        .graphicsLayer { alpha = contentAlpha },
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = detailsShape,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shadowElevation = 1.dp,
                 ) {
                     Column(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 20.dp),
                     ) {
-                        val isPipelineLocked =
-                            details.isLocked && (track == null || details.trackId == null || details.trackId == track.id)
-                        val rawCodec =
-                            details.trackCodec?.takeIf { it != "AUDIO" && it != "HIRES" && it != "HI-RES" }
-                                ?: when {
-                                    track?.codec?.contains(
-                                        "alac",
-                                        ignoreCase = true
-                                    ) == true -> "ALAC"
-
-                                    track?.codec?.contains("flac", ignoreCase = true) == true ||
-                                            track?.codec?.contains(
-                                                "lossless",
-                                                ignoreCase = true
-                                            ) == true ||
-                                            track?.codec?.contains(
-                                                "hires",
-                                                ignoreCase = true
-                                            ) == true -> "FLAC"
-
-                                    track?.codec?.contains(
-                                        "aac",
-                                        ignoreCase = true
-                                    ) == true || track?.codec?.contains(
-                                        "mp4a",
-                                        ignoreCase = true
-                                    ) == true -> "AAC"
-
-                                    track?.codec?.contains(
-                                        "opus",
-                                        ignoreCase = true
-                                    ) == true -> "OPUS"
-
-                                    track?.codec?.contains(
-                                        "mp3",
-                                        ignoreCase = true
-                                    ) == true -> "MP3"
-
-                                    else -> "FLAC"
-                                }
+                        val isPipelineLocked = details.isLocked &&
+                                (track == null || details.trackId == null || details.trackId == track.id)
+                        val rawCodec = details.trackCodec
+                            ?.takeIf { it != "AUDIO" && it != "HIRES" && it != "HI-RES" }
+                            ?: when {
+                                track?.codec?.contains("alac", ignoreCase = true) == true -> "ALAC"
+                                track?.codec?.contains("flac", ignoreCase = true) == true ||
+                                        track?.codec?.contains("lossless", ignoreCase = true) == true ||
+                                        track?.codec?.contains("hires", ignoreCase = true) == true -> "FLAC"
+                                track?.codec?.contains("aac", ignoreCase = true) == true ||
+                                        track?.codec?.contains("mp4a", ignoreCase = true) == true -> "AAC"
+                                track?.codec?.contains("opus", ignoreCase = true) == true -> "OPUS"
+                                track?.codec?.contains("mp3", ignoreCase = true) == true -> "MP3"
+                                else -> "FLAC"
+                            }
 
                         val effectiveBitDepth = details.bitDepth?.takeIf { it != "Float32" }
-                            ?: if (details.decodedFormat?.contains(
-                                    "24",
-                                    ignoreCase = true
-                                ) == true
-                            ) "24-bit"
-                            else if (details.decodedFormat?.contains(
-                                    "Float",
-                                    ignoreCase = true
-                                ) == true
-                            ) "24-bit"
-                            else "16-bit"
+                            ?: if (details.decodedFormat?.contains("24", ignoreCase = true) == true ||
+                                details.decodedFormat?.contains("Float", ignoreCase = true) == true
+                            ) "24-bit" else "16-bit"
                         val effectiveSr = details.sampleRateHz ?: details.inputSampleRateHz ?: 44100
                         val effectiveKbps = details.bitrateKbps
-                            ?: ((effectiveSr * (if (effectiveBitDepth.contains("24")) 24 else 16) * (details.channelCount
-                                ?: 2) * 0.62) / 1000).toInt()
+                            ?: ((effectiveSr * (if (effectiveBitDepth.contains("24")) 24 else 16) *
+                                    (details.channelCount ?: 2) * 0.62) / 1000).toInt()
 
                         val trackTitle = if (isPipelineLocked) {
-                            buildString {
-                                append(rawCodec)
-                                append(" • ")
-                                append(effectiveBitDepth)
-                                val khz = effectiveSr / 1000f
-                                val formatted =
-                                    if (khz % 1.0f == 0.0f) "${khz.toInt()} kHz" else "%.1f kHz".format(
-                                        khz
-                                    )
-                                append(" • ")
-                                append(formatted)
-                                append(" • ")
-                                append("$effectiveKbps kbps")
+                            val khz = effectiveSr / 1000f
+                            val formattedRate = if (khz % 1f == 0f) {
+                                "${khz.toInt()} kHz"
+                            } else {
+                                "%.1f kHz".format(khz)
                             }
+                            "$rawCodec • $effectiveBitDepth • $formattedRate • $effectiveKbps kbps"
                         } else {
                             "$rawCodec • Analyzing stream..."
                         }
                         val trackSubtitle = buildString {
-                            val ch = details.channelCount ?: 2
-                            append(if (ch > 2) "$ch Channels" else "2 Channels")
-                            val cont =
-                                details.container?.takeIf { it != "AUDIO" && it != "HIRES" && it != "HI-RES" }
-                                    ?: rawCodec
-                            append(" • $cont")
+                            val channels = details.channelCount ?: 2
+                            append(if (channels > 2) "$channels Channels" else "2 Channels")
+                            val container = details.container
+                                ?.takeIf { it !in setOf("AUDIO", "HIRES", "HI-RES") }
+                                ?: rawCodec
+                            append(" • $container")
                         }
                         PipelineStageItem(
                             iconRes = R.drawable.ic_song_wave,
@@ -473,44 +287,44 @@ internal fun AudioInfoDialog(
                             primaryLine = trackTitle,
                             secondaryLine = trackSubtitle,
                             isLast = false,
-                            isDark = isDark,
                         )
 
                         PipelineStageItem(
                             iconRes = R.drawable.ic_pipeline_decoder,
                             title = "Decoder",
-                            primaryLine = if (isPipelineLocked) (details.decoderName
-                                ?: "MediaCodec Decoder") else "Initializing decoder...",
-                            secondaryLine = if (isPipelineLocked) (details.decodedFormat
-                                ?: "PCM 16-bit") else "Waiting for audio sink...",
+                            primaryLine = if (isPipelineLocked) {
+                                details.decoderName ?: "MediaCodec Decoder"
+                            } else {
+                                "Initializing decoder..."
+                            },
+                            secondaryLine = if (isPipelineLocked) {
+                                details.decodedFormat ?: "PCM 16-bit"
+                            } else {
+                                "Waiting for audio sink..."
+                            },
                             isLast = false,
-                            isDark = isDark,
                         )
 
-                        val inSr = details.inputSampleRateHz ?: 44100
-                        val outSr = details.outputSampleRateHz ?: 48000
-                        val inKhz =
-                            if ((inSr / 1000f) % 1.0f == 0f) "${inSr / 1000} kHz" else "%.1f kHz".format(
-                                inSr / 1000f
-                            )
-                        val outKhz =
-                            if ((outSr / 1000f) % 1.0f == 0f) "${outSr / 1000} kHz" else "%.1f kHz".format(
-                                outSr / 1000f
-                            )
-                        val resampleText = if (inSr == outSr) {
-                            "Bit-perfect $inKhz"
+                        val inputRate = details.inputSampleRateHz ?: 44100
+                        val outputRate = details.outputSampleRateHz ?: 48000
+                        val inputKhz = formatSampleRate(inputRate)
+                        val outputKhz = formatSampleRate(outputRate)
+                        val resampleText = if (inputRate == outputRate) {
+                            "Bit-perfect $inputKhz"
                         } else {
-                            "$inKhz → $outKhz"
+                            "$inputKhz → $outputKhz"
                         }
-
                         PipelineStageItem(
                             iconRes = R.drawable.ic_pipeline_resampler,
                             title = "Resampler & Processing",
-                            primaryLine = if (isPipelineLocked) resampleText else "Configuring audio pipeline...",
+                            primaryLine = if (isPipelineLocked) {
+                                resampleText
+                            } else {
+                                "Configuring audio pipeline..."
+                            },
                             secondaryLine = details.processingMode
                                 ?: "DefaultAudioSink • Float32 Output",
                             isLast = false,
-                            isDark = isDark,
                         )
 
                         val bufferText = if (isPipelineLocked) {
@@ -524,7 +338,6 @@ internal fun AudioInfoDialog(
                             primaryLine = details.outputEngine,
                             secondaryLine = bufferText,
                             isLast = false,
-                            isDark = isDark,
                         )
 
                         val deviceIconRes = when (details.deviceType) {
@@ -543,7 +356,6 @@ internal fun AudioInfoDialog(
                             primaryLine = details.deviceName,
                             secondaryLine = details.deviceProtocol ?: "Default Audio Device",
                             isLast = true,
-                            isDark = isDark,
                         )
                     }
                 }
@@ -564,6 +376,11 @@ private fun formatDuration(ms: Long): String {
     }
 }
 
+private fun formatSampleRate(sampleRateHz: Int): String {
+    val khz = sampleRateHz / 1000f
+    return if (khz % 1f == 0f) "${khz.toInt()} kHz" else "%.1f kHz".format(khz)
+}
+
 @Composable
 private fun PipelineStageItem(
     iconRes: Int,
@@ -572,9 +389,8 @@ private fun PipelineStageItem(
     secondaryLine: String,
     isLast: Boolean = false,
     modifier: Modifier = Modifier,
-    isDark: Boolean,
 ) {
-    val iconColor = if (isDark) Color.White else Color(0xFF191C1E)
+    val colors = MaterialTheme.colorScheme
 
     Row(
         modifier = modifier
@@ -595,7 +411,7 @@ private fun PipelineStageItem(
                 Icon(
                     painter = painterResource(iconRes),
                     contentDescription = title,
-                    tint = iconColor,
+                    tint = colors.onSurface,
                     modifier = Modifier.size(20.dp),
                 )
             }
@@ -605,7 +421,7 @@ private fun PipelineStageItem(
                     modifier = Modifier
                         .width(2.dp)
                         .weight(1f)
-                        .background(iconColor, RoundedCornerShape(1.dp))
+                        .background(colors.outlineVariant, RoundedCornerShape(1.dp))
                 )
                 Spacer(modifier = Modifier.height(3.dp))
             }
@@ -620,7 +436,7 @@ private fun PipelineStageItem(
                 text = title,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
-                color = iconColor,
+                color = colors.onSurface,
                 letterSpacing = (-0.1).sp,
             )
             Spacer(modifier = Modifier.height(2.dp))
@@ -628,13 +444,12 @@ private fun PipelineStageItem(
                 text = primaryLine,
                 style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.Medium,
-                color = if (isDark) Color.White.copy(alpha = 0.85f) else Color(0xFF2C2F33),
+                color = colors.onSurface,
             )
             Text(
                 text = secondaryLine,
                 style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Normal,
-                color = if (isDark) Color.White.copy(alpha = 0.55f) else Color(0xFF5A5D63),
+                color = colors.onSurfaceVariant,
             )
         }
     }

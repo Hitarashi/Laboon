@@ -17,9 +17,9 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
@@ -84,6 +84,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontWeight
@@ -102,6 +103,7 @@ import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.lyrics.LyricsLine
 import org.shilpo.laboon.playback.SpectrumFrame
+import org.shilpo.laboon.theme.renderer.materialSymbolPainterResource
 import org.shilpo.laboon.ui.design.painterResource
 import org.shilpo.laboon.ui.design.theme.GoogleSansFlex
 import kotlin.math.abs
@@ -114,7 +116,7 @@ private const val LYRIC_VISUAL_TUNING_OFFSET_MS = 150L
 private const val MANUAL_SCROLL_TIMEOUT_MS = 3000L
 private const val MANUAL_SCROLL_DEBOUNCE_MS = 50L
 private const val LYRIC_FOCUS_ANCHOR_RATIO = 0.50f
-private const val LYRIC_LINE_SYNC_TOP_ANCHOR_RATIO = 0.50f
+private val LYRIC_FOCUS_OFFSET = 32.dp
 private const val LYRIC_FOCUS_MIN_SCROLL_PX = 6
 private const val LYRIC_FOCUS_ANIMATED_DISTANCE = 12
 private const val SMOOTH_PLAYBACK_MAX_FORWARD_DRIFT_MS = 80L
@@ -132,6 +134,8 @@ data class LyricsDisplayOptions(
     val showTranslation: Boolean = false,
     val translatedLines: List<LyricsLine>? = null,
     val showShareDialog: Boolean = false,
+    val alignment: String = "center",
+    val keepScreenOn: Boolean = true,
 )
 
 private fun isChinese(text: String): Boolean = text.any { it.code in 0x4E00..0x9FFF }
@@ -209,6 +213,7 @@ private suspend fun LazyListState.scrollLyricIntoFocus(
     force: Boolean = false,
     alignByItemCenter: Boolean = true,
     isSeek: Boolean = false,
+    focusOffsetPx: Float = 0f,
 ) {
     val itemCount = layoutInfo.totalItemsCount
     if (itemCount == 0) return
@@ -239,7 +244,8 @@ private suspend fun LazyListState.scrollLyricIntoFocus(
     if (viewportHeight <= 0) return
 
     val itemFocusPoint = itemInfo.offset + itemInfo.size / 2
-    val targetFocusPoint = viewportStart + (viewportHeight * 0.50f).roundToInt()
+    val targetFocusPoint = viewportStart +
+        (viewportHeight * LYRIC_FOCUS_ANCHOR_RATIO).roundToInt() - focusOffsetPx.roundToInt()
     val scrollDelta = itemFocusPoint - targetFocusPoint
     if (abs(scrollDelta) > LYRIC_FOCUS_MIN_SCROLL_PX) {
         if (isSeek) {
@@ -269,18 +275,29 @@ fun LyricsScreen(
     durationMs: Long,
     lyricsLines: List<LyricsLine>,
     lyricsLoading: Boolean = false,
+    lyricsFailed: Boolean = false,
     onSeek: (Float) -> Unit,
     modifier: Modifier = Modifier,
     lyricsFractionProvider: () -> Float = { 1f },
     lazyListState: LazyListState = rememberLazyListState(),
     isPlaying: Boolean = true,
+    showSyncedLyrics: Boolean = true,
     displayOptions: LyricsDisplayOptions = LyricsDisplayOptions(),
     onDismissShareDialog: () -> Unit = {},
+    onRetryLyrics: (() -> Unit)? = null,
     spectrum: SpectrumFrame = SpectrumFrame(),
 ) {
+    val view = LocalView.current
+    DisposableEffect(view, displayOptions.keepScreenOn) {
+        val wasKeepingScreenOn = view.keepScreenOn
+        view.keepScreenOn = displayOptions.keepScreenOn
+        onDispose { view.keepScreenOn = wasKeepingScreenOn }
+    }
+
     val theme = org.shilpo.laboon.theme.LocalVisualTheme.current
     if (theme?.definition?.screens?.containsKey("lyrics") == true) {
         var shareVisible by remember { mutableStateOf(false) }
+        val lyricsNotFound = lyricsLines.isEmpty() && !lyricsLoading && !lyricsFailed
         org.shilpo.laboon.theme.ThemeRouteContent(
             theme = theme, screenName = "lyrics", modifier = modifier.fillMaxSize(),
             presentation = org.shilpo.laboon.theme.renderer.VisualThemePresentation(
@@ -289,6 +306,12 @@ fun LyricsScreen(
                     "track.artist" to track.artist,
                     "track.artworkUrl" to track.artworkUrl.orEmpty(),
                     "lyrics.loading" to lyricsLoading.toString(),
+                    "lyrics.failed" to lyricsFailed.toString(),
+                    "lyrics.notFound" to lyricsNotFound.toString(),
+                    "lyrics.hasLines" to lyricsLines.isNotEmpty().toString(),
+                    "lyrics.synced" to usesSynchronizedLyrics(lyricsLines, showSyncedLyrics).toString(),
+                    "lyrics.alignment" to displayOptions.alignment,
+                    "lyrics.keepScreenOn" to displayOptions.keepScreenOn.toString(),
                     "player.progress" to (if (durationMs > 0) currentPositionMs.toFloat() / durationMs else 0f).toString()
                 ),
                 collections = mapOf("lyrics.lines" to lyricsLines.mapIndexed { index, line ->
@@ -300,10 +323,13 @@ fun LyricsScreen(
                     )
                 }),
             ),
-            availableActions = setOf(
-                org.shilpo.laboon.theme.contract.VisualThemeAction.SEEK,
-                org.shilpo.laboon.theme.contract.VisualThemeAction.OPEN_LYRICS_SHARE
-            ),
+            availableActions = buildSet {
+                add(org.shilpo.laboon.theme.contract.VisualThemeAction.SEEK)
+                add(org.shilpo.laboon.theme.contract.VisualThemeAction.OPEN_LYRICS_SHARE)
+                if (lyricsFailed && onRetryLyrics != null) {
+                    add(org.shilpo.laboon.theme.contract.VisualThemeAction.RETRY)
+                }
+            },
             onAction = { action, parameters ->
                 when (action) {
                     org.shilpo.laboon.theme.contract.VisualThemeAction.SEEK -> parameters["lyrics.index"]?.toIntOrNull()
@@ -319,6 +345,8 @@ fun LyricsScreen(
                     org.shilpo.laboon.theme.contract.VisualThemeAction.OPEN_LYRICS_SHARE -> shareVisible =
                         true
 
+                    org.shilpo.laboon.theme.contract.VisualThemeAction.RETRY -> onRetryLyrics?.invoke()
+
                     else -> Unit
                 }
             },
@@ -330,30 +358,12 @@ fun LyricsScreen(
         )
         return
     }
-    if (theme?.definition?.screens?.containsKey("lyrics") != true) {
-        StockLyricsContent(
-            track = track,
-            lines = lyricsLines,
-            loading = lyricsLoading,
-            positionMs = currentPositionMs,
-            durationMs = durationMs,
-            onSeek = onSeek,
-            displayOptions = displayOptions,
-            onDismissShare = onDismissShareDialog,
-            modifier = modifier
-        )
-        return
-    }
     val coroutineScope = rememberCoroutineScope()
-    val hasTiming = remember(lyricsLines) { lyricsLines.hasTiming() }
-    val hasWordTimings = remember(lyricsLines) { lyricsLines.hasWordTimings() }
-    val view = LocalView.current
-
-    DisposableEffect(view) {
-        val wasKeepingScreenOn = view.keepScreenOn
-        view.keepScreenOn = true
-        onDispose { view.keepScreenOn = wasKeepingScreenOn }
+    val lyricFocusOffsetPx = with(LocalDensity.current) { LYRIC_FOCUS_OFFSET.toPx() }
+    val hasTiming = remember(lyricsLines, showSyncedLyrics) {
+        usesSynchronizedLyrics(lyricsLines, showSyncedLyrics)
     }
+    val hasWordTimings = remember(lyricsLines) { lyricsLines.hasWordTimings() }
 
     Box(
         modifier = modifier.fillMaxSize(),
@@ -364,11 +374,14 @@ fun LyricsScreen(
             durationMs = durationMs,
             lyricsLines = lyricsLines,
             lyricsLoading = lyricsLoading,
+            lyricsFailed = lyricsFailed,
             lyricsFractionProvider = lyricsFractionProvider,
             lazyListState = lazyListState,
             isPlaying = isPlaying,
+            showSyncedLyrics = showSyncedLyrics,
             displayOptions = displayOptions,
             onDismissShareDialog = onDismissShareDialog,
+            onRetryLyrics = onRetryLyrics,
             spectrum = spectrum,
             onLineClick = { line, index ->
                 if (hasTiming && durationMs > 0L) {
@@ -381,6 +394,7 @@ fun LyricsScreen(
                             force = true,
                             alignByItemCenter = hasWordTimings,
                             isSeek = true,
+                            focusOffsetPx = lyricFocusOffsetPx,
                         )
                     }
                 }
@@ -399,18 +413,24 @@ fun LyricsContentCard(
     durationMs: Long,
     lyricsLines: List<LyricsLine>,
     lyricsLoading: Boolean,
+    lyricsFailed: Boolean = false,
     lyricsFractionProvider: () -> Float,
     lazyListState: LazyListState,
     onLineClick: (LyricsLine, Int) -> Unit,
     onSeek: (Float) -> Unit,
     modifier: Modifier = Modifier,
     isPlaying: Boolean = true,
+    showSyncedLyrics: Boolean = true,
     displayOptions: LyricsDisplayOptions = LyricsDisplayOptions(),
     onDismissShareDialog: () -> Unit = {},
+    onRetryLyrics: (() -> Unit)? = null,
     spectrum: SpectrumFrame = SpectrumFrame(),
 ) {
     val coroutineScope = rememberCoroutineScope()
-    val hasTiming = remember(lyricsLines) { lyricsLines.hasTiming() }
+    val lyricFocusOffsetPx = with(LocalDensity.current) { LYRIC_FOCUS_OFFSET.toPx() }
+    val hasTiming = remember(lyricsLines, showSyncedLyrics) {
+        usesSynchronizedLyrics(lyricsLines, showSyncedLyrics)
+    }
     val hasWordTimings = remember(lyricsLines) { lyricsLines.hasWordTimings() }
     val leadMs = if (hasWordTimings) TTML_LEAD_MS else LRC_LEAD_MS
 
@@ -660,23 +680,23 @@ fun LyricsContentCard(
                 force = false,
                 alignByItemCenter = hasWordTimings,
                 isSeek = false,
+                focusOffsetPx = lyricFocusOffsetPx,
             )
         }
     }
 
     val primaryTextColor = MaterialTheme.colorScheme.onSurface
     val secondaryTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val lyricsContainerColor = MaterialTheme.colorScheme.primaryContainer
     val lyricsTextStyle = LocalTextStyle.current.copy(
         fontFamily = GoogleSansFlex,
         fontFeatureSettings = LYRICS_FONT_FEATURE_SETTINGS,
     )
 
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val sheetMaxHeight = maxHeight
-
+    Box(modifier = modifier.fillMaxSize()) {
         if (lyricsLines.isEmpty()) {
             if (lyricsLoading) {
-                Box(
+                    Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -694,26 +714,31 @@ fun LyricsContentCard(
                         verticalArrangement = Arrangement.Center,
                         modifier = Modifier.padding(horizontal = 32.dp),
                     ) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_player_lyrics),
-                            contentDescription = null,
-                            tint = primaryTextColor.copy(alpha = 0.40f),
-                            modifier = Modifier.size(56.dp),
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
                         Text(
-                            text = "No Lyrics Available",
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold,
+                            text = if (lyricsFailed) "Failed to get lyrics" else "Lyrics not found",
+                            style = MaterialTheme.typography.titleMedium,
                             color = primaryTextColor,
+                            textAlign = TextAlign.Center,
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Enjoy the melody for ${track.title}",
-                            fontSize = 14.sp,
+                            text = "Enjoy the melody of ${track.title}",
+                            style = MaterialTheme.typography.bodyLarge,
                             color = secondaryTextColor,
                             textAlign = TextAlign.Center,
                         )
+                        if (lyricsFailed && onRetryLyrics != null) {
+                            Spacer(modifier = Modifier.height(16.dp))
+                            FilledTonalButton(onClick = onRetryLyrics) {
+                                Icon(
+                                    painter = materialSymbolPainterResource("refresh"),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Retry")
+                            }
+                        }
                     }
                 }
             }
@@ -722,15 +747,14 @@ fun LyricsContentCard(
                 LazyColumn(
                     state = lazyListState,
                     contentPadding = PaddingValues(
-                        top = sheetMaxHeight * 0.5f - 24.dp,
-                        bottom = sheetMaxHeight * 0.5f - 24.dp,
+                        top = 130.dp,
+                        bottom = if (hasTiming) 100.dp else 24.dp,
                         start = 24.dp,
                         end = 24.dp,
                     ),
                     verticalArrangement = Arrangement.Top,
                     modifier = Modifier
                         .fillMaxSize()
-                        .smoothFadingEdge(vertical = 52.dp)
                         .nestedScroll(nestedScrollConnection),
                 ) {
                     itemsIndexed(
@@ -848,6 +872,7 @@ fun LyricsContentCard(
                                 secondaryTextColor = secondaryTextColor,
                                 showRomanization = displayOptions.showRomanization,
                                 showTranslation = displayOptions.showTranslation,
+                                lyricsAlignment = displayOptions.alignment,
                                 singerLaneMap = singerLaneMap,
                                 modifier = lineModifier,
                                 spectrum = spectrum,
@@ -860,6 +885,30 @@ fun LyricsContentCard(
                         }
                     }
                 }
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .fillMaxWidth()
+                        .height(130.dp)
+                        .background(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(lyricsContainerColor, Color.Transparent),
+                            ),
+                        ),
+                )
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .height(80.dp)
+                        .background(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(Color.Transparent, lyricsContainerColor),
+                            ),
+                        ),
+                )
 
                 Box(
                     modifier = Modifier
@@ -882,6 +931,7 @@ fun LyricsContentCard(
                                         force = true,
                                         alignByItemCenter = hasWordTimings,
                                         isSeek = true,
+                                        focusOffsetPx = lyricFocusOffsetPx,
                                     )
                                 }
                             },
@@ -1073,6 +1123,7 @@ private fun LyricsLineItem(
     secondaryTextColor: Color,
     showRomanization: Boolean = true,
     showTranslation: Boolean = false,
+    lyricsAlignment: String = "center",
     singerLaneMap: Map<String, LyricSingerLane> = emptyMap(),
     modifier: Modifier = Modifier,
     spectrum: SpectrumFrame = SpectrumFrame(),
@@ -1080,15 +1131,26 @@ private fun LyricsLineItem(
     onLineClick: (LyricsLine, Int) -> Unit = { _, _ -> },
 ) {
     val lane = resolveLane(line.singer, line.agent, singerLaneMap)
-    val textAlign = when (lane) {
+    val laneTextAlign = when (lane) {
         LyricSingerLane.Left -> TextAlign.Start
         LyricSingerLane.Right -> TextAlign.End
         LyricSingerLane.Center -> TextAlign.Center
     }
-    val horizontalAlignment = when (lane) {
-        LyricSingerLane.Left -> Alignment.Start
-        LyricSingerLane.Right -> Alignment.End
-        LyricSingerLane.Center -> Alignment.CenterHorizontally
+    val hasSeparateSingerLanes = singerLaneMap.values.any { it == LyricSingerLane.Left } &&
+        singerLaneMap.values.any { it == LyricSingerLane.Right }
+    val textAlign = if (hasSeparateSingerLanes) {
+        laneTextAlign
+    } else {
+        when (lyricsAlignment) {
+            "left" -> TextAlign.Start
+            "right" -> TextAlign.End
+            else -> TextAlign.Center
+        }
+    }
+    val horizontalAlignment = when (textAlign) {
+        TextAlign.Start -> Alignment.Start
+        TextAlign.End -> Alignment.End
+        else -> Alignment.CenterHorizontally
     }
 
     val lineEndMs = if (line.endMs > line.startMs) {
@@ -1852,7 +1914,7 @@ internal fun LyricsControlsRow(
                                 Icon(
                                     painter = painterResource(id = R.drawable.ic_stepper_minus),
                                     contentDescription = "Decrease lyric timing offset by 0.1 seconds",
-                                    modifier = Modifier.size(16.dp),
+                                    modifier = Modifier.size(24.dp),
                                 )
                             }
                             Text(
@@ -1870,7 +1932,7 @@ internal fun LyricsControlsRow(
                                 Icon(
                                     painter = painterResource(id = R.drawable.ic_stepper_plus),
                                     contentDescription = "Increase lyric timing offset by 0.1 seconds",
-                                    modifier = Modifier.size(16.dp),
+                                    modifier = Modifier.size(24.dp),
                                 )
                             }
                         }
@@ -1912,7 +1974,7 @@ internal fun LyricsControlsRow(
                     Icon(
                         painter = painterResource(id = R.drawable.ic_lyrics_romanization),
                         contentDescription = "Romanization",
-                        modifier = Modifier.size(18.dp),
+                        modifier = Modifier.size(24.dp),
                     )
                 }
             },
@@ -1950,7 +2012,7 @@ internal fun LyricsControlsRow(
                     Icon(
                         painter = painterResource(id = R.drawable.ic_lyrics_translation),
                         contentDescription = "Translation",
-                        modifier = Modifier.size(18.dp),
+                        modifier = Modifier.size(24.dp),
                     )
                 }
             },
@@ -1980,7 +2042,7 @@ internal fun LyricsControlsRow(
                     Icon(
                         painter = painterResource(id = R.drawable.ic_send),
                         contentDescription = null,
-                        modifier = Modifier.size(15.dp),
+                        modifier = Modifier.size(24.dp),
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text("Share", style = MaterialTheme.typography.labelMedium, maxLines = 1)
@@ -2014,6 +2076,11 @@ private fun List<LyricsLine>.hasTiming(): Boolean =
         line.startMs > 0L || line.endMs > 0L ||
                 (line.words + line.backgroundWords).any { word -> word.startMs > 0L }
     }
+
+internal fun usesSynchronizedLyrics(
+    lines: List<LyricsLine>,
+    showSyncedLyrics: Boolean,
+): Boolean = showSyncedLyrics && lines.hasTiming()
 
 private fun List<LyricsLine>.hasWordTimings(): Boolean =
     any { line -> line.words.isNotEmpty() || line.backgroundWords.isNotEmpty() }

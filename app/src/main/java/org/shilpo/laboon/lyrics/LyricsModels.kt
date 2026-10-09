@@ -45,9 +45,15 @@ data class LyricsResult(
     val lines: List<LyricsLine>,
 )
 
+sealed interface LyricsLookupResult {
+    data class Found(val lyrics: LyricsResult) : LyricsLookupResult
+    data object NotFound : LyricsLookupResult
+    data object Failed : LyricsLookupResult
+}
+
 enum class LyricsFormat { Plain, Lrc, Elrc }
 enum class LyricsSyncLevel { Word, Line, Plain }
 
 interface LyricsRepository {
-    suspend fun lookup(track: LyricsLookup): LyricsResult
+    suspend fun lookup(track: LyricsLookup): LyricsLookupResult
 }

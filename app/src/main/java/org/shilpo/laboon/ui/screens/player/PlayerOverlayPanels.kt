@@ -77,6 +77,7 @@ internal data class PlayerOverlayState(
     val discoveryStatus: DiscoveryStatus = DiscoveryStatus.IDLE,
     val lyricsLines: List<LyricsLine>,
     val lyricsLoading: Boolean,
+    val lyricsFailed: Boolean = false,
     val spectrum: SpectrumFrame = SpectrumFrame(),
 )
 
@@ -96,6 +97,7 @@ internal data class PlayerOverlayActions(
     val onMoveUpNext: (Int, Int) -> Unit,
     val onClearUpcoming: () -> Unit,
     val onRetryDiscovery: () -> Unit,
+    val onRetryLyrics: () -> Unit,
 )
 
 @Composable
@@ -266,6 +268,7 @@ internal fun PlayerOverlayPanels(
                                 durationMs = state.durationMs,
                                 lyricsLines = state.lyricsLines,
                                 lyricsLoading = state.lyricsLoading,
+                                lyricsFailed = state.lyricsFailed,
                                 onSeek = actions.onSeek,
                                 lyricsFractionProvider = panelFractionProvider,
                                 lazyListState = lyricsListState,
@@ -278,6 +281,7 @@ internal fun PlayerOverlayPanels(
                                     showShareDialog = showShareDialog,
                                 ),
                                 onDismissShareDialog = { showShareDialog = false },
+                                onRetryLyrics = actions.onRetryLyrics,
                                 spectrum = state.spectrum,
                             )
 
@@ -293,6 +297,12 @@ internal fun PlayerOverlayPanels(
                                 discoveryStatus = state.discoveryStatus,
                                 queueFractionProvider = panelFractionProvider,
                                 lazyListState = queueListState,
+                                isShuffle = state.isShuffle,
+                                repeatMode = state.repeatMode,
+                                onShuffle = actions.onToggleShuffle,
+                                onRepeat = actions.onCycleRepeatMode,
+                                isPlaying = state.isPlaying,
+                                showFloatingControls = false,
                             )
                         }
                     }

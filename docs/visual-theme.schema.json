@@ -207,7 +207,11 @@
         "arrow_downward",
         "fast_forward",
         "library_add_check",
-        "track_changes"
+        "track_changes",
+        "clear_all",
+        "more_horiz",
+        "my_location",
+        "unfold_more"
       ]
     },
     "assetPath": {

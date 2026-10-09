@@ -813,6 +813,11 @@ fun HomeScreen(
             put("playback.audioQuality.hiRes", playbackState.audioQuality?.isHiRes.toString())
             put("playback.switchingQualityFormat", playbackState.switchingQualityFormat.orEmpty())
             put("playback.lyrics.loading", playbackState.lyricsLoading.toString())
+            put("playback.lyrics.failed", playbackState.lyricsFailed.toString())
+            put(
+                "playback.lyrics.notFound",
+                (playbackState.lyricsLines.isEmpty() && !playbackState.lyricsLoading && !playbackState.lyricsFailed).toString(),
+            )
             put("playback.lyrics.provider", playbackState.lyricsProvider.orEmpty())
             put("spectrum.bass", spectrumState.bass.toString())
             put("spectrum.mid", spectrumState.mid.toString())
@@ -1933,6 +1938,8 @@ fun HomeScreen(
                         },
                         lyricsLines = playbackState.lyricsLines,
                         lyricsLoading = playbackState.lyricsLoading,
+                        lyricsFailed = playbackState.lyricsFailed,
+                        onRetryLyrics = playbackManager::retryLyrics,
                         motionArtwork = playbackState.motionArtwork.takeIf {
                             playbackState.motionArtworkTrackId == track.id
                         },
@@ -2005,6 +2012,8 @@ fun HomeScreen(
                             }
                         },
                         onArtistClick = { artistName -> openArtist(artistName, null) },
+                        onDownloadTrack = { dlTrack -> ripWsClient.startRip(dlTrack) },
+                        onLoadTrackGenres = albumDetailsRepository::getGenresForTrack,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -2141,6 +2150,8 @@ fun HomeScreen(
                     durationMs = currentDurationMs,
                     lyricsLines = playbackState.lyricsLines,
                     lyricsLoading = playbackState.lyricsLoading,
+                    lyricsFailed = playbackState.lyricsFailed,
+                    onRetryLyrics = playbackManager::retryLyrics,
                     onSeek = playbackManager::seekTo,
                     isPlaying = activeIsPlaying,
                     spectrum = spectrumState,

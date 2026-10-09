@@ -24,6 +24,7 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
     <queries>
         <intent>
@@ -89,6 +90,14 @@
             </intent-filter>
         </service>
 
+        <receiver
+            android:name=".playback.SleepTimerReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="org.shilpo.laboon.action.SLEEP_TIMER_EXPIRED" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -99,5 +108,4 @@
                 android:resource="@xml/file_paths" />
         </provider>
     </application>
-
 </manifest>

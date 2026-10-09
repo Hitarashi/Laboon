@@ -136,8 +136,12 @@ fun MorphingPlayerSheet(
     onArtistClick: ((String) -> Unit)? = null,
     lyricsLines: List<LyricsLine> = emptyList(),
     lyricsLoading: Boolean = false,
+    lyricsFailed: Boolean = false,
+    onRetryLyrics: (() -> Unit)? = null,
     motionArtwork: LyricspornMotionArtwork? = null,
     onRequestMotionArtwork: (() -> Unit)? = null,
+    onDownloadTrack: ((HomeTrack) -> Unit)? = null,
+    onLoadTrackGenres: (suspend (HomeTrack) -> List<String>)? = null,
 ) {
     val playerColorScheme = animateColorScheme(
         LocalArtworkColorScheme.current ?: MaterialTheme.colorScheme,
@@ -185,8 +189,13 @@ fun MorphingPlayerSheet(
             onArtist = onArtistClick,
             lyrics = lyricsLines,
             lyricsLoading = lyricsLoading,
+            lyricsFailed = lyricsFailed,
+            onRetryLyrics = onRetryLyrics,
+            spectrum = spectrum,
             motionArtwork = motionArtwork,
             onRequestMotionArtwork = onRequestMotionArtwork,
+            onDownloadTrack = onDownloadTrack,
+            onLoadTrackGenres = onLoadTrackGenres,
             modifier = modifier,
         )
     }

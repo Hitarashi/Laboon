@@ -74,6 +74,7 @@ data class PlaybackState(
     val lyricsLines: List<LyricsLine> = emptyList(),
     val lyricsProvider: String? = null,
     val lyricsLoading: Boolean = false,
+    val lyricsFailed: Boolean = false,
     val motionArtwork: LyricspornMotionArtwork? = null,
     val motionArtworkTrackId: String? = null,
 )

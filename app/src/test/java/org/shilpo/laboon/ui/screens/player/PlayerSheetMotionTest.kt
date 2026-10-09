@@ -119,6 +119,64 @@ class PlayerSheetMotionTest {
     }
 
     @Test
+    fun panelProgressTracksTheFingerInBothDirections() {
+        assertEquals(
+            0.25f,
+            playerPanelProgressForDrag(
+                panelOpenAtStart = false,
+                accumulatedDragY = -250f,
+                panelHeightPx = 1_000f,
+            ),
+            0.001f,
+        )
+        assertEquals(
+            0.75f,
+            playerPanelProgressForDrag(
+                panelOpenAtStart = true,
+                accumulatedDragY = 250f,
+                panelHeightPx = 1_000f,
+            ),
+            0.001f,
+        )
+    }
+
+    @Test
+    fun panelSettleUsesSwipeVelocityBeforeProgress() {
+        assertTrue(
+            shouldSettlePlayerPanelOpen(
+                panelProgress = 0.2f,
+                verticalVelocity = -151f,
+                progressThreshold = 0.35f,
+                velocityThreshold = 150f,
+            )
+        )
+        assertFalse(
+            shouldSettlePlayerPanelOpen(
+                panelProgress = 0.8f,
+                verticalVelocity = 151f,
+                progressThreshold = 0.35f,
+                velocityThreshold = 150f,
+            )
+        )
+        assertFalse(
+            shouldSettlePlayerPanelOpen(
+                panelProgress = 0.71f,
+                verticalVelocity = 0f,
+                progressThreshold = 0.72f,
+                velocityThreshold = 150f,
+            )
+        )
+        assertTrue(
+            shouldSettlePlayerPanelOpen(
+                panelProgress = 0.4f,
+                verticalVelocity = 0f,
+                progressThreshold = 0.35f,
+                velocityThreshold = 150f,
+            )
+        )
+    }
+
+    @Test
     fun downwardDragFromExpandedCollapsesWithoutDismissingPlayer() {
         val target = resolvePlayerSheetTargetState(
             currentState = PlayerSheetTargetState.EXPANDED,

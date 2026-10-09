@@ -65,6 +65,7 @@ import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.home.TrackIdentity
 import org.shilpo.laboon.lyrics.LyricsDiskCache
 import org.shilpo.laboon.lyrics.LyricsLookup
+import org.shilpo.laboon.lyrics.LyricsLookupResult
 import org.shilpo.laboon.lyrics.LyricsRepository
 import org.shilpo.laboon.lyrics.LyricsRepositoryImpl
 import org.shilpo.laboon.lyricsporn.LyricspornClient
@@ -112,6 +113,7 @@ interface PlaybackManager {
     fun addToQueue(track: HomeTrack)
     fun playQueueEntry(entryId: Long)
     fun retryDiscovery()
+    fun retryLyrics()
     fun skipToNext()
     fun skipToPrevious()
     fun pause()
@@ -1013,6 +1015,20 @@ class PlaybackManagerImpl(
         scheduleDiscoveryRefillIfNeeded(force = true)
     }
 
+    override fun retryLyrics() {
+        val state = _state.value
+        val track = state.currentTrack ?: return
+        if (state.lyricsLoading) return
+        invalidateLyricsRequest()
+        _state.value = state.copy(
+            lyricsLines = emptyList(),
+            lyricsProvider = null,
+            lyricsLoading = true,
+            lyricsFailed = false,
+        )
+        requestLyrics(track, state.durationMs)
+    }
+
     override fun playQueueEntry(entryId: Long) {
         val track = queueManager.playEntry(entryId) ?: return
         executePlayTrack(track)
@@ -1102,6 +1118,7 @@ class PlaybackManagerImpl(
             lyricsLines = if (trackChanged) emptyList() else _state.value.lyricsLines,
             lyricsProvider = if (trackChanged) null else _state.value.lyricsProvider,
             lyricsLoading = trackChanged || _state.value.lyricsLoading,
+            lyricsFailed = if (trackChanged) false else _state.value.lyricsFailed,
             switchingQualityFormat = null,
         )
         playbackPersistence.saveLastTrack(nextTrack)
@@ -1189,6 +1206,7 @@ class PlaybackManagerImpl(
             lyricsLines = emptyList(),
             lyricsProvider = null,
             lyricsLoading = true,
+            lyricsFailed = false,
             motionArtwork = retainedMotionArtwork,
             motionArtworkTrackId = track.id.takeIf {
                 retainedMotionArtwork != null || keepMotionArtworkRequest
@@ -1266,13 +1284,15 @@ class PlaybackManagerImpl(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                null
+                LyricsLookupResult.Failed
             }
             if (generation != lyricsGeneration || _state.value.currentTrack?.id != track.id) return@launch
+            val foundLyrics = (result as? LyricsLookupResult.Found)?.lyrics
             _state.value = _state.value.copy(
-                lyricsLines = result?.lines.orEmpty(),
-                lyricsProvider = result?.provider,
+                lyricsLines = foundLyrics?.lines.orEmpty(),
+                lyricsProvider = foundLyrics?.provider,
                 lyricsLoading = false,
+                lyricsFailed = result is LyricsLookupResult.Failed,
             )
         }
     }
@@ -2638,6 +2658,10 @@ object PlaybackManagerHolder {
                 instance = it
             }
         }
+    }
+
+    fun getInstanceOrNull(): PlaybackManager? {
+        return synchronized(lock) { instance }
     }
 
     fun release() {

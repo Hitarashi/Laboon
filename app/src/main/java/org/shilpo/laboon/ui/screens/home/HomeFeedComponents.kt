@@ -459,8 +459,8 @@ internal fun HomeDailyMixSongOptionsSheet(
     onPlay: () -> Unit,
     onPlayNext: () -> Unit,
     onAddToQueue: () -> Unit,
-    onLoadTrackGenres: suspend (HomeTrack) -> List<String>,
-    onDownload: () -> Unit,
+    onLoadTrackGenres: suspend (HomeTrack) -> List<String> = { emptyList() },
+    onDownload: () -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val pagerState = rememberPagerState(pageCount = { 2 })

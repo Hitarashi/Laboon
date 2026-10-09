@@ -149,10 +149,57 @@ object LyricspornClient {
         )
     }
 
+    suspend fun searchSongsForLyrics(
+        apiBaseUrl: String?,
+        term: String,
+    ): HttpOutcome<List<LyricspornCatalogItem>> {
+        val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return HttpOutcome.Failure(
+            HttpError(HttpErrorKind.MALFORMED, message = "Invalid Lyricsporn API URL"),
+        )
+        if (term.isBlank()) return HttpOutcome.Success(emptyList())
+
+        val query = encode(term.trim())
+        return when (val response = http.getJson(
+            "$baseUrl/catalog/search?term=$query&types=songs&limit=1&artworkSize=300".withCurrentStorefront(),
+        )) {
+            is HttpOutcome.Failure -> response
+            is HttpOutcome.Success -> {
+                val results = response.value.objOrNull("results") ?: return HttpOutcome.Failure(
+                    HttpError(HttpErrorKind.MALFORMED, message = "Lyricsporn search response is missing results"),
+                )
+                val songs = results.objOrNull("songs") ?: return HttpOutcome.Failure(
+                    HttpError(HttpErrorKind.MALFORMED, message = "Lyricsporn search response is missing songs"),
+                )
+                val items = songs.arrOrNull("items") ?: return HttpOutcome.Failure(
+                    HttpError(HttpErrorKind.MALFORMED, message = "Lyricsporn search response is missing song items"),
+                )
+                HttpOutcome.Success(
+                    items.toCatalogItems(300).filter { it.type == "song" && it.id.isNumericAppleId() },
+                )
+            }
+        }
+    }
+
+    suspend fun getTrackLyricsOutcome(
+        apiBaseUrl: String?,
+        appleTrackId: String,
+    ): HttpOutcome<JSONObject> {
+        val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return HttpOutcome.Failure(
+            HttpError(HttpErrorKind.MALFORMED, message = "Invalid Lyricsporn API URL"),
+        )
+        val trackId = appleTrackId.takeIf { it.isNumericAppleId() } ?: return HttpOutcome.Failure(
+            HttpError(HttpErrorKind.MALFORMED, message = "Invalid Apple Music track ID"),
+        )
+        return http.getJson(
+            "$baseUrl/tracks/$trackId?include=lyrics&formats=json".withCurrentStorefront(),
+        )
+    }
+
     suspend fun getTrackLyrics(apiBaseUrl: String?, appleTrackId: String): JSONObject? {
-        val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return null
-        val trackId = appleTrackId.takeIf { it.isNumericAppleId() } ?: return null
-        return getJson("$baseUrl/tracks/$trackId?include=lyrics&formats=json")
+        return when (val response = getTrackLyricsOutcome(apiBaseUrl, appleTrackId)) {
+            is HttpOutcome.Success -> response.value
+            is HttpOutcome.Failure -> null
+        }
     }
 
     suspend fun getTrackAlbumId(apiBaseUrl: String?, appleTrackId: String): String? {
