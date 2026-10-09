@@ -51,6 +51,74 @@ class PlayerSheetMotionTest {
     }
 
     @Test
+    fun downwardMiniPlayerDragDismissesAfterDistanceThreshold() {
+        assertTrue(
+            shouldDismissMiniPlayerFromDownwardDrag(
+                gestureEligibleAtStart = true,
+                accumulatedDragY = 24f,
+                verticalVelocity = 0f,
+                dismissalDistancePx = 24f,
+                flingMinimumDistancePx = 8f,
+                flingVelocityThresholdPxPerSecond = 900f,
+            )
+        )
+        assertFalse(
+            shouldDismissMiniPlayerFromDownwardDrag(
+                gestureEligibleAtStart = true,
+                accumulatedDragY = 23f,
+                verticalVelocity = 0f,
+                dismissalDistancePx = 24f,
+                flingMinimumDistancePx = 8f,
+                flingVelocityThresholdPxPerSecond = 900f,
+            )
+        )
+        assertFalse(
+            shouldDismissMiniPlayerFromDownwardDrag(
+                gestureEligibleAtStart = false,
+                accumulatedDragY = 40f,
+                verticalVelocity = 0f,
+                dismissalDistancePx = 24f,
+                flingMinimumDistancePx = 8f,
+                flingVelocityThresholdPxPerSecond = 900f,
+            )
+        )
+    }
+
+    @Test
+    fun quickDownwardMiniPlayerFlingDismissesOnlyAfterMinimumMovement() {
+        assertTrue(
+            shouldDismissMiniPlayerFromDownwardDrag(
+                gestureEligibleAtStart = true,
+                accumulatedDragY = 8f,
+                verticalVelocity = 900f,
+                dismissalDistancePx = 24f,
+                flingMinimumDistancePx = 8f,
+                flingVelocityThresholdPxPerSecond = 900f,
+            )
+        )
+        assertFalse(
+            shouldDismissMiniPlayerFromDownwardDrag(
+                gestureEligibleAtStart = true,
+                accumulatedDragY = 7f,
+                verticalVelocity = 1_200f,
+                dismissalDistancePx = 24f,
+                flingMinimumDistancePx = 8f,
+                flingVelocityThresholdPxPerSecond = 900f,
+            )
+        )
+        assertFalse(
+            shouldDismissMiniPlayerFromDownwardDrag(
+                gestureEligibleAtStart = true,
+                accumulatedDragY = 8f,
+                verticalVelocity = 899f,
+                dismissalDistancePx = 24f,
+                flingMinimumDistancePx = 8f,
+                flingVelocityThresholdPxPerSecond = 900f,
+            )
+        )
+    }
+
+    @Test
     fun queueSwipeStartsOnlyFromExpandedPlayerOutsideBottomGestureExclusion() {
         assertTrue(
             isExpandedPlayerQueueSwipeEligible(

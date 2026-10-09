@@ -9,7 +9,6 @@ import androidx.media3.session.MediaSessionService
 import org.shilpo.laboon.R
 
 class PlaybackService : MediaSessionService() {
-
     @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
@@ -36,13 +35,6 @@ class PlaybackService : MediaSessionService() {
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
         PlaybackServiceHolder.mediaSession
-
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        val player = PlaybackServiceHolder.mediaSession?.player
-        if (player == null || !player.playWhenReady || player.mediaItemCount == 0) {
-            stopSelf()
-        }
-    }
 
     override fun onDestroy() {
         PlaybackServiceHolder.mediaSession?.let { session ->

@@ -76,6 +76,19 @@ internal fun shouldOpenQueueSheetFromUpwardDrag(
     !queueSwipeAlreadyConsumed &&
     accumulatedDragY < -activationThresholdPx
 
+internal fun shouldDismissMiniPlayerFromDownwardDrag(
+    gestureEligibleAtStart: Boolean,
+    accumulatedDragY: Float,
+    verticalVelocity: Float,
+    dismissalDistancePx: Float,
+    flingMinimumDistancePx: Float,
+    flingVelocityThresholdPxPerSecond: Float,
+): Boolean = gestureEligibleAtStart && accumulatedDragY > 0f && (
+    accumulatedDragY >= dismissalDistancePx ||
+        accumulatedDragY >= flingMinimumDistancePx &&
+        verticalVelocity >= flingVelocityThresholdPxPerSecond
+    )
+
 internal fun playerPanelProgressForDrag(
     panelOpenAtStart: Boolean,
     accumulatedDragY: Float,
@@ -211,6 +224,7 @@ internal class PlayerSheetVerticalDragGestureHandler(
     private val onAnimateSheet: suspend (Boolean, AnimationSpec<Float>?, Float) -> Unit,
     private val onExpandSheetState: () -> Unit,
     private val onCollapseSheetState: () -> Unit,
+    private val onDismissMiniPlayer: () -> Unit,
     private val onCollapseSquash: suspend (Float) -> Unit,
 ) {
     private var initialFractionOnDragStart = 0f
@@ -218,6 +232,7 @@ internal class PlayerSheetVerticalDragGestureHandler(
     private var accumulatedDragY = 0f
     private var panelHeightPx = 1f
     private var panelOpenAtDragStart = false
+    private var miniPlayerDismissEligibleAtStart = false
     private var queueGestureEligibleAtStart = false
     private var panelDragActive = false
     private var dragSnapJob: Job? = null
@@ -231,12 +246,16 @@ internal class PlayerSheetVerticalDragGestureHandler(
         initialYOnDragStart = translationY.value
         accumulatedDragY = 0f
         panelHeightPx = hostHeightPx.coerceAtLeast(1f)
+        val currentState = currentStateProvider()
         panelOpenAtDragStart = isQueueOrLyricsPanelOpenProvider()
         panelDragActive = panelOpenAtDragStart &&
-            currentStateProvider() == PlayerSheetTargetState.EXPANDED
+            currentState == PlayerSheetTargetState.EXPANDED
+        miniPlayerDismissEligibleAtStart = currentState == PlayerSheetTargetState.COLLAPSED &&
+            !panelOpenAtDragStart &&
+            startPosition.y <= miniHeightPxProvider()
         if (panelDragActive) onPanelDragStart()
         queueGestureEligibleAtStart = isExpandedPlayerQueueSwipeEligible(
-            currentState = currentStateProvider(),
+            currentState = currentState,
             expansionFraction = expansionFraction.value,
             touchY = startPosition.y,
             hostHeightPx = hostHeightPx,
@@ -307,6 +326,22 @@ internal class PlayerSheetVerticalDragGestureHandler(
             resetGestureState()
             return
         }
+        val velocityY = velocityTracker.calculateVelocity().y
+        val density = densityProvider()
+        if (
+            shouldDismissMiniPlayerFromDownwardDrag(
+                gestureEligibleAtStart = miniPlayerDismissEligibleAtStart,
+                accumulatedDragY = accumulatedDragY,
+                verticalVelocity = velocityY,
+                dismissalDistancePx = miniHeightPxProvider() * 0.35f,
+                flingMinimumDistancePx = with(density) { 8.dp.toPx() },
+                flingVelocityThresholdPxPerSecond = with(density) { 900.dp.toPx() },
+            )
+        ) {
+            resetGestureState()
+            onDismissMiniPlayer()
+            return
+        }
         val expandedPlayerDraggedUpward =
             currentStateProvider() == PlayerSheetTargetState.EXPANDED &&
                 expansionFraction.value >= 0.99f &&
@@ -315,7 +350,6 @@ internal class PlayerSheetVerticalDragGestureHandler(
             resetGestureState()
             return
         }
-        val velocityY = velocityTracker.calculateVelocity().y
         val currentFraction = expansionFraction.value
         val target = resolvePlayerSheetTargetState(
             currentState = currentStateProvider(),
@@ -352,6 +386,7 @@ internal class PlayerSheetVerticalDragGestureHandler(
         accumulatedDragY = 0f
         panelHeightPx = 1f
         panelOpenAtDragStart = false
+        miniPlayerDismissEligibleAtStart = false
         queueGestureEligibleAtStart = false
         panelDragActive = false
     }

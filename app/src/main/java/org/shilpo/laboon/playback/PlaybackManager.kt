@@ -852,25 +852,16 @@ class PlaybackManagerImpl(
 
     private fun createSessionForwardingPlayer(exo: ExoPlayer): Player {
         val commandListeners = IdentityHashMap<Player.Listener, Player.Listener>()
-        lateinit var forwardingPlayer: Player
-        forwardingPlayer = object : ForwardingPlayer(exo) {
+        val forwardingPlayer = object : ForwardingPlayer(exo) {
             override fun addListener(listener: Player.Listener) {
-                val forwardingListener = object : Player.Listener by listener {
-                    override fun onAvailableCommandsChanged(commands: Player.Commands) {
-                        listener.onAvailableCommandsChanged(forwardingPlayer.availableCommands)
-                    }
-
-                    override fun onEvents(player: Player, events: Player.Events) {
-                        listener.onEvents(forwardingPlayer, events)
-                    }
-                }
-                commandListeners[listener] = forwardingListener
-                super.addListener(forwardingListener)
+                commandListeners[listener] = listener
+                super.addListener(listener)
             }
 
             override fun removeListener(listener: Player.Listener) {
-                val forwardingListener = commandListeners.remove(listener) ?: return
-                super.removeListener(forwardingListener)
+                if (commandListeners.remove(listener) != null) {
+                    super.removeListener(listener)
+                }
             }
 
             override fun getAvailableCommands(): Player.Commands {

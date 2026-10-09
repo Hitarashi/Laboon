@@ -260,6 +260,7 @@ internal fun StockPlayerSheet(
         val currentPanelForGesture = rememberUpdatedState(panel)
         val currentExpandedForGesture = rememberUpdatedState(expanded)
         val currentOnRequestMotionArtwork = rememberUpdatedState(onRequestMotionArtwork)
+        val currentOnDismiss = rememberUpdatedState(onDismiss)
         LaunchedEffect(track.id, expansionFraction) {
             snapshotFlow { expansionFraction.value }
                 .first { it >= MotionArtworkRequestProgress }
@@ -360,6 +361,7 @@ internal fun StockPlayerSheet(
                     expanded = false
                     panel = "player"
                 },
+                onDismissMiniPlayer = { currentOnDismiss.value() },
                 onCollapseSquash = { startingScale ->
                     overshootScaleY.snapTo(startingScale)
                     overshootScaleY.animateTo(
