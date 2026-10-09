@@ -151,7 +151,10 @@ fun MorphingPlayerSheet(
         stop = MiniPlayerSpacing,
         fraction = albumDockProgress.coerceIn(0f, 1f),
     )
-    MaterialTheme(colorScheme = playerColorScheme) {
+    MaterialTheme(
+        colorScheme = playerColorScheme,
+        typography = MaterialTheme.typography,
+    ) {
         StockPlayerSheet(
             track = track,
             isPlaying = isPlaying,

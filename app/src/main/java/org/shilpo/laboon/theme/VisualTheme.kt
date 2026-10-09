@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.shilpo.laboon.theme.contract.ThemeTextStyle
 import org.shilpo.laboon.theme.renderer.LocalThemeIconOverrides
+import org.shilpo.laboon.ui.design.theme.AppTypography
 
 internal val LocalVisualMotionScale = staticCompositionLocalOf { 1f }
 internal val LocalArtworkColorScheme = staticCompositionLocalOf<ColorScheme?> { null }
@@ -81,8 +82,10 @@ internal fun LaboonExpressiveTheme(
             typeface?.let { style to FontFamily(it) }
         }.toMap()
     }
-    val typography =
-        Typography().withThemeOverrides(theme?.definition?.typography.orEmpty(), fontFamilies)
+    val typography = AppTypography.withThemeOverrides(
+        theme?.definition?.typography.orEmpty(),
+        fontFamilies,
+    )
     val shapes = shapesWithOverrides(theme)
     val motionScale = if (ValueAnimator.areAnimatorsEnabled()) {
         theme?.definition?.motion?.durationScale ?: 1f

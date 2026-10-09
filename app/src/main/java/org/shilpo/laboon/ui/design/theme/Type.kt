@@ -8,13 +8,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.ExperimentalTextApi
 import org.shilpo.laboon.R
 
-val GoogleSansFlex = FontFamily(
-    Font(R.font.google_sans_flex, FontWeight.Normal),
-    Font(R.font.google_sans_flex, FontWeight.Medium),
-    Font(R.font.google_sans_flex, FontWeight.SemiBold),
-    Font(R.font.google_sans_flex, FontWeight.Bold),
-)
-
 @OptIn(ExperimentalTextApi::class)
 internal val RoundedSans = FontFamily(
     Font(
@@ -58,6 +51,8 @@ internal val RoundedSans = FontFamily(
         ),
     ),
 )
+
+val GoogleSansFlex = RoundedSans
 
 private val defaultTypography = Typography()
 

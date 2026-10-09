@@ -100,9 +100,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.Font
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontVariation
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -166,20 +164,8 @@ private val InitialLibraryCategories = listOf(
 )
 
 private val LibraryCategoryTitleStyle = TextStyle(
-    fontFamily = FontFamily(
-        Font(
-            resId = R.font.gsans_flex_full,
-            variationSettings = FontVariation.Settings(
-                FontVariation.weight(800),
-                FontVariation.width(97f),
-                FontVariation.slant(0f),
-                FontVariation.Setting("ROND", 46f),
-                FontVariation.Setting("XTRA", 520f),
-                FontVariation.Setting("YOPQ", 90f),
-                FontVariation.Setting("YTLC", 505f),
-            ),
-        ),
-    ),
+    fontFamily = RoundedSans,
+    fontWeight = FontWeight.ExtraBold,
     fontSize = 23.5.sp,
     lineHeight = 32.sp,
     letterSpacing = (-0.2).sp,

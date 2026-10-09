@@ -791,6 +791,8 @@ suspend fun renderCardBitmap(
         }.getOrNull()
     }
 
+    val (roundedGoogleSans, roundedGoogleSansBold) = roundedGoogleSansTypefaces(context)
+
     val padding = 72f
     val headerHeight = 150f
     val footerHeight = 90f
@@ -798,19 +800,19 @@ suspend fun renderCardBitmap(
         isAntiAlias = true
         color = android.graphics.Color.WHITE
         textSize = 46f
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        typeface = roundedGoogleSansBold
     }
     val romanPaint = TextPaint().apply {
         isAntiAlias = true
         color = android.graphics.Color.argb(180, 255, 255, 255)
         textSize = 32f
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+        typeface = roundedGoogleSans
     }
     val transPaint = TextPaint().apply {
         isAntiAlias = true
         color = android.graphics.Color.argb(215, 255, 255, 255)
         textSize = 34f
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
+        typeface = roundedGoogleSans
     }
 
     val textWidth = (width - padding * 2 - 80f).toInt().coerceAtLeast(100)
@@ -923,12 +925,13 @@ suspend fun renderCardBitmap(
         isAntiAlias = true
         color = android.graphics.Color.WHITE
         textSize = 44f
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        typeface = roundedGoogleSansBold
     }
     val artistPaint = TextPaint().apply {
         isAntiAlias = true
         color = android.graphics.Color.argb(200, 255, 255, 255)
         textSize = 34f
+        typeface = roundedGoogleSans
     }
 
     val textX = innerLeft + artSize + 36f
@@ -983,12 +986,28 @@ suspend fun renderCardBitmap(
         isAntiAlias = true
         color = android.graphics.Color.argb(180, 255, 255, 255)
         textSize = 32f
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        typeface = roundedGoogleSansBold
     }
     val footerY = cardRect.bottom - 46f
     canvas.drawText("Laboon Music", innerLeft, footerY, footerPaint)
 
     bitmap
+}
+
+private fun roundedGoogleSansTypefaces(context: Context): Pair<Typeface, Typeface> {
+    val fontFile = File.createTempFile("laboon-google-sans-rounded", ".ttf", context.cacheDir)
+    return try {
+        context.resources.openRawResource(R.font.gsans_flex_full).use { input ->
+            fontFile.outputStream().use(input::copyTo)
+        }
+        fun typeface(weight: Int) = Typeface.Builder(fontFile)
+            .setFontVariationSettings("'ROND' 100")
+            .setWeight(weight)
+            .build()
+        typeface(400) to typeface(700)
+    } finally {
+        fontFile.delete()
+    }
 }
 
 fun shareLyricsCardBitmap(context: Context, bitmap: Bitmap) {
