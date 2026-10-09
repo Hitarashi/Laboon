@@ -137,6 +137,7 @@ object MaterialSymbolCatalog {
         "shuffle",
         "repeat",
         "repeat_one",
+        "drag_indicator",
         "more_vert",
         "expand_more",
         "expand_less",

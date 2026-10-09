@@ -103,8 +103,20 @@ class HomeFeedCache(private val store: KeyValueStore) {
         }
     }
 
+    fun loadLibrarySongs(): List<HomeTrack>? {
+        val raw = store.getString(KEY_LIBRARY_SONGS_CACHE) ?: return null
+        return runCatching { decodeTracks(JSONArray(raw)) }.getOrNull()
+    }
+
+    fun saveLibrarySongs(tracks: List<HomeTrack>) {
+        runCatching {
+            store.putString(KEY_LIBRARY_SONGS_CACHE, encodeTracks(tracks).toString())
+        }
+    }
+
     fun clear() {
         store.remove(KEY_FEED_CACHE)
+        store.remove(KEY_LIBRARY_SONGS_CACHE)
     }
 
     private fun encodeTracks(tracks: List<HomeTrack>): JSONArray {
@@ -123,9 +135,12 @@ class HomeFeedCache(private val store: KeyValueStore) {
                 put("isCached", track.isCached)
                 track.codec?.let { put("codec", it) }
                 track.mbid?.let { put("mbid", it) }
+                track.artistMbid?.let { put("artistMbid", it) }
                 track.isrc?.let { put("isrc", it) }
                 track.providerTrackId?.let { put("providerTrackId", it) }
                 track.durationMs?.let { put("durationMs", it) }
+                track.contentRating?.let { put("contentRating", it) }
+                track.listenedAtMs?.let { put("listenedAtMs", it) }
                 if (track.availableVariants.isNotEmpty()) {
                     put("availableVariants", JSONArray().apply {
                         track.availableVariants.forEach { variant ->
@@ -185,12 +200,16 @@ class HomeFeedCache(private val store: KeyValueStore) {
                     isCached = obj.optBoolean("isCached", false),
                     codec = obj.optString("codec").takeIf { it.isNotBlank() },
                     mbid = obj.optString("mbid").takeIf { it.isNotBlank() },
+                    artistMbid = obj.optString("artistMbid").takeIf { it.isNotBlank() },
                     isrc = obj.optString("isrc").takeIf { it.isNotBlank() },
                     providerTrackId = obj.optString("providerTrackId").takeIf { it.isNotBlank() },
                     availableFormats = variants.map(TrackFormatVariant::format),
                     availableVariants = variants,
                     durationMs = obj.optLong("durationMs")
                         .takeIf { obj.has("durationMs") && it > 0L },
+                    contentRating = obj.optString("contentRating").takeIf { it.isNotBlank() },
+                    listenedAtMs = obj.optLong("listenedAtMs")
+                        .takeIf { obj.has("listenedAtMs") && it > 0L },
                 )
             )
         }
@@ -271,6 +290,7 @@ class HomeFeedCache(private val store: KeyValueStore) {
 
     private companion object {
         const val KEY_FEED_CACHE = "home_feed_cache_v1"
+        const val KEY_LIBRARY_SONGS_CACHE = "library_songs_cache_v1"
         const val TRACK_MAPPING_VERSION = 1
     }
 }

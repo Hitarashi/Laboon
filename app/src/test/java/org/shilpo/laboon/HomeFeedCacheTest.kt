@@ -9,6 +9,7 @@ import org.shilpo.laboon.home.HomeArtist
 import org.shilpo.laboon.home.HomeFeedCache
 import org.shilpo.laboon.home.HomeFeedState
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.home.SectionLoadState
 import org.shilpo.laboon.home.SectionState
 
@@ -80,6 +81,47 @@ class HomeFeedCacheTest {
         assertEquals(listOf(track), loaded?.globalTrending?.items)
         assertEquals(listOf(track), loaded?.weeklyPicks?.items)
         assertEquals("Japan", loaded?.regionName)
+    }
+
+    @Test
+    fun librarySongsCacheRoundTripsPlayableTrackMetadata() {
+        val cache = HomeFeedCache(FakeKeyValueStore())
+        val tracks = listOf(
+            HomeTrack(
+                id = "song-1",
+                title = "Beautiful Mistakes",
+                artist = "Maroon 5, Megan Thee Stallion",
+                album = "Jordi",
+                artworkUrl = "https://artwork/song-1.png",
+                playCount = 12,
+                source = "Last.fm",
+                backendTrackId = 42,
+                codec = "alac",
+                mbid = "recording-mbid",
+                artistMbid = "artist-mbid",
+                isrc = "USUM72012345",
+                providerTrackId = "apple-track-1",
+                availableFormats = listOf("alac"),
+                availableVariants = listOf(TrackFormatVariant("alac", 42, 8_192_000L)),
+                durationMs = 220_000,
+                contentRating = "explicit",
+                listenedAtMs = 1_700_000_000_000L,
+            ),
+        )
+
+        cache.saveLibrarySongs(tracks)
+
+        assertEquals(tracks, cache.loadLibrarySongs())
+    }
+
+    @Test
+    fun clearRemovesCachedLibrarySongs() {
+        val cache = HomeFeedCache(FakeKeyValueStore())
+        cache.saveLibrarySongs(listOf(HomeTrack(id = "song-1", title = "Song", artist = "Artist")))
+
+        cache.clear()
+
+        assertNull(cache.loadLibrarySongs())
     }
 
     @Test

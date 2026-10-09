@@ -108,8 +108,10 @@ import org.shilpo.laboon.auth.SessionStore
 import org.shilpo.laboon.auth.SharedPreferencesKeyValueStore
 import org.shilpo.laboon.home.AlbumDetailsCache
 import org.shilpo.laboon.home.AlbumDetailsRepository
+import org.shilpo.laboon.home.AlbumDetailsResult
 import org.shilpo.laboon.home.ArtistDetailsCache
 import org.shilpo.laboon.home.ArtistDetailsRepository
+import org.shilpo.laboon.home.ArtistDetailsResult
 import org.shilpo.laboon.home.HomeAlbum
 import org.shilpo.laboon.home.HomeArtist
 import org.shilpo.laboon.home.HomeFeedCache
@@ -364,6 +366,33 @@ fun HomeScreen(
     val playbackState by playbackManager.state.collectAsState()
     val queueState by playbackManager.queueManager.state.collectAsState()
     val spectrumState by playbackManager.spectrumState.collectAsState()
+
+    val shuffleAlbum: (HomeAlbum) -> Unit = { album ->
+        val albumId = album.appleCatalogId?.takeIf(String::isNotBlank)
+        if (albumId != null) {
+            coroutineScope.launch {
+                val tracks = (albumDetailsRepository.getAlbum(albumId) as? AlbumDetailsResult.Success)
+                    ?.tracks.orEmpty()
+                if (tracks.isNotEmpty()) {
+                    val shuffled = tracks.shuffled()
+                    playbackManager.play(shuffled.first(), contextTracks = shuffled)
+                }
+            }
+        }
+    }
+    val shuffleArtist: (HomeArtist) -> Unit = { artist ->
+        coroutineScope.launch {
+            val artistId = artist.appleCatalogId?.takeIf(String::isNotBlank)
+                ?: artistDetailsRepository.resolveArtistId(artist.name)
+            val tracks = artistId?.let {
+                (artistDetailsRepository.getArtist(it) as? ArtistDetailsResult.Success)?.topSongs
+            }.orEmpty()
+            if (tracks.isNotEmpty()) {
+                val shuffled = tracks.shuffled()
+                playbackManager.play(shuffled.first(), contextTracks = shuffled)
+            }
+        }
+    }
 
 
     val feedTracks = remember(feedState) {
@@ -1761,7 +1790,25 @@ fun HomeScreen(
                         )
 
                         MainTab.Library -> LibraryScreen(
+                            session = session,
+                            repository = repository,
+                            librarySongsCache = homeFeedCache,
                             modifier = Modifier.fillMaxSize(),
+                            onOpenSettings = { onEvent(RouteEvent.SettingsOpened) },
+                            onPlayTrack = { track, tracks ->
+                                playbackManager.play(track, contextTracks = tracks)
+                            },
+                            currentTrack = activeTrack,
+                            isPlaying = activeIsPlaying,
+                            onPlayNextTrack = playbackManager::playNext,
+                            onAddToQueueTrack = playbackManager::addToQueue,
+                            onLoadTrackGenres = albumDetailsRepository::getGenresForTrack,
+                            onOpenAlbum = onAlbumClick,
+                            onOpenArtist = { artist ->
+                                openArtist(artist.name, artist.appleCatalogId)
+                            },
+                            onShuffleAlbum = shuffleAlbum,
+                            onShuffleArtist = shuffleArtist,
                         )
                     }
                 }

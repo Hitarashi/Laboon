@@ -102,6 +102,7 @@ import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.ui.design.TrackCodecBadges
 import org.shilpo.laboon.ui.design.painterResource
+import org.shilpo.laboon.ui.screens.player.queue.PlayingEqIcon
 import androidx.compose.material3.rememberModalBottomSheetState
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
@@ -381,12 +382,13 @@ internal fun HomeDailyMixSongRows(
 }
 
 @Composable
-private fun HomeDailyMixTrackRow(
+internal fun HomeDailyMixTrackRow(
     track: HomeTrack,
     isCurrentSong: Boolean,
     isPlaying: Boolean,
     onClick: () -> Unit,
     onMoreOptionsClick: () -> Unit,
+    showArtwork: Boolean = false,
 ) {
     val colors = MaterialTheme.colorScheme
     val rowShape = if (isCurrentSong) RoundedCornerShape(50.dp) else RoundedCornerShape(10.dp)
@@ -406,7 +408,17 @@ private fun HomeDailyMixTrackRow(
             .padding(horizontal = 13.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Spacer(Modifier.width(4.dp))
+        if (showArtwork) {
+            HomeArtwork(
+                artworkUrl = track.artworkUrl,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(if (isCurrentSong) CircleShape else RoundedCornerShape(10.dp)),
+            )
+            Spacer(Modifier.width(12.dp))
+        } else {
+            Spacer(Modifier.width(4.dp))
+        }
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = track.title,
@@ -426,11 +438,10 @@ private fun HomeDailyMixTrackRow(
             )
         }
         if (isCurrentSong && isPlaying) {
-            Icon(
-                painter = painterResource(R.drawable.ic_song_wave),
-                contentDescription = null,
-                tint = contentColor,
-                modifier = Modifier.padding(start = 8.dp).size(18.dp),
+            PlayingEqIcon(
+                modifier = Modifier.padding(start = 8.dp).size(width = 18.dp, height = 16.dp),
+                color = contentColor,
+                isPlaying = isPlaying,
             )
         }
         Spacer(Modifier.width(12.dp))
@@ -459,6 +470,7 @@ internal fun HomeDailyMixSongOptionsSheet(
     onPlay: () -> Unit,
     onPlayNext: () -> Unit,
     onAddToQueue: () -> Unit,
+    onAddToPlaylist: (() -> Unit)? = null,
     onLoadTrackGenres: suspend (HomeTrack) -> List<String> = { emptyList() },
     onDownload: () -> Unit = {},
 ) {
@@ -523,6 +535,7 @@ internal fun HomeDailyMixSongOptionsSheet(
                                 onPlay = onPlay,
                                 onPlayNext = onPlayNext,
                                 onAddToQueue = onAddToQueue,
+                                onAddToPlaylist = onAddToPlaylist,
                                 onDownload = onDownload,
                             )
                             else -> HomeDailyMixInfoPage(track = track, genres = trackGenres)
@@ -574,6 +587,7 @@ private fun HomeDailyMixOptionsPage(
     onPlay: () -> Unit,
     onPlayNext: () -> Unit,
     onAddToQueue: () -> Unit,
+    onAddToPlaylist: (() -> Unit)?,
     onDownload: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -710,8 +724,8 @@ private fun HomeDailyMixOptionsPage(
                         contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                     ),
                     shape = CircleShape,
-                    enabled = false,
-                    onClick = {},
+                    enabled = track.isPlayable && onAddToPlaylist != null,
+                    onClick = { onAddToPlaylist?.invoke() },
                 ) {
                     DailyMixSymbol(symbol = "playlist_add", iconSlot = "playback.playlistAdd")
                     Spacer(Modifier.width(8.dp))

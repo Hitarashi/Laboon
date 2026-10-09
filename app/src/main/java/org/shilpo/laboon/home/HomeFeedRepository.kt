@@ -164,6 +164,168 @@ class HomeFeedRepository(
         resolveTracks(fetchTasteProfile().recentTracks)
     }
 
+    /** Library songs combine the user's recent listening with their most-played tracks. */
+    suspend fun fetchLibrarySongs(forceRefresh: Boolean = false): List<HomeTrack> =
+        withContext(Dispatchers.IO) {
+            val sourceTracks = if (forceRefresh) {
+                val lastFm = sessionStore.getLastFmCredentials()
+                val listenBrainz = sessionStore.getListenBrainzCredentials()
+                coroutineScope {
+                    listOf(
+                        async { fetchLastFmTopTracks(lastFm) },
+                        async { fetchListenBrainzTopRecordings(listenBrainz) },
+                        async { fetchLastFmRecentTracks(lastFm) },
+                        async { fetchListenBrainzRecentListens(listenBrainz) },
+                    ).awaitAll().flatten()
+                }
+            } else {
+                val profile = fetchTasteProfile()
+                profile.topTracks + profile.recentTracks
+            }
+            resolveTracks(
+                sourceTracks
+                    .distinctBy(TrackIdentity::keyOf)
+                    .take(MAX_LIBRARY_TRACKS),
+            )
+    }
+
+    /** Merges Last.fm loved tracks with ListenBrainz love feedback, resolving LB-only MBIDs in batches. */
+    suspend fun fetchLibraryLovedTracks(): List<HomeTrack> = withContext(Dispatchers.IO) {
+        val profile = fetchTasteProfile()
+        val lovedTracks = profile.lovedTracks
+        val knownMbids = lovedTracks.mapNotNull(HomeTrack::mbid).toSet()
+        val missingMbids = profile.lovedRecordingMbids
+            .filterNot { it in knownMbids }
+            .take(MAX_LIBRARY_LOVED_MBIDS)
+        val listenBrainzTracks = buildList {
+            for (batch in ListenBrainzLabs.chunkSeeds(missingMbids, size = 25)) {
+                val root = fetchJson(
+                    ListenBrainzLabs.metadataRecordingUrl(batch),
+                    sessionStore.getListenBrainzCredentials()?.token,
+                ) ?: continue
+                val metadata = ListenBrainzLabs.parseRecordingMetadata(root, batch)
+                batch.forEach { mbid ->
+                    val recording = metadata[mbid] ?: return@forEach
+                    val title = recording.title?.trim()?.takeIf(String::isNotEmpty) ?: return@forEach
+                    val artist = recording.artistName?.trim()?.takeIf(String::isNotEmpty) ?: return@forEach
+                    add(
+                        HomeTrack(
+                            id = "lb-loved-$mbid",
+                            title = title,
+                            artist = artist,
+                            album = recording.releaseName,
+                            mbid = mbid,
+                            artistMbid = recording.artistMbids.firstOrNull(),
+                            durationMs = recording.durationMs,
+                            source = "ListenBrainz",
+                        ),
+                    )
+                }
+            }
+        }
+        val candidates = (listenBrainzTracks.take(MAX_LIBRARY_TRACKS / 2) + lovedTracks)
+            .distinctBy(TrackIdentity::keyOf)
+            .take(MAX_LIBRARY_TRACKS)
+        resolveTracks(candidates)
+    }
+
+    fun canManageListenBrainzPlaylists(): Boolean {
+        val credentials = sessionStore.getListenBrainzCredentials()
+        return credentials?.connected == true &&
+                !credentials.username.isNullOrBlank() &&
+                !credentials.token.isNullOrBlank()
+    }
+
+    suspend fun fetchListenBrainzPlaylists(): List<ListenBrainzPlaylist> =
+        withContext(Dispatchers.IO) {
+            val credentials = sessionStore.getListenBrainzCredentials()
+            val username = credentials?.username?.trim()?.takeIf(String::isNotEmpty)
+                ?: return@withContext emptyList()
+            val root = fetchJson(
+                ListenBrainzPlaylistApi.playlistsUrl(username),
+                credentials.token,
+            ) ?: return@withContext emptyList()
+            ListenBrainzPlaylistApi.parsePlaylists(root)
+        }
+
+    suspend fun createListenBrainzPlaylist(title: String): ListenBrainzPlaylist? =
+        withContext(Dispatchers.IO) {
+            val cleanTitle = title.trim().takeIf(String::isNotEmpty) ?: return@withContext null
+            val credentials = sessionStore.getListenBrainzCredentials()
+            val username = credentials?.username?.trim()?.takeIf(String::isNotEmpty)
+                ?: return@withContext null
+            val token = credentials.token?.trim()?.takeIf(String::isNotEmpty)
+                ?: return@withContext null
+            val root = postListenBrainzJson(
+                ListenBrainzPlaylistApi.createPlaylistUrl(),
+                ListenBrainzPlaylistApi.createPlaylistBody(cleanTitle, username),
+                token,
+            ) ?: return@withContext null
+            ListenBrainzPlaylistApi.parseCreatedPlaylist(root)
+        }
+
+    suspend fun fetchListenBrainzPlaylistTracks(playlistId: String): List<HomeTrack> =
+        withContext(Dispatchers.IO) {
+            val credentials = sessionStore.getListenBrainzCredentials()
+            val detail = fetchJson(
+                ListenBrainzPlaylistApi.playlistUrl(playlistId),
+                credentials?.token,
+            ) ?: return@withContext emptyList()
+            val playlistTracks = ListenBrainzPlaylistApi.parsePlaylistTracks(detail)
+            if (playlistTracks.isEmpty()) return@withContext emptyList()
+
+            val metadataByMbid = buildMap {
+                ListenBrainzLabs.chunkSeeds(
+                    playlistTracks.map(ListenBrainzPlaylistTrack::recordingMbid),
+                    size = 25,
+                ).forEach { batch ->
+                    val metadataRoot = fetchJson(
+                        ListenBrainzLabs.metadataRecordingUrl(batch),
+                        credentials?.token,
+                    ) ?: return@forEach
+                    putAll(ListenBrainzLabs.parseRecordingMetadata(metadataRoot, batch))
+                }
+            }
+
+            val rawTracks = playlistTracks.mapIndexedNotNull { index, playlistTrack ->
+                val metadata = metadataByMbid[playlistTrack.recordingMbid]
+                val title = playlistTrack.title ?: metadata?.title
+                val artist = playlistTrack.artist ?: metadata?.artistName
+                if (title.isNullOrBlank() || artist.isNullOrBlank()) return@mapIndexedNotNull null
+                HomeTrack(
+                    id = "lb-playlist-$playlistId-$index",
+                    title = title,
+                    artist = artist,
+                    album = playlistTrack.album ?: metadata?.releaseName,
+                    mbid = playlistTrack.recordingMbid,
+                    artistMbid = metadata?.artistMbids?.firstOrNull(),
+                    durationMs = playlistTrack.durationMs ?: metadata?.durationMs,
+                    source = "ListenBrainz",
+                )
+            }
+            resolveTracks(rawTracks)
+        }
+
+    suspend fun addTrackToListenBrainzPlaylist(
+        playlistId: String,
+        track: HomeTrack,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val credentials = sessionStore.getListenBrainzCredentials()
+        val token = credentials?.token?.trim()?.takeIf(String::isNotEmpty)
+            ?: return@withContext false
+        val recordingMbid = track.mbid?.trim()?.takeIf(String::isNotEmpty)
+            ?: fetchJson(ListenBrainzLabs.metadataLookupUrl(track), token)
+                ?.let(ListenBrainzLabs::parseMetadataLookup)
+                ?.recordingMbid
+            ?: return@withContext false
+        val response = postListenBrainzJson(
+            ListenBrainzPlaylistApi.addItemsUrl(playlistId),
+            ListenBrainzPlaylistApi.addTracksBody(listOf(recordingMbid)),
+            token,
+        )
+        response != null
+    }
+
     suspend fun fetchRecommended(): List<HomeTrack> = withContext(Dispatchers.IO) {
         val taste = fetchTasteProfile()
         val recent = taste.recentTracks
@@ -898,6 +1060,34 @@ class HomeFeedRepository(
         )
     }
 
+    private suspend fun postListenBrainzJson(
+        url: String,
+        body: String,
+        token: String,
+    ): JSONObject? {
+        val headers = mapOf(
+            "Accept" to "application/json",
+            "User-Agent" to ListenBrainzRequestPolicy.USER_AGENT,
+            "Authorization" to "Token ${token.trim()}",
+        )
+        val response = ListenBrainzRequestPolicy.execute { http.postJson(url, body, headers) }
+        return response.fold(
+            onSuccess = { raw ->
+                runCatching { JSONObject(raw) }.getOrElse {
+                    logWarning("Malformed JSON from ${redactApiKey(url)}: ${it.message.orEmpty()}")
+                    null
+                }
+            },
+            onFailure = { error ->
+                logWarning(
+                    "Feed request failed (${describe(error)}) for ${redactApiKey(url)}: " +
+                            error.message,
+                )
+                null
+            },
+        )
+    }
+
     private suspend fun fetchJsonArray(url: String, token: String? = null): JSONArray? {
         val headers = buildMap {
             put("Accept", "application/json")
@@ -958,6 +1148,8 @@ class HomeFeedRepository(
         private const val MAX_RECOMMENDATION_SEEDS = 5
         private const val MAX_RECOMMENDATION_CANDIDATES = 20
         private const val MAX_TOP_TRACK_CANDIDATES = 20
+        private const val MAX_LIBRARY_TRACKS = 30
+        private const val MAX_LIBRARY_LOVED_MBIDS = 30
         private const val MAX_TRENDING_CANDIDATES = 20
         private const val MAX_WEEKLY_CANDIDATES = 16
         private const val TASTE_PROFILE_TTL_MS = 15 * 60 * 1_000L
