@@ -122,6 +122,7 @@ import org.shilpo.laboon.home.ListenBrainzPlaylist
 import org.shilpo.laboon.home.TrackIdentity
 import org.shilpo.laboon.theme.renderer.materialSymbolPainterResource
 import org.shilpo.laboon.ui.design.FloatingNavBarClearance
+import org.shilpo.laboon.ui.design.rememberArtistArtworkShape
 import org.shilpo.laboon.ui.design.ScreenScaffold
 import org.shilpo.laboon.ui.design.UserAvatar
 import org.shilpo.laboon.ui.design.theme.RoundedSans
@@ -256,18 +257,39 @@ fun LibraryScreen(
     var refreshLibraryRequest by rememberSaveable { mutableIntStateOf(0) }
     var refreshCategoryOnRequest by remember { mutableStateOf<String?>(null) }
     var refreshPlaylistRequest by rememberSaveable { mutableIntStateOf(0) }
-    val cachedSongs = remember(librarySongsCache) {
-        librarySongsCache.loadLibrarySongs().orEmpty()
+    val cachedPageStates = remember(librarySongsCache) {
+        buildMap {
+            librarySongsCache.loadLibrarySongs()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { put("songs", LibraryPageState(items = it.map(HomeTrack::toLibraryEntry))) }
+            librarySongsCache.loadLibraryAlbums()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { put("albums", LibraryPageState(items = it.map(HomeAlbum::toLibraryEntry))) }
+            librarySongsCache.loadLibraryArtists()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { put("artists", LibraryPageState(items = it.map(HomeArtist::toLibraryEntry))) }
+            librarySongsCache.loadLibraryPlaylists()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { put("playlists", LibraryPageState(items = it.map(ListenBrainzPlaylist::toLibraryEntry))) }
+            librarySongsCache.loadLibraryRecentTracks()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { put("recent", LibraryPageState(items = it.map(HomeTrack::toLibraryEntry))) }
+            librarySongsCache.loadLibraryLovedTracks()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { put("loved", LibraryPageState(items = it.map(HomeTrack::toLibraryEntry))) }
+        }
     }
-    var pageStates by remember(librarySongsCache) {
-        mutableStateOf(
-            if (cachedSongs.isEmpty()) emptyMap() else mapOf(
-                "songs" to LibraryPageState(items = cachedSongs.map(HomeTrack::toLibraryEntry)),
-            ),
-        )
-    }
+    var pageStates by remember(librarySongsCache) { mutableStateOf(cachedPageStates) }
     var selectedPlaylist by remember { mutableStateOf<ListenBrainzPlaylist?>(null) }
     var playlistDetailState by remember { mutableStateOf(LibraryPageState(isLoading = false)) }
+    fun openPlaylist(playlist: ListenBrainzPlaylist) {
+        val cachedTracks = librarySongsCache.loadLibraryPlaylistTracks(playlist.id)
+        playlistDetailState = LibraryPageState(
+            items = cachedTracks.orEmpty().map(HomeTrack::toLibraryEntry),
+            isLoading = cachedTracks.isNullOrEmpty(),
+        )
+        selectedPlaylist = playlist
+    }
     var showCreatePlaylist by rememberSaveable { mutableStateOf(false) }
     var playlistName by rememberSaveable { mutableStateOf("") }
     var isCreatingPlaylist by remember { mutableStateOf(false) }
@@ -302,7 +324,6 @@ fun LibraryScreen(
         if (categoryId != "playlists") selectedPlaylist = null
         val previous = pageStates[categoryId]
         val isExplicitRefresh = refreshCategoryOnRequest == categoryId
-        if (previous != null && categoryId != "songs" && !isExplicitRefresh) return@LaunchedEffect
         if (previous == null) {
             pageStates = pageStates + (categoryId to LibraryPageState(isLoading = true))
         } else if (isExplicitRefresh) {
@@ -318,9 +339,21 @@ fun LibraryScreen(
         } catch (_: Exception) {
             emptyList()
         }
-        val freshSongs = loadedItems.mapNotNull(LibraryEntry::track)
-        if (categoryId == "songs" && freshSongs.isNotEmpty()) {
-            librarySongsCache.saveLibrarySongs(freshSongs)
+        if (loadedItems.isNotEmpty()) {
+            when (categoryId) {
+                "songs" -> librarySongsCache.saveLibrarySongs(loadedItems.mapNotNull(LibraryEntry::track))
+                "albums" -> librarySongsCache.saveLibraryAlbums(loadedItems.mapNotNull(LibraryEntry::album))
+                "artists" -> librarySongsCache.saveLibraryArtists(loadedItems.mapNotNull(LibraryEntry::artist))
+                "playlists" -> librarySongsCache.saveLibraryPlaylists(
+                    loadedItems.mapNotNull(LibraryEntry::playlist),
+                )
+                "recent" -> librarySongsCache.saveLibraryRecentTracks(
+                    loadedItems.mapNotNull(LibraryEntry::track),
+                )
+                "loved" -> librarySongsCache.saveLibraryLovedTracks(
+                    loadedItems.mapNotNull(LibraryEntry::track),
+                )
+            }
         }
         val visibleItems = previous?.items
             ?.takeIf { loadedItems.isEmpty() && it.isNotEmpty() }
@@ -351,6 +384,10 @@ fun LibraryScreen(
         } catch (_: Exception) {
             emptyList()
         }
+        val freshTracks = loadedTracks.mapNotNull(LibraryEntry::track)
+        if (freshTracks.isNotEmpty()) {
+            librarySongsCache.saveLibraryPlaylistTracks(playlist.id, freshTracks)
+        }
         playlistDetailState = LibraryPageState(
             items = if (loadedTracks.isEmpty() && previous.items.isNotEmpty()) {
                 previous.items
@@ -369,6 +406,7 @@ fun LibraryScreen(
         } else {
             try {
                 repository.fetchListenBrainzPlaylists().also { playlists ->
+                    if (playlists.isNotEmpty()) librarySongsCache.saveLibraryPlaylists(playlists)
                     pageStates = pageStates + ("playlists" to LibraryPageState(
                         items = playlists.map(ListenBrainzPlaylist::toLibraryEntry),
                     ))
@@ -508,7 +546,7 @@ fun LibraryScreen(
                                         )
                                         entry.album != null -> onOpenAlbum(entry.album)
                                         entry.artist != null -> onOpenArtist(entry.artist)
-                                        entry.playlist != null -> selectedPlaylist = entry.playlist
+                                        entry.playlist != null -> openPlaylist(entry.playlist)
                                     }
                                 },
                                 onTrackMoreOptions = { track, queue ->
@@ -651,9 +689,13 @@ fun LibraryScreen(
                                 } else {
                                     val entry = created.toLibraryEntry()
                                     val existing = pageStates["playlists"]?.items.orEmpty()
+                                    val updatedPlaylists = listOf(entry) + existing.filterNot { it.id == entry.id }
                                     pageStates = pageStates + ("playlists" to LibraryPageState(
-                                        items = listOf(entry) + existing.filterNot { it.id == entry.id },
+                                        items = updatedPlaylists,
                                     ))
+                                    librarySongsCache.saveLibraryPlaylists(
+                                        updatedPlaylists.mapNotNull(LibraryEntry::playlist),
+                                    )
                                     playlistName = ""
                                     showCreatePlaylist = false
                                     snackbarHostState.showSnackbar(
@@ -731,11 +773,15 @@ fun LibraryScreen(
                                             }
                                             val playlistPage = pageStates["playlists"]
                                             if (playlistPage != null) {
+                                                val updatedPlaylistEntries = playlistPage.items.map {
+                                                    if (it.id == playlist.id) updatedPlaylist.toLibraryEntry() else it
+                                                }
                                                 pageStates = pageStates + ("playlists" to playlistPage.copy(
-                                                    items = playlistPage.items.map {
-                                                        if (it.id == playlist.id) updatedPlaylist.toLibraryEntry() else it
-                                                    },
+                                                    items = updatedPlaylistEntries,
                                                 ))
+                                                librarySongsCache.saveLibraryPlaylists(
+                                                    updatedPlaylistEntries.mapNotNull(LibraryEntry::playlist),
+                                                )
                                             }
                                         }
                                         snackbarHostState.showSnackbar(
@@ -1032,7 +1078,7 @@ private fun LibraryActionRow(
         }
         Spacer(Modifier.width(locateGap))
         LibraryActionIcon(
-            icon = if (isGridLayout) "menu" else "library_books",
+            icon = if (isGridLayout) "menu" else "grid_view",
             description = if (isGridLayout) R.string.library_action_list_layout else R.string.library_action_grid_layout,
             onClick = onToggleLayout,
             shape = RoundedCornerShape(
@@ -1380,62 +1426,48 @@ private fun LibraryListItem(
     index: Int,
     onClick: () -> Unit,
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(76.dp)
-                .clickable(onClick = onClick)
-                .padding(start = 12.dp, end = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
+    val artworkShape = if (item.artist != null) {
+        rememberArtistArtworkShape(item.artist.id)
+    } else {
+        MaterialTheme.shapes.medium
+    }
+    if (item.artist != null) {
+        LibraryListItemContent(item, index, onClick, artworkShape)
+    } else {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.large,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
         ) {
-            LibraryArtwork(item = item, index = index, size = 54.dp)
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 12.dp, end = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                Text(
-                    text = item.title,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = item.subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            LibraryListItemContent(item, index, onClick, artworkShape)
         }
     }
 }
 
 @Composable
-private fun LibraryGridItem(
+private fun LibraryListItemContent(
     item: LibraryEntry,
     index: Int,
     onClick: () -> Unit,
+    artworkShape: Shape,
 ) {
-    Card(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(76.dp)
+            .clickable(onClick = onClick)
+            .padding(start = 12.dp, end = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            LibraryGridArtwork(item = item, index = index)
+        LibraryArtwork(item = item, index = index, size = 54.dp, shape = artworkShape)
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(start = 12.dp, end = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
             Text(
                 text = item.title,
-                modifier = Modifier.padding(top = 10.dp),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
@@ -1453,10 +1485,70 @@ private fun LibraryGridItem(
 }
 
 @Composable
+private fun LibraryGridItem(
+    item: LibraryEntry,
+    index: Int,
+    onClick: () -> Unit,
+) {
+    if (item.artist != null) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(MaterialTheme.shapes.large)
+                .clickable(onClick = onClick)
+                .padding(8.dp),
+        ) {
+            LibraryGridArtwork(
+                item = item,
+                index = index,
+                shape = rememberArtistArtworkShape(item.artist.id),
+            )
+            LibraryGridItemMetadata(item)
+        }
+    } else {
+        Card(
+            onClick = onClick,
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.large,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                LibraryGridArtwork(
+                    item = item,
+                    index = index,
+                    shape = MaterialTheme.shapes.medium,
+                )
+                LibraryGridItemMetadata(item)
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibraryGridItemMetadata(item: LibraryEntry) {
+    Text(
+        text = item.title,
+        modifier = Modifier.padding(top = 10.dp),
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.onSurface,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+    Text(
+        text = item.subtitle,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+@Composable
 private fun LibraryArtwork(
     item: LibraryEntry,
     index: Int,
     size: androidx.compose.ui.unit.Dp,
+    shape: Shape,
 ) {
     val container = when (index % 3) {
         0 -> MaterialTheme.colorScheme.primaryContainer
@@ -1471,7 +1563,7 @@ private fun LibraryArtwork(
     Box(
         modifier = Modifier
             .size(size)
-            .clip(MaterialTheme.shapes.medium)
+            .clip(shape)
             .background(container),
         contentAlignment = Alignment.Center,
     ) {
@@ -1497,12 +1589,13 @@ private fun LibraryArtwork(
 private fun LibraryGridArtwork(
     item: LibraryEntry,
     index: Int,
+    shape: Shape,
 ) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(1f)
-            .clip(MaterialTheme.shapes.medium)
+            .clip(shape)
             .background(
                 when (index % 3) {
                     0 -> MaterialTheme.colorScheme.primaryContainer
@@ -1540,10 +1633,10 @@ private suspend fun fetchLibraryCategory(
 ): List<LibraryEntry> = when (categoryId) {
     "songs" -> repository.fetchLibrarySongs(forceRefresh = true).map(HomeTrack::toLibraryEntry)
     "albums" -> repository.fetchTopAlbums().map(HomeAlbum::toLibraryEntry)
-    "artists" -> repository.fetchTopArtists().map(HomeArtist::toLibraryEntry)
+    "artists" -> repository.fetchTopArtists(forceRefresh = true).map(HomeArtist::toLibraryEntry)
     "playlists" -> repository.fetchListenBrainzPlaylists().map(ListenBrainzPlaylist::toLibraryEntry)
-    "recent" -> repository.fetchRotation().map(HomeTrack::toLibraryEntry)
-    "loved" -> repository.fetchLibraryLovedTracks().map(HomeTrack::toLibraryEntry)
+    "recent" -> repository.fetchLibraryRecentTracks(forceRefresh = true).map(HomeTrack::toLibraryEntry)
+    "loved" -> repository.fetchLibraryLovedTracks(forceRefresh = true).map(HomeTrack::toLibraryEntry)
     else -> emptyList()
 }
 

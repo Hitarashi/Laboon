@@ -220,6 +220,7 @@ object MaterialSymbolCatalog {
         "sort",
         "filter_list",
         "search_off",
+        "grid_view",
         "library_books",
         "menu",
         "cloud",

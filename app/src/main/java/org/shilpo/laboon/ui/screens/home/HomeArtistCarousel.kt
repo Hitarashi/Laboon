@@ -19,21 +19,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -45,6 +40,7 @@ import coil3.request.crossfade
 import org.shilpo.laboon.R
 import org.shilpo.laboon.home.HomeArtist
 import org.shilpo.laboon.ui.design.painterResource
+import org.shilpo.laboon.ui.design.rememberArtistArtworkShape
 
 @Composable
 fun HomeArtistCarousel(
@@ -63,20 +59,18 @@ fun HomeArtistCarousel(
     ) {
         HomeSectionHeading(title, Modifier.padding(horizontal = 24.dp), subtitle)
 
-        val expressiveShape = MaterialShapes.Cookie6Sided.toShape()
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            itemsIndexed(
+            items(
                 items = artists,
-                key = { _, artist -> artist.id },
-            ) { index, artist ->
+                key = HomeArtist::id,
+            ) { artist ->
                 HomeArtistCard(
                     artist = artist,
                     onClick = { onArtistClick(artist) },
-                    imageShape = if (index % 3 == 1) expressiveShape else CircleShape,
                     onLongClick = if (onLongClickArtist != null) {
                         { onLongClickArtist(artist) }
                     } else null,
@@ -92,8 +86,8 @@ fun HomeArtistCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
-    imageShape: Shape = CircleShape,
 ) {
+    val imageShape = rememberArtistArtworkShape(artist.id)
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),

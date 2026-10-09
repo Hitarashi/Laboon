@@ -9,6 +9,7 @@ import org.shilpo.laboon.home.HomeArtist
 import org.shilpo.laboon.home.HomeFeedCache
 import org.shilpo.laboon.home.HomeFeedState
 import org.shilpo.laboon.home.HomeTrack
+import org.shilpo.laboon.home.ListenBrainzPlaylist
 import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.home.SectionLoadState
 import org.shilpo.laboon.home.SectionState
@@ -122,6 +123,67 @@ class HomeFeedCacheTest {
         cache.clear()
 
         assertNull(cache.loadLibrarySongs())
+    }
+
+    @Test
+    fun libraryPageCachesRoundTripAllCategoryData() {
+        val cache = HomeFeedCache(FakeKeyValueStore())
+        val recentTrack = HomeTrack(
+            id = "recent-1",
+            title = "Recent",
+            artist = "Artist",
+            listenedAtMs = 1234L,
+        )
+        val lovedTrack = HomeTrack(id = "loved-1", title = "Loved", artist = "Artist")
+        val album = HomeAlbum(id = "album-1", title = "Album", artist = "Artist")
+        val artist = HomeArtist(id = "artist-1", name = "Artist", playCount = 9L)
+        val playlist = ListenBrainzPlaylist(
+            id = "playlist-1",
+            title = "Playlist",
+            creator = "Listener",
+            isPublic = false,
+            trackCount = 3,
+        )
+        val playlistTracks = listOf(
+            HomeTrack(id = "playlist-song-1", title = "Playlist song", artist = "Artist"),
+        )
+
+        cache.saveLibraryRecentTracks(listOf(recentTrack))
+        cache.saveLibraryLovedTracks(listOf(lovedTrack))
+        cache.saveLibraryAlbums(listOf(album))
+        cache.saveLibraryArtists(listOf(artist))
+        cache.saveLibraryPlaylists(listOf(playlist))
+        cache.saveLibraryPlaylistTracks(playlist.id, playlistTracks)
+
+        assertEquals(listOf(recentTrack), cache.loadLibraryRecentTracks())
+        assertEquals(listOf(lovedTrack), cache.loadLibraryLovedTracks())
+        assertEquals(listOf(album), cache.loadLibraryAlbums())
+        assertEquals(listOf(artist), cache.loadLibraryArtists())
+        assertEquals(listOf(playlist), cache.loadLibraryPlaylists())
+        assertEquals(playlistTracks, cache.loadLibraryPlaylistTracks(playlist.id))
+    }
+
+    @Test
+    fun clearRemovesAllLibraryPageCaches() {
+        val cache = HomeFeedCache(FakeKeyValueStore())
+        cache.saveLibraryRecentTracks(listOf(HomeTrack(id = "recent", title = "R", artist = "A")))
+        cache.saveLibraryLovedTracks(listOf(HomeTrack(id = "loved", title = "L", artist = "A")))
+        cache.saveLibraryAlbums(listOf(HomeAlbum(id = "album", title = "Album", artist = "A")))
+        cache.saveLibraryArtists(listOf(HomeArtist(id = "artist", name = "A")))
+        cache.saveLibraryPlaylists(listOf(ListenBrainzPlaylist(id = "playlist", title = "P")))
+        cache.saveLibraryPlaylistTracks(
+            "playlist",
+            listOf(HomeTrack(id = "song", title = "Song", artist = "A")),
+        )
+
+        cache.clear()
+
+        assertNull(cache.loadLibraryRecentTracks())
+        assertNull(cache.loadLibraryLovedTracks())
+        assertNull(cache.loadLibraryAlbums())
+        assertNull(cache.loadLibraryArtists())
+        assertNull(cache.loadLibraryPlaylists())
+        assertNull(cache.loadLibraryPlaylistTracks("playlist"))
     }
 
     @Test

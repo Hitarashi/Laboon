@@ -65,7 +65,7 @@ class HomeFeedRepository(
                     ?.let { return@withLock it.profile }
 
                 val profile = coroutineScope {
-                    val recent = async { getRawRecentTracks() }
+                    val recent = async { getRawRecentTracks(forceRefresh) }
                     val topTracks = async {
                         val (lastFmTracks, listenBrainzTracks) = coroutineScope {
                             async { fetchLastFmTopTracks(lastFm) } to
@@ -100,10 +100,12 @@ class HomeFeedRepository(
             }
         }
 
-    private suspend fun getRawRecentTracks(): List<HomeTrack> {
+    private suspend fun getRawRecentTracks(forceRefresh: Boolean = false): List<HomeTrack> {
         ensureAccountCacheCurrent()
         return recentTracksMutex.withLock {
-            cachedRecentTracks?.takeIf { System.currentTimeMillis() - cachedRecentTracksAtMs < TASTE_PROFILE_TTL_MS }
+            cachedRecentTracks?.takeIf {
+                !forceRefresh && System.currentTimeMillis() - cachedRecentTracksAtMs < TASTE_PROFILE_TTL_MS
+            }
                 ?.let { return@withLock it }
             val lastFmCreds = sessionStore.getLastFmCredentials()
             val listenBrainzCreds = sessionStore.getListenBrainzCredentials()
@@ -164,6 +166,11 @@ class HomeFeedRepository(
         resolveTracks(fetchTasteProfile().recentTracks)
     }
 
+    suspend fun fetchLibraryRecentTracks(forceRefresh: Boolean = false): List<HomeTrack> =
+        withContext(Dispatchers.IO) {
+            resolveTracks(getRawRecentTracks(forceRefresh)).take(MAX_RECENT_TRACKS)
+        }
+
     /** Library songs combine the user's recent listening with their most-played tracks. */
     suspend fun fetchLibrarySongs(forceRefresh: Boolean = false): List<HomeTrack> =
         withContext(Dispatchers.IO) {
@@ -190,44 +197,58 @@ class HomeFeedRepository(
     }
 
     /** Merges Last.fm loved tracks with ListenBrainz love feedback, resolving LB-only MBIDs in batches. */
-    suspend fun fetchLibraryLovedTracks(): List<HomeTrack> = withContext(Dispatchers.IO) {
-        val profile = fetchTasteProfile()
-        val lovedTracks = profile.lovedTracks
-        val knownMbids = lovedTracks.mapNotNull(HomeTrack::mbid).toSet()
-        val missingMbids = profile.lovedRecordingMbids
-            .filterNot { it in knownMbids }
-            .take(MAX_LIBRARY_LOVED_MBIDS)
-        val listenBrainzTracks = buildList {
-            for (batch in ListenBrainzLabs.chunkSeeds(missingMbids, size = 25)) {
-                val root = fetchJson(
-                    ListenBrainzLabs.metadataRecordingUrl(batch),
-                    sessionStore.getListenBrainzCredentials()?.token,
-                ) ?: continue
-                val metadata = ListenBrainzLabs.parseRecordingMetadata(root, batch)
-                batch.forEach { mbid ->
-                    val recording = metadata[mbid] ?: return@forEach
-                    val title = recording.title?.trim()?.takeIf(String::isNotEmpty) ?: return@forEach
-                    val artist = recording.artistName?.trim()?.takeIf(String::isNotEmpty) ?: return@forEach
-                    add(
-                        HomeTrack(
-                            id = "lb-loved-$mbid",
-                            title = title,
-                            artist = artist,
-                            album = recording.releaseName,
-                            mbid = mbid,
-                            artistMbid = recording.artistMbids.firstOrNull(),
-                            durationMs = recording.durationMs,
-                            source = "ListenBrainz",
-                        ),
-                    )
+    suspend fun fetchLibraryLovedTracks(forceRefresh: Boolean = false): List<HomeTrack> =
+        withContext(Dispatchers.IO) {
+            val (lovedTracks, lovedRecordingMbids) = if (forceRefresh) {
+                val lastFm = sessionStore.getLastFmCredentials()
+                val listenBrainz = sessionStore.getListenBrainzCredentials()
+                coroutineScope {
+                    val lastFmTracks = async { fetchLastFmLovedTracks(lastFm) }
+                    val feedback = async { fetchListenBrainzFeedback(listenBrainz) }
+                    val tracks = lastFmTracks.await()
+                    tracks to (feedback.await().filterValues { it == "love" }.keys +
+                        tracks.mapNotNull(HomeTrack::mbid))
                 }
             }
+            else {
+                val profile = fetchTasteProfile()
+                profile.lovedTracks to profile.lovedRecordingMbids
+            }
+            val knownMbids = lovedTracks.mapNotNull(HomeTrack::mbid).toSet()
+            val missingMbids = lovedRecordingMbids
+                .filterNot { it in knownMbids }
+                .take(MAX_LIBRARY_LOVED_MBIDS)
+            val listenBrainzTracks = buildList {
+                for (batch in ListenBrainzLabs.chunkSeeds(missingMbids, size = 25)) {
+                    val root = fetchJson(
+                        ListenBrainzLabs.metadataRecordingUrl(batch),
+                        sessionStore.getListenBrainzCredentials()?.token,
+                    ) ?: continue
+                    val metadata = ListenBrainzLabs.parseRecordingMetadata(root, batch)
+                    batch.forEach { mbid ->
+                        val recording = metadata[mbid] ?: return@forEach
+                        val title = recording.title?.trim()?.takeIf(String::isNotEmpty) ?: return@forEach
+                        val artist = recording.artistName?.trim()?.takeIf(String::isNotEmpty) ?: return@forEach
+                        add(
+                            HomeTrack(
+                                id = "lb-loved-$mbid",
+                                title = title,
+                                artist = artist,
+                                album = recording.releaseName,
+                                mbid = mbid,
+                                artistMbid = recording.artistMbids.firstOrNull(),
+                                durationMs = recording.durationMs,
+                                source = "ListenBrainz",
+                            ),
+                        )
+                    }
+                }
+            }
+            val candidates = (listenBrainzTracks.take(MAX_LIBRARY_TRACKS / 2) + lovedTracks)
+                .distinctBy(TrackIdentity::keyOf)
+                .take(MAX_LIBRARY_TRACKS)
+            resolveTracks(candidates)
         }
-        val candidates = (listenBrainzTracks.take(MAX_LIBRARY_TRACKS / 2) + lovedTracks)
-            .distinctBy(TrackIdentity::keyOf)
-            .take(MAX_LIBRARY_TRACKS)
-        resolveTracks(candidates)
-    }
 
     fun canManageListenBrainzPlaylists(): Boolean {
         val credentials = sessionStore.getListenBrainzCredentials()
@@ -353,12 +374,23 @@ class HomeFeedRepository(
         resolveTracks(rawRecommended).take(10)
     }
 
-    suspend fun fetchTopArtists(): List<HomeArtist> = withContext(Dispatchers.IO) {
-        val rawArtists = fetchTasteProfile().topArtists
-            .distinctBy { it.name.lowercase().trim() }
-            .take(10)
-        resolveArtists(rawArtists)
-    }
+    suspend fun fetchTopArtists(forceRefresh: Boolean = false): List<HomeArtist> =
+        withContext(Dispatchers.IO) {
+            val rawArtists = (if (forceRefresh) {
+                val lastFm = sessionStore.getLastFmCredentials()
+                val listenBrainz = sessionStore.getListenBrainzCredentials()
+                coroutineScope {
+                    val lastFmArtists = async { fetchLastFmTopArtists(lastFm) }
+                    val listenBrainzArtists = async { fetchListenBrainzTopArtists(listenBrainz) }
+                    lastFmArtists.await() + listenBrainzArtists.await()
+                }
+            } else {
+                fetchTasteProfile().topArtists
+            })
+                .distinctBy { it.name.lowercase().trim() }
+                .take(10)
+            resolveArtists(rawArtists)
+        }
 
     suspend fun fetchTopAlbums(): List<HomeAlbum> = withContext(Dispatchers.IO) {
         val lastFmCreds = sessionStore.getLastFmCredentials()

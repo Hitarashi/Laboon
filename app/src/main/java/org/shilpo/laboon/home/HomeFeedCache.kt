@@ -114,9 +114,73 @@ class HomeFeedCache(private val store: KeyValueStore) {
         }
     }
 
+    fun loadLibraryRecentTracks(): List<HomeTrack>? = loadTracks(KEY_LIBRARY_RECENT_TRACKS_CACHE)
+
+    fun saveLibraryRecentTracks(tracks: List<HomeTrack>) {
+        saveTracks(KEY_LIBRARY_RECENT_TRACKS_CACHE, tracks)
+    }
+
+    fun loadLibraryLovedTracks(): List<HomeTrack>? = loadTracks(KEY_LIBRARY_LOVED_TRACKS_CACHE)
+
+    fun saveLibraryLovedTracks(tracks: List<HomeTrack>) {
+        saveTracks(KEY_LIBRARY_LOVED_TRACKS_CACHE, tracks)
+    }
+
+    fun loadLibraryAlbums(): List<HomeAlbum>? = loadCachedList(KEY_LIBRARY_ALBUMS_CACHE, ::decodeAlbums)
+
+    fun saveLibraryAlbums(albums: List<HomeAlbum>) {
+        saveCachedList(KEY_LIBRARY_ALBUMS_CACHE, encodeAlbums(albums))
+    }
+
+    fun loadLibraryArtists(): List<HomeArtist>? = loadCachedList(KEY_LIBRARY_ARTISTS_CACHE, ::decodeArtists)
+
+    fun saveLibraryArtists(artists: List<HomeArtist>) {
+        saveCachedList(KEY_LIBRARY_ARTISTS_CACHE, encodeArtists(artists))
+    }
+
+    fun loadLibraryPlaylists(): List<ListenBrainzPlaylist>? =
+        loadCachedList(KEY_LIBRARY_PLAYLISTS_CACHE, ::decodePlaylists)
+
+    fun saveLibraryPlaylists(playlists: List<ListenBrainzPlaylist>) {
+        saveCachedList(KEY_LIBRARY_PLAYLISTS_CACHE, encodePlaylists(playlists))
+    }
+
+    fun loadLibraryPlaylistTracks(playlistId: String): List<HomeTrack>? {
+        val raw = store.getString(KEY_LIBRARY_PLAYLIST_TRACKS_CACHE) ?: return null
+        return runCatching {
+            JSONObject(raw).optJSONArray(playlistId)?.let(::decodeTracks)
+        }.getOrNull()
+    }
+
+    fun saveLibraryPlaylistTracks(playlistId: String, tracks: List<HomeTrack>) {
+        runCatching {
+            val root = store.getString(KEY_LIBRARY_PLAYLIST_TRACKS_CACHE)
+                ?.let { runCatching { JSONObject(it) }.getOrNull() }
+                ?: JSONObject()
+            root.put(playlistId, encodeTracks(tracks))
+            store.putString(KEY_LIBRARY_PLAYLIST_TRACKS_CACHE, root.toString())
+        }
+    }
+
     fun clear() {
         store.remove(KEY_FEED_CACHE)
-        store.remove(KEY_LIBRARY_SONGS_CACHE)
+        LIBRARY_CACHE_KEYS.forEach(store::remove)
+    }
+
+    private fun loadTracks(key: String): List<HomeTrack>? =
+        loadCachedList(key, ::decodeTracks)
+
+    private fun saveTracks(key: String, tracks: List<HomeTrack>) {
+        saveCachedList(key, encodeTracks(tracks))
+    }
+
+    private fun <T> loadCachedList(key: String, decode: (JSONArray?) -> List<T>): List<T>? {
+        val raw = store.getString(key) ?: return null
+        return runCatching { decode(JSONArray(raw)) }.getOrNull()
+    }
+
+    private fun saveCachedList(key: String, value: JSONArray) {
+        runCatching { store.putString(key, value.toString()) }
     }
 
     private fun encodeTracks(tracks: List<HomeTrack>): JSONArray {
@@ -288,9 +352,57 @@ class HomeFeedCache(private val store: KeyValueStore) {
         return list
     }
 
+    private fun encodePlaylists(playlists: List<ListenBrainzPlaylist>): JSONArray = JSONArray().apply {
+        playlists.forEach { playlist ->
+            put(JSONObject().apply {
+                put("id", playlist.id)
+                put("title", playlist.title)
+                playlist.creator?.let { put("creator", it) }
+                playlist.isPublic?.let { put("isPublic", it) }
+                playlist.trackCount?.let { put("trackCount", it) }
+            })
+        }
+    }
+
+    private fun decodePlaylists(array: JSONArray?): List<ListenBrainzPlaylist> {
+        if (array == null) return emptyList()
+        return buildList {
+            for (index in 0 until array.length()) {
+                val obj = array.optJSONObject(index) ?: continue
+                val id = obj.optString("id").takeIf(String::isNotBlank) ?: continue
+                val title = obj.optString("title").takeIf(String::isNotBlank) ?: continue
+                add(
+                    ListenBrainzPlaylist(
+                        id = id,
+                        title = title,
+                        creator = obj.optString("creator").takeIf(String::isNotBlank),
+                        isPublic = if (obj.has("isPublic")) obj.optBoolean("isPublic") else null,
+                        trackCount = obj.optInt("trackCount", -1).takeIf { it >= 0 },
+                    ),
+                )
+            }
+        }
+    }
+
     private companion object {
         const val KEY_FEED_CACHE = "home_feed_cache_v1"
         const val KEY_LIBRARY_SONGS_CACHE = "library_songs_cache_v1"
+        const val KEY_LIBRARY_RECENT_TRACKS_CACHE = "library_recent_tracks_cache_v1"
+        const val KEY_LIBRARY_LOVED_TRACKS_CACHE = "library_loved_tracks_cache_v1"
+        const val KEY_LIBRARY_ALBUMS_CACHE = "library_albums_cache_v1"
+        const val KEY_LIBRARY_ARTISTS_CACHE = "library_artists_cache_v1"
+        const val KEY_LIBRARY_PLAYLISTS_CACHE = "library_playlists_cache_v1"
+        const val KEY_LIBRARY_PLAYLIST_TRACKS_CACHE = "library_playlist_tracks_cache_v1"
         const val TRACK_MAPPING_VERSION = 1
+
+        val LIBRARY_CACHE_KEYS = listOf(
+            KEY_LIBRARY_SONGS_CACHE,
+            KEY_LIBRARY_RECENT_TRACKS_CACHE,
+            KEY_LIBRARY_LOVED_TRACKS_CACHE,
+            KEY_LIBRARY_ALBUMS_CACHE,
+            KEY_LIBRARY_ARTISTS_CACHE,
+            KEY_LIBRARY_PLAYLISTS_CACHE,
+            KEY_LIBRARY_PLAYLIST_TRACKS_CACHE,
+        )
     }
 }
