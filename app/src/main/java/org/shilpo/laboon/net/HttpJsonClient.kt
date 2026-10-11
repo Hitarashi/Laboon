@@ -62,6 +62,41 @@ class HttpJsonClient(
             .build()
     }
 
+    suspend fun putJson(
+        url: String,
+        body: String,
+        headers: Map<String, String> = emptyMap(),
+    ): HttpOutcome<String> = execute(url) {
+        Request.Builder()
+            .url(url)
+            .put(body.toRequestBody(JSON_BODY_MEDIA_TYPE))
+            .withHeaders(headers)
+            .build()
+    }
+
+    suspend fun patchJson(
+        url: String,
+        body: String,
+        headers: Map<String, String> = emptyMap(),
+    ): HttpOutcome<String> = execute(url) {
+        Request.Builder()
+            .url(url)
+            .patch(body.toRequestBody(JSON_BODY_MEDIA_TYPE))
+            .withHeaders(headers)
+            .build()
+    }
+
+    suspend fun delete(
+        url: String,
+        headers: Map<String, String> = emptyMap(),
+    ): HttpOutcome<String> = execute(url) {
+        Request.Builder()
+            .url(url)
+            .delete()
+            .withHeaders(headers)
+            .build()
+    }
+
     suspend fun getJson(
         url: String,
         headers: Map<String, String> = emptyMap(),

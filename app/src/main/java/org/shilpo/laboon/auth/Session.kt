@@ -55,17 +55,6 @@ data class LastFmCredentials(
     )
 }
 
-data class ListenBrainzCredentials(
-    val connected: Boolean,
-    val username: String?,
-    val token: String?,
-) {
-    fun normalized(): ListenBrainzCredentials = copy(
-        username = username.normalizedText(),
-        token = token.normalizedText(),
-    )
-}
-
 fun String?.normalizedText(): String? {
     val value = this?.trim().orEmpty()
     if (value.isEmpty() || value.equals("null", ignoreCase = true)) return null

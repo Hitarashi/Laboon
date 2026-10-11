@@ -9,7 +9,7 @@ import org.junit.Test
 class LyricspornTrackBatchTest {
 
     @Test
-    fun `batch request asks for canonical track identifiers`() {
+    fun `batch request asks for canonical identifiers and artwork`() {
         val body = JSONObject(
             LyricspornClient.trackBatchRequestBody(listOf("1559885421", "9876543210")),
         )
@@ -18,6 +18,8 @@ class LyricspornTrackBatchTest {
         assertEquals(2, items.length())
         assertEquals("1559885421", items.getJSONObject(0).getString("appleId"))
         assertTrue(items.getJSONObject(0).getJSONArray("include").toString().contains("identifiers"))
+        assertTrue(items.getJSONObject(0).getJSONArray("include").toString().contains("artwork"))
+        assertEquals(300, body.getInt("artworkSize"))
     }
 
     @Test
@@ -35,6 +37,7 @@ class LyricspornTrackBatchTest {
                             .put("title", "Canonical Title")
                             .put("artist", "Canonical Artist")
                             .put("album", "Canonical Album")
+                            .put("artwork", JSONObject().put("url", "https://example.test/cover/{w}x{h}bb.jpg"))
                             .put("durationMs", 214000)
                             .put("isrc", "USABC2100001"),
                     ),
@@ -55,6 +58,7 @@ class LyricspornTrackBatchTest {
                 name = "Canonical Title",
                 artistName = "Canonical Artist",
                 albumName = "Canonical Album",
+                artworkUrl = "https://example.test/cover/300x300bb.jpg",
                 durationMs = 214000,
                 isrc = "USABC2100001",
             ),

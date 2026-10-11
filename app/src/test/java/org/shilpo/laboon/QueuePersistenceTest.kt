@@ -14,7 +14,7 @@ import org.shilpo.laboon.playback.RepeatMode
 class QueuePersistenceTest {
 
     @Test
-    fun v1RoundTripRetainsHistoryEntryIdsOriginsAndSuppression() {
+    fun v2RoundTripRetainsHistoryEntryIdsOriginsAndSuppression() {
         val store = FakeKeyValueStore()
         val persistence = QueuePersistence(store)
         val first = HomeTrack(
@@ -29,8 +29,6 @@ class QueuePersistenceTest {
             backendTrackId = 7,
             isCached = true,
             codec = "alac",
-            mbid = "recording-1",
-            artistMbid = "artist-1",
             isrc = "isrc-1",
             providerTrackId = "apple-1",
             durationMs = 234_000L,
@@ -59,8 +57,8 @@ class QueuePersistenceTest {
 
         persistence.save(state)
 
-        val payload = store.stored["playback_queue_v1"] as String
-        assertTrue(payload.startsWith("v1\t"))
+        val payload = store.stored["playback_queue_v2"] as String
+        assertTrue(payload.startsWith("v2\t"))
         assertEquals(11, payload.substringBefore('\n').split('\t').size)
 
         val restored = persistence.load()
@@ -69,7 +67,6 @@ class QueuePersistenceTest {
         assertEquals(
             listOf(QueueOrigin.MANUAL, QueueOrigin.AUTOPLAY),
             restored.upcomingEntries.map { it.origin })
-        assertEquals("artist-1", restored.history.first().track.artistMbid)
         assertEquals(234_000L, restored.history.first().track.durationMs)
     }
 
@@ -85,7 +82,7 @@ class QueuePersistenceTest {
     }
 
     @Test
-    fun v1RejectsCorruptHeaderAndEntryPayloads() {
+    fun v2RejectsCorruptHeaderAndEntryPayloads() {
         val valid = QueuePersistenceCodec.encode(
             QueueState.withCurrent(HomeTrack("1", "Song", "Artist")),
         )
@@ -94,8 +91,8 @@ class QueuePersistenceTest {
             "   ",
             "\n\n",
             "unsupported\t0\t0\t0\t0\t0\t0\t0\t\t0\t0",
-            "v1\tnope\t0\t0\t0\t1\t0\t0\t\t0\t0",
-            "v1\t0\t9\t0\t0\t1\t0\t0\t\t0\t0",
+            "v2\tnope\t0\t0\t0\t1\t0\t0\t\t0\t0",
+            "v2\t0\t9\t0\t0\t1\t0\t0\t\t0\t0",
             valid.substringBefore('\n'),
             valid + "\nmalformed",
         )

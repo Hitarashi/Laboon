@@ -9,7 +9,7 @@ import org.shilpo.laboon.home.HomeArtist
 import org.shilpo.laboon.home.HomeFeedCache
 import org.shilpo.laboon.home.HomeFeedState
 import org.shilpo.laboon.home.HomeTrack
-import org.shilpo.laboon.home.ListenBrainzPlaylist
+import org.shilpo.laboon.home.SavedPlaylist
 import org.shilpo.laboon.home.TrackFormatVariant
 import org.shilpo.laboon.home.SectionLoadState
 import org.shilpo.laboon.home.SectionState
@@ -40,7 +40,6 @@ class HomeFeedCacheTest {
             backendTrackId = 42,
             isCached = true,
             codec = "alac",
-            mbid = "mbid-1",
         )
         val artist = HomeArtist(
             id = "a1",
@@ -98,8 +97,6 @@ class HomeFeedCacheTest {
                 source = "Last.fm",
                 backendTrackId = 42,
                 codec = "alac",
-                mbid = "recording-mbid",
-                artistMbid = "artist-mbid",
                 isrc = "USUM72012345",
                 providerTrackId = "apple-track-1",
                 availableFormats = listOf("alac"),
@@ -137,12 +134,17 @@ class HomeFeedCacheTest {
         val lovedTrack = HomeTrack(id = "loved-1", title = "Loved", artist = "Artist")
         val album = HomeAlbum(id = "album-1", title = "Album", artist = "Artist")
         val artist = HomeArtist(id = "artist-1", name = "Artist", playCount = 9L)
-        val playlist = ListenBrainzPlaylist(
+        val playlist = SavedPlaylist(
             id = "playlist-1",
-            title = "Playlist",
-            creator = "Listener",
-            isPublic = false,
+            name = "Playlist",
+            isFavorites = false,
+            sourceUrl = "https://music.youtube.com/playlist?list=public-id",
             trackCount = 3,
+            previewTrackIds = listOf("1559885421", "1440643709"),
+            previewArtworkByTrackId = mapOf(
+                "1559885421" to "https://example.test/first.jpg",
+                "1440643709" to "https://example.test/second.jpg",
+            ),
         )
         val playlistTracks = listOf(
             HomeTrack(id = "playlist-song-1", title = "Playlist song", artist = "Artist"),
@@ -174,7 +176,7 @@ class HomeFeedCacheTest {
         cache.saveLibraryLovedTracks(listOf(HomeTrack(id = "loved", title = "L", artist = "A")))
         cache.saveLibraryAlbums(listOf(HomeAlbum(id = "album", title = "Album", artist = "A")))
         cache.saveLibraryArtists(listOf(HomeArtist(id = "artist", name = "A")))
-        cache.saveLibraryPlaylists(listOf(ListenBrainzPlaylist(id = "playlist", title = "P")))
+        cache.saveLibraryPlaylists(listOf(SavedPlaylist(id = "playlist", name = "P", isFavorites = false)))
         cache.saveLibraryPlaylistTracks(
             "playlist",
             listOf(HomeTrack(id = "song", title = "Song", artist = "A")),

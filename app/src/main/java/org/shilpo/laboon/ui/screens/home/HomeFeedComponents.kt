@@ -389,13 +389,16 @@ internal fun HomeDailyMixTrackRow(
     onClick: () -> Unit,
     onMoreOptionsClick: () -> Unit,
     showArtwork: Boolean = false,
+    modifier: Modifier = Modifier,
+    leadingContent: (@Composable () -> Unit)? = null,
+    trailingContent: (@Composable () -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val rowShape = if (isCurrentSong) RoundedCornerShape(50.dp) else RoundedCornerShape(10.dp)
     val containerColor = if (isCurrentSong) colors.primaryContainer else colors.surfaceContainerLow
     val contentColor = if (isCurrentSong) colors.onPrimaryContainer else colors.onSurface
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(rowShape)
             .background(containerColor)
@@ -408,6 +411,7 @@ internal fun HomeDailyMixTrackRow(
             .padding(horizontal = 13.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        leadingContent?.invoke()
         if (showArtwork) {
             HomeArtwork(
                 artworkUrl = track.artworkUrl,
@@ -459,6 +463,7 @@ internal fun HomeDailyMixTrackRow(
                 modifier = Modifier.size(24.dp),
             )
         }
+        trailingContent?.invoke()
     }
 }
 

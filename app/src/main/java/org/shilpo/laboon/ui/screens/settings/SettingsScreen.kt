@@ -125,13 +125,12 @@ enum class SettingsCategory(
     ),
     SERVICES(
         title = "Services & Scrobbling",
-        subtitle = "Peerless server, Last.fm, ListenBrainz & auto-rip",
+        subtitle = "Peerless server, Last.fm & auto-rip",
         iconRes = R.drawable.ic_services_scrobble,
         badge = "Active",
         plannedFeatures = listOf(
             "Peerless server MTProto connection, timeout & chunk streaming logic",
             "Last.fm real-time scrobble submission & playback threshold",
-            "ListenBrainz scrobbling integration",
             "Background track auto-ripping coordinator & cloud caching",
             "Custom DNS-over-HTTPS & proxy tunneling configuration",
         ),

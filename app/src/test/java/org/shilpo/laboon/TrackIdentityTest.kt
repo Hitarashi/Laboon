@@ -34,8 +34,8 @@ class TrackIdentityTest {
         "Earth, Wind & Fire",
     )
 
-    private fun track(title: String, artist: String = "Artist", mbid: String? = null) =
-        HomeTrack(id = "id-$title", title = title, artist = artist, mbid = mbid)
+    private fun track(title: String, artist: String = "Artist") =
+        HomeTrack(id = "id-$title", title = title, artist = artist)
 
     @Test
     fun testIdenticalTitleAndArtistShareKey() {
@@ -114,26 +114,8 @@ class TrackIdentityTest {
     }
 
     @Test
-    fun testSameMbidYieldsSameKeyAcrossSpellings() {
-        assertEquals(
-            TrackIdentity.keyOf(track("Song (Remastered 2011)", mbid = "abc-123")),
-            TrackIdentity.keyOf(track("Song", mbid = "ABC-123")),
-        )
-    }
-
-    @Test
-    fun testDifferentMbidsYieldDifferentKeys() {
-        assertNotEquals(
-            TrackIdentity.keyOf(track("Song", mbid = "abc-123")),
-            TrackIdentity.keyOf(track("Song", mbid = "def-456")),
-        )
-    }
-
-    @Test
-    fun testBlankMbidFallsThroughToMetadataKey() {
-        val metadataKey = TrackIdentity.keyOf(track("Song", "Artist"))
-        assertEquals(metadataKey, TrackIdentity.keyOf(track("Song", "Artist", mbid = "   ")))
-        assertEquals(metadataKey, TrackIdentity.keyOf(track("Song", "Artist", mbid = "")))
+    fun sameRecordingIdentityUsesOnlyNormalizedTitleAndArtist() {
+        assertEquals(TrackIdentity.keyOf(track("Song (Remastered 2011)", "Artist")), TrackIdentity.keyOf(track("Song", "Artist")))
     }
 
     @Test

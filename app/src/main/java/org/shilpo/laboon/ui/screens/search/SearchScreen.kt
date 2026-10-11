@@ -33,8 +33,6 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ButtonGroupDefaults
 import androidx.compose.material3.CircularWavyProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
@@ -103,6 +101,7 @@ import org.shilpo.laboon.ui.design.FloatingCombinedClearance
 import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
 import org.shilpo.laboon.ui.design.TrackCodecBadges
 import org.shilpo.laboon.ui.design.painterResource
+import org.shilpo.laboon.ui.screens.home.HomeDailyMixSongOptionsSheet
 
 @Composable
 fun SearchScreen(
@@ -116,6 +115,8 @@ fun SearchScreen(
     onPlayWithContext: ((HomeTrack, List<HomeTrack>) -> Unit)? = null,
     onPlayNext: ((HomeTrack) -> Unit)? = null,
     onAddToQueue: ((HomeTrack) -> Unit)? = null,
+    onAddToPlaylist: ((HomeTrack) -> Unit)? = null,
+    onLoadTrackGenres: suspend (HomeTrack) -> List<String> = { emptyList() },
     ripTasks: List<RipTaskSnapshot> = emptyList(),
     pendingRipTrackIds: Set<String> = emptySet(),
     onRipTrack: (HomeTrack) -> Unit = {},
@@ -169,6 +170,18 @@ fun SearchScreen(
     var stationResults by remember { mutableStateOf<List<HomeStation>>(emptyList()) }
     var musicVideoResults by remember { mutableStateOf<List<HomeTrack>>(emptyList()) }
     var topResults by remember { mutableStateOf<List<LyricspornCatalogItem>>(emptyList()) }
+    var selectedTrackForOptions by remember { mutableStateOf<HomeTrack?>(null) }
+    var selectedTrackOptionsContext by remember { mutableStateOf<List<HomeTrack>>(emptyList()) }
+
+    fun openTrackOptions(track: HomeTrack, contextTracks: List<HomeTrack>) {
+        selectedTrackForOptions = track
+        selectedTrackOptionsContext = contextTracks
+    }
+
+    fun dismissTrackOptions() {
+        selectedTrackForOptions = null
+        selectedTrackOptionsContext = emptyList()
+    }
 
     fun clearAllResults() {
         searchRequest = null
@@ -479,8 +492,11 @@ fun SearchScreen(
             onPlaylistClick = onPlaylistClick,
             onStationClick = onStationClick,
             onPlayWithContext = onPlayWithContext,
-            onPlayNext = onPlayNext,
-            onAddToQueue = onAddToQueue,
+            onTrackOptions = if (onPlayNext != null || onAddToQueue != null) {
+                ::openTrackOptions
+            } else {
+                null
+            },
             ripTasks = ripTasks,
             pendingRipTrackIds = pendingRipTrackIds,
             onRipTrack = onRipTrack,
@@ -499,6 +515,41 @@ fun SearchScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
+        )
+    }
+
+    selectedTrackForOptions?.let { track ->
+        HomeDailyMixSongOptionsSheet(
+            track = track,
+            onDismiss = ::dismissTrackOptions,
+            onPlay = {
+                recordSearchTrack(track)
+                if (onPlayWithContext != null) {
+                    onPlayWithContext(track, selectedTrackOptionsContext)
+                } else {
+                    onTrackClick(track)
+                }
+                dismissTrackOptions()
+            },
+            onPlayNext = {
+                onPlayNext?.invoke(track)
+                dismissTrackOptions()
+            },
+            onAddToQueue = {
+                onAddToQueue?.invoke(track)
+                dismissTrackOptions()
+            },
+            onAddToPlaylist = onAddToPlaylist?.let { addTrack ->
+                {
+                    addTrack(track)
+                    dismissTrackOptions()
+                }
+            },
+            onLoadTrackGenres = onLoadTrackGenres,
+            onDownload = {
+                onRipTrack(track)
+                dismissTrackOptions()
+            },
         )
     }
 }
@@ -540,8 +591,7 @@ private fun SearchBody(
     onPlaylistClick: (HomePlaylist) -> Unit,
     onStationClick: (HomeStation) -> Unit,
     onPlayWithContext: ((HomeTrack, List<HomeTrack>) -> Unit)?,
-    onPlayNext: ((HomeTrack) -> Unit)?,
-    onAddToQueue: ((HomeTrack) -> Unit)?,
+    onTrackOptions: ((HomeTrack, List<HomeTrack>) -> Unit)?,
     ripTasks: List<RipTaskSnapshot>,
     pendingRipTrackIds: Set<String>,
     onRipTrack: (HomeTrack) -> Unit,
@@ -714,8 +764,7 @@ private fun SearchBody(
                                             contextTracks = results,
                                             onTrackClick = onTrackClick,
                                             onPlayWithContext = onPlayWithContext,
-                                            onPlayNext = onPlayNext,
-                                            onAddToQueue = onAddToQueue,
+                                            onTrackOptions = onTrackOptions,
                                             ripTasks = ripTasks,
                                             pendingRipTrackIds = pendingRipTrackIds,
                                             onRipTrack = onRipTrack,
@@ -793,8 +842,7 @@ private fun SearchBody(
                                         contextTracks = results,
                                         onTrackClick = onTrackClick,
                                         onPlayWithContext = onPlayWithContext,
-                                        onPlayNext = onPlayNext,
-                                        onAddToQueue = onAddToQueue,
+                                        onTrackOptions = onTrackOptions,
                                         ripTasks = ripTasks,
                                         pendingRipTrackIds = pendingRipTrackIds,
                                         onRipTrack = onRipTrack,
@@ -871,8 +919,7 @@ private fun SearchBody(
                                         contextTracks = musicVideoResults,
                                         onTrackClick = onTrackClick,
                                         onPlayWithContext = onPlayWithContext,
-                                        onPlayNext = onPlayNext,
-                                        onAddToQueue = onAddToQueue,
+                                        onTrackOptions = onTrackOptions,
                                         ripTasks = ripTasks,
                                         pendingRipTrackIds = pendingRipTrackIds,
                                         onRipTrack = onRipTrack,
@@ -943,8 +990,7 @@ private fun SearchBody(
                                 contextTracks = suggestions,
                                 onTrackClick = onTrackClick,
                                 onPlayWithContext = onPlayWithContext,
-                                onPlayNext = onPlayNext,
-                                onAddToQueue = onAddToQueue,
+                                onTrackOptions = onTrackOptions,
                                 ripTasks = ripTasks,
                                 pendingRipTrackIds = pendingRipTrackIds,
                                 onRipTrack = onRipTrack,
@@ -965,8 +1011,7 @@ private fun SearchTrackRow(
     contextTracks: List<HomeTrack>,
     onTrackClick: (HomeTrack) -> Unit,
     onPlayWithContext: ((HomeTrack, List<HomeTrack>) -> Unit)?,
-    onPlayNext: ((HomeTrack) -> Unit)?,
-    onAddToQueue: ((HomeTrack) -> Unit)?,
+    onTrackOptions: ((HomeTrack, List<HomeTrack>) -> Unit)?,
     ripTasks: List<RipTaskSnapshot>,
     pendingRipTrackIds: Set<String>,
     onRipTrack: (HomeTrack) -> Unit,
@@ -974,7 +1019,6 @@ private fun SearchTrackRow(
     onTrackSelected: (HomeTrack) -> Unit = {},
     onRemoveFromHistory: (() -> Unit)? = null,
 ) {
-    var menuExpanded by remember { mutableStateOf(false) }
     val sourceTrackId = track.providerTrackId
     val ripTask = remember(ripTasks, sourceTrackId) {
         ripTasks.firstOrNull {
@@ -1081,42 +1125,17 @@ private fun SearchTrackRow(
             }
         }
 
-        if (onPlayNext != null || onAddToQueue != null) {
-            Box {
-                IconButton(
-                    onClick = { menuExpanded = true },
-                    modifier = Modifier.size(36.dp),
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_more_vert),
-                        contentDescription = "Options",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-                DropdownMenu(
-                    expanded = menuExpanded,
-                    onDismissRequest = { menuExpanded = false },
-                ) {
-                    if (onPlayNext != null) {
-                        DropdownMenuItem(
-                            text = { Text("Play Next") },
-                            onClick = {
-                                menuExpanded = false
-                                onPlayNext(track)
-                            },
-                        )
-                    }
-                    if (onAddToQueue != null) {
-                        DropdownMenuItem(
-                            text = { Text("Add to Queue") },
-                            onClick = {
-                                menuExpanded = false
-                                onAddToQueue(track)
-                            },
-                        )
-                    }
-                }
+        onTrackOptions?.let { showOptions ->
+            IconButton(
+                onClick = { showOptions(track, contextTracks) },
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_more_vert),
+                    contentDescription = "Options",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.size(20.dp),
+                )
             }
         }
     }
@@ -2120,15 +2139,13 @@ private fun SearchMusicVideoRow(
     contextTracks: List<HomeTrack>,
     onTrackClick: (HomeTrack) -> Unit,
     onPlayWithContext: ((HomeTrack, List<HomeTrack>) -> Unit)?,
-    onPlayNext: ((HomeTrack) -> Unit)?,
-    onAddToQueue: ((HomeTrack) -> Unit)?,
+    onTrackOptions: ((HomeTrack, List<HomeTrack>) -> Unit)?,
     ripTasks: List<RipTaskSnapshot>,
     pendingRipTrackIds: Set<String>,
     onRipTrack: (HomeTrack) -> Unit,
     onOpenRipVisualizer: () -> Unit,
     onTrackSelected: (HomeTrack) -> Unit = {},
 ) {
-    var menuExpanded by remember { mutableStateOf(false) }
     val sourceTrackId = track.providerTrackId
     val ripTask = remember(ripTasks, sourceTrackId) {
         ripTasks.firstOrNull { it.sourceTrackId == sourceTrackId }
@@ -2236,42 +2253,17 @@ private fun SearchMusicVideoRow(
             )
         }
 
-        if (onPlayNext != null || onAddToQueue != null) {
-            Box {
-                IconButton(
-                    onClick = { menuExpanded = true },
-                    modifier = Modifier.size(36.dp),
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_more_vert),
-                        contentDescription = "Options",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-                DropdownMenu(
-                    expanded = menuExpanded,
-                    onDismissRequest = { menuExpanded = false },
-                ) {
-                    if (onPlayNext != null) {
-                        DropdownMenuItem(
-                            text = { Text("Play Next") },
-                            onClick = {
-                                menuExpanded = false
-                                onPlayNext(track)
-                            },
-                        )
-                    }
-                    if (onAddToQueue != null) {
-                        DropdownMenuItem(
-                            text = { Text("Add to Queue") },
-                            onClick = {
-                                menuExpanded = false
-                                onAddToQueue(track)
-                            },
-                        )
-                    }
-                }
+        onTrackOptions?.let { showOptions ->
+            IconButton(
+                onClick = { showOptions(track, contextTracks) },
+                modifier = Modifier.size(36.dp),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_more_vert),
+                    contentDescription = "Options",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.size(20.dp),
+                )
             }
         }
     }

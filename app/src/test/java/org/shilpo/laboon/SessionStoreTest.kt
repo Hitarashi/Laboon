@@ -9,7 +9,6 @@ import org.shilpo.laboon.auth.AuthSession
 import org.shilpo.laboon.auth.AuthUser
 import org.shilpo.laboon.auth.KeyValueStore
 import org.shilpo.laboon.auth.LastFmCredentials
-import org.shilpo.laboon.auth.ListenBrainzCredentials
 import org.shilpo.laboon.auth.OnboardingProgress
 import org.shilpo.laboon.auth.SessionStore
 import org.shilpo.laboon.auth.normalizedText
@@ -59,24 +58,18 @@ class SessionStoreTest {
     }
 
     @Test
-    fun getListenBrainzCredentials_aFreshStore_reportsNoCredentials() {
-        val store = SessionStore(FakeKeyValueStore())
+    fun initialization_removesDeprecatedListenBrainzCredentials() {
+        val keyValueStore = FakeKeyValueStore().apply {
+            putBoolean("listenbrainz_connected", true)
+            putString("listenbrainz_username", "ada")
+            putString("listenbrainz_token", "legacy-token")
+        }
 
-        assertNull(store.getListenBrainzCredentials())
-    }
+        SessionStore(keyValueStore)
 
-    @Test
-    fun saveListenBrainzCredentials_thenGetListenBrainzCredentials_roundTripsEveryField() {
-        val store = SessionStore(FakeKeyValueStore())
-        val credentials = ListenBrainzCredentials(
-            connected = true,
-            username = "ada",
-            token = "lb-token",
-        )
-
-        store.saveListenBrainzCredentials(credentials)
-
-        assertEquals(credentials, store.getListenBrainzCredentials())
+        assertFalse(keyValueStore.contains("listenbrainz_connected"))
+        assertFalse(keyValueStore.contains("listenbrainz_username"))
+        assertFalse(keyValueStore.contains("listenbrainz_token"))
     }
 
     @Test
@@ -155,7 +148,6 @@ class SessionStoreTest {
         val onboarding = OnboardingProgress(keyValueStore)
         store.saveSession(session())
         store.saveLastFmCredentials(LastFmCredentials(true, "ada", "sk", "ak", "as"))
-        store.saveListenBrainzCredentials(ListenBrainzCredentials(true, "ada", "token"))
         onboarding.markPermissionsCompleted()
 
         keyValueStore.clear()
@@ -163,7 +155,6 @@ class SessionStoreTest {
         assertTrue(keyValueStore.stored.isEmpty())
         assertNull(store.getSession())
         assertNull(store.getLastFmCredentials())
-        assertNull(store.getListenBrainzCredentials())
         assertFalse(onboarding.hasCompletedPermissions)
     }
 
@@ -213,7 +204,6 @@ class SessionStoreTest {
         val store = SessionStore(keyValueStore)
         store.saveSession(session())
         store.saveLastFmCredentials(LastFmCredentials(true, "ada", "sk", "ak", "as"))
-        store.saveListenBrainzCredentials(ListenBrainzCredentials(true, "ada", "token"))
         assertEquals(
             "the fixture must actually populate every key the class owns",
             OWNED_KEYS.toSet(),
@@ -235,7 +225,6 @@ class SessionStoreTest {
 
         assertNull(store.getSession())
         assertNull(store.getLastFmCredentials())
-        assertNull(store.getListenBrainzCredentials())
         assertTrue(keyValueStore.stored.isEmpty())
     }
 
@@ -245,14 +234,12 @@ class SessionStoreTest {
         val store = SessionStore(keyValueStore)
         store.saveSession(session())
         store.saveLastFmCredentials(LastFmCredentials(true, "ada", "sk", "ak", "as"))
-        store.saveListenBrainzCredentials(ListenBrainzCredentials(true, "ada", "token"))
 
         store.signOut()
         store.signOut()
 
         assertNull(store.getSession())
         assertNull(store.getLastFmCredentials())
-        assertNull(store.getListenBrainzCredentials())
         assertTrue(keyValueStore.stored.isEmpty())
     }
 
@@ -263,7 +250,6 @@ class SessionStoreTest {
         val onboarding = OnboardingProgress(keyValueStore)
         store.saveSession(session())
         store.saveLastFmCredentials(LastFmCredentials(true, "ada", "sk", "ak", "as"))
-        store.saveListenBrainzCredentials(ListenBrainzCredentials(true, "ada", "token"))
         onboarding.markPermissionsCompleted()
         keyValueStore.calls.clear()
 
@@ -284,7 +270,6 @@ class SessionStoreTest {
         val onboarding = OnboardingProgress(keyValueStore)
         store.saveSession(session())
         store.saveLastFmCredentials(LastFmCredentials(true, "ada", "sk", "ak", "as"))
-        store.saveListenBrainzCredentials(ListenBrainzCredentials(true, "ada", "token"))
         onboarding.markPermissionsCompleted()
 
         store.signOut()
@@ -293,7 +278,6 @@ class SessionStoreTest {
         assertNull(store.getSession())
         assertFalse(store.hasSession())
         assertNull(store.getLastFmCredentials())
-        assertNull(store.getListenBrainzCredentials())
         assertFalse(onboarding.hasCompletedPermissions)
         assertTrue("not one key may survive logout", keyValueStore.stored.isEmpty())
     }
@@ -489,13 +473,8 @@ class SessionStoreTest {
             "lastfm_api_secret",
         )
 
-        val LISTENBRAINZ_KEYS = listOf(
-            "listenbrainz_connected",
-            "listenbrainz_username",
-            "listenbrainz_token",
-        )
 
-        val OWNED_KEYS = SESSION_KEYS + LASTFM_KEYS + LISTENBRAINZ_KEYS
+        val OWNED_KEYS = SESSION_KEYS + LASTFM_KEYS
 
         const val ONBOARDING_KEY = "permissions_completed"
     }

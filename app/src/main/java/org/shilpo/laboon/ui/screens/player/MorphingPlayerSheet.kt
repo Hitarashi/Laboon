@@ -119,7 +119,7 @@ fun MorphingPlayerSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     backdropState: LiquidGlassBackdropState? = null,
-    albumDockProgress: Float = 0f,
+    bottomChromeHiddenProgress: Float = 0f,
     onMoreClick: () -> Unit = {},
     onExpansionProgressChange: ((Float) -> Unit)? = null,
     queueState: QueueState? = null,
@@ -149,7 +149,7 @@ fun MorphingPlayerSheet(
     val collapsedBottomChromeClearance = lerp(
         start = NavigationBarHeight + NavigationBarBottomPadding + MiniPlayerSpacing,
         stop = MiniPlayerSpacing,
-        fraction = albumDockProgress.coerceIn(0f, 1f),
+        fraction = bottomChromeHiddenProgress.coerceIn(0f, 1f),
     )
     MaterialTheme(
         colorScheme = playerColorScheme,
@@ -177,7 +177,7 @@ fun MorphingPlayerSheet(
             onDismiss = onDismiss,
             onExpansionChange = onExpansionProgressChange,
             collapsedBottomChromeClearance = collapsedBottomChromeClearance,
-            navigationBarHiddenProgress = albumDockProgress,
+            navigationBarHiddenProgress = bottomChromeHiddenProgress,
             queueState = queueState,
             onRemove = onRemoveUpNext,
             onMove = onMoveUpNext,

@@ -23,7 +23,7 @@ class QueuePersistence(private val store: KeyValueStore) {
     }
 
     private companion object {
-        const val STORAGE_KEY = "playback_queue_v1"
+        const val STORAGE_KEY = "playback_queue_v2"
     }
 }
 
@@ -62,9 +62,9 @@ private const val DEFAULT_FLUSH_DELAY_MS = 750L
 
 object QueuePersistenceCodec {
 
-    private const val VERSION = "v1"
+    private const val VERSION = "v2"
     private const val HEADER_FIELDS = 11
-    private const val ITEM_FIELDS = 18
+    private const val ITEM_FIELDS = 16
     private const val MAX_HISTORY = 200
     private const val MAX_QUEUE_ENTRIES = 200
     private const val MAX_CONTEXT_ENTRIES = 200
@@ -209,11 +209,9 @@ object QueuePersistenceCodec {
         encodeOptional(track.backendTrackId?.toString()),
         track.isCached.asToken(),
         encodeOptional(track.codec),
-        encodeOptional(track.mbid),
         encodeOptional(track.isrc),
         encodeOptional(track.providerTrackId),
         encodeOptional(track.availableVariants.takeIf { it.isNotEmpty() }?.let(::encodeVariants)),
-        encodeOptional(track.artistMbid),
         encodeOptional(track.durationMs?.toString()),
         encodeOptional(track.contentRating),
     ).joinToString("\t")
@@ -240,19 +238,17 @@ object QueuePersistenceCodec {
             backendTrackId = decodeOptional(values[8])?.toIntOrNull(),
             isCached = isCached,
             codec = decodeOptional(values[10]),
-            mbid = decodeOptional(values[11]),
-            isrc = decodeOptional(values[12]),
-            providerTrackId = decodeOptional(values[13]),
-            availableFormats = decodeOptional(values[14])
+            isrc = decodeOptional(values[11]),
+            providerTrackId = decodeOptional(values[12]),
+            availableFormats = decodeOptional(values[13])
                 ?.let(::decodeVariants)
                 ?.map(TrackFormatVariant::format)
                 .orEmpty(),
-            availableVariants = decodeOptional(values[14])
+            availableVariants = decodeOptional(values[13])
                 ?.let(::decodeVariants)
                 .orEmpty(),
-            artistMbid = decodeOptional(values[15]),
-            durationMs = decodeOptional(values[16])?.toLongOrNull(),
-            contentRating = decodeOptional(values[17]),
+            durationMs = decodeOptional(values[14])?.toLongOrNull(),
+            contentRating = decodeOptional(values[15]),
         )
     }
 

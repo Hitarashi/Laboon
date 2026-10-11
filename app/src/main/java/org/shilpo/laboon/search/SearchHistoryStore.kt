@@ -9,6 +9,10 @@ import java.util.Locale
 
 class SearchHistoryStore(private val store: KeyValueStore) {
 
+    init {
+        store.remove("search_track_history_v1")
+    }
+
     fun load(): List<String> {
         val raw = store.getString(KEY_SEARCH_HISTORY) ?: return emptyList()
         val entries = runCatching { JSONArray(raw) }.getOrNull() ?: return emptyList()
@@ -105,7 +109,6 @@ class SearchHistoryStore(private val store: KeyValueStore) {
         backendTrackId?.let { put("backendTrackId", it) }
         put("isCached", isCached)
         codec?.let { put("codec", it) }
-        mbid?.let { put("mbid", it) }
         isrc?.let { put("isrc", it) }
         providerTrackId?.let { put("providerTrackId", it) }
         put("availableFormats", JSONArray(availableFormats))
@@ -163,7 +166,6 @@ class SearchHistoryStore(private val store: KeyValueStore) {
                 .takeIf { has("backendTrackId") && it > 0 },
             isCached = optBoolean("isCached", false),
             codec = optString("codec").takeIf(String::isNotBlank),
-            mbid = optString("mbid").takeIf(String::isNotBlank),
             isrc = optString("isrc").takeIf(String::isNotBlank),
             providerTrackId = optString("providerTrackId").takeIf(String::isNotBlank),
             availableFormats = formats.ifEmpty { variants.map(TrackFormatVariant::format) },
@@ -174,7 +176,7 @@ class SearchHistoryStore(private val store: KeyValueStore) {
 
     private companion object {
         const val KEY_SEARCH_HISTORY = "search_history_v1"
-        const val KEY_TRACK_HISTORY = "search_track_history_v1"
+        const val KEY_TRACK_HISTORY = "search_track_history_v2"
         const val MAX_HISTORY_SIZE = 12
     }
 }

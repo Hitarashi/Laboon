@@ -352,7 +352,6 @@ enum class VisualThemeAction(val id: String) {
     CONTINUE("continue"),
     OPEN_TELEGRAM("openTelegram"),
     CONNECT_LAST_FM("connectLastFm"),
-    CONNECT_LISTENBRAINZ("connectListenBrainz"),
     REQUEST_PERMISSION("requestPermission"),
     OPEN_SETTINGS("openSettings"),
     OPEN_SETTINGS_CATEGORY("openSettingsCategory"),

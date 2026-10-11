@@ -129,6 +129,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.platform.LocalDensity
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -143,12 +146,15 @@ import org.shilpo.laboon.home.HomeArtist
 import org.shilpo.laboon.home.HomeFeedCache
 import org.shilpo.laboon.home.HomeFeedRepository
 import org.shilpo.laboon.home.HomeTrack
-import org.shilpo.laboon.home.ListenBrainzPlaylist
+import org.shilpo.laboon.home.SavedPlaylist
+import org.shilpo.laboon.home.previewArtworkUrls
 import org.shilpo.laboon.home.TrackIdentity
 import org.shilpo.laboon.home.YouTubePlaylistImportResult
 import org.shilpo.laboon.home.YouTubePlaylistSkippedTrack
 import org.shilpo.laboon.theme.renderer.materialSymbolPainterResource
 import org.shilpo.laboon.ui.design.FloatingNavBarClearance
+import org.shilpo.laboon.ui.design.MiniPlayerHeight
+import org.shilpo.laboon.ui.design.MiniPlayerSpacing
 import org.shilpo.laboon.ui.design.rememberArtistArtworkShape
 import org.shilpo.laboon.ui.design.ScreenScaffold
 import org.shilpo.laboon.ui.design.UserAvatar
@@ -173,7 +179,7 @@ private data class LibraryEntry(
     val track: HomeTrack? = null,
     val album: HomeAlbum? = null,
     val artist: HomeArtist? = null,
-    val playlist: ListenBrainzPlaylist? = null,
+    val playlist: SavedPlaylist? = null,
 )
 
 private data class LibraryPageState(
@@ -210,6 +216,10 @@ private enum class LibrarySort(val label: Int) {
     RECENT(R.string.library_sort_recent),
     TITLE(R.string.library_sort_title),
     ARTIST(R.string.library_sort_artist),
+}
+
+private val LibrarySortSheetOptions = LibrarySort.entries.map { option ->
+    LibrarySortSheetOption(key = option.name, label = option.label)
 }
 
 private fun sortSongLibraryEntries(
@@ -260,6 +270,7 @@ fun LibraryScreen(
     onPlayTrack: (HomeTrack, List<HomeTrack>) -> Unit = { _, _ -> },
     currentTrack: HomeTrack? = null,
     isPlaying: Boolean = false,
+    isPlayerExpanded: Boolean = false,
     onPlayNextTrack: (HomeTrack) -> Unit = {},
     onAddToQueueTrack: (HomeTrack) -> Unit = {},
     onLoadTrackGenres: suspend (HomeTrack) -> List<String> = { emptyList() },
@@ -267,6 +278,9 @@ fun LibraryScreen(
     onOpenArtist: (HomeArtist) -> Unit = {},
     onShuffleAlbum: (HomeAlbum) -> Unit = {},
     onShuffleArtist: (HomeArtist) -> Unit = {},
+    onPlaylistDetailVisibilityChanged: (Boolean) -> Unit = {},
+    requestedTrackToAddToPlaylist: HomeTrack? = null,
+    onPlaylistAddRequestHandled: () -> Unit = {},
 ) {
     var categories by remember { mutableStateOf(InitialLibraryCategories) }
     val pagerState = rememberPagerState(pageCount = { categories.size })
@@ -276,6 +290,7 @@ fun LibraryScreen(
     var showSongsSortSheet by rememberSaveable { mutableStateOf(false) }
     var isGridLayout by rememberSaveable { mutableStateOf(false) }
     var sort by rememberSaveable { mutableStateOf(LibrarySort.RECENT) }
+    var librarySortDescending by rememberSaveable { mutableStateOf(true) }
     var songsSortOption by rememberSaveable { mutableStateOf(SongsLibrarySortOption.DEFAULT_ORDER) }
     var songsSortDescending by rememberSaveable { mutableStateOf(false) }
     var locateRequest by remember { mutableIntStateOf(0) }
@@ -297,7 +312,7 @@ fun LibraryScreen(
                 ?.let { put("artists", LibraryPageState(items = it.map(HomeArtist::toLibraryEntry))) }
             librarySongsCache.loadLibraryPlaylists()
                 ?.takeIf { it.isNotEmpty() }
-                ?.let { put("playlists", LibraryPageState(items = it.map(ListenBrainzPlaylist::toLibraryEntry))) }
+                ?.let { put("playlists", LibraryPageState(items = it.map(SavedPlaylist::toLibraryEntry))) }
             librarySongsCache.loadLibraryRecentTracks()
                 ?.takeIf { it.isNotEmpty() }
                 ?.let { put("recent", LibraryPageState(items = it.map(HomeTrack::toLibraryEntry))) }
@@ -307,10 +322,10 @@ fun LibraryScreen(
         }
     }
     var pageStates by remember(librarySongsCache) { mutableStateOf(cachedPageStates) }
-    var selectedPlaylist by remember { mutableStateOf<ListenBrainzPlaylist?>(null) }
+    var selectedPlaylist by remember { mutableStateOf<SavedPlaylist?>(null) }
     var selectedPlaylistIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var playlistDetailState by remember { mutableStateOf(LibraryPageState(isLoading = false)) }
-    fun openPlaylist(playlist: ListenBrainzPlaylist) {
+    fun openPlaylist(playlist: SavedPlaylist) {
         val cachedTracks = librarySongsCache.loadLibraryPlaylistTracks(playlist.id)
         playlistDetailState = LibraryPageState(
             items = cachedTracks.orEmpty().map(HomeTrack::toLibraryEntry),
@@ -321,6 +336,7 @@ fun LibraryScreen(
     var showCreatePlaylist by rememberSaveable { mutableStateOf(false) }
     var playlistName by rememberSaveable { mutableStateOf("") }
     var isCreatingPlaylist by remember { mutableStateOf(false) }
+    var createPlaylistForTrack by remember { mutableStateOf(false) }
     var showImportYouTubePlaylist by rememberSaveable { mutableStateOf(false) }
     var youtubePlaylistUrl by rememberSaveable { mutableStateOf("") }
     var isImportingYouTubePlaylist by remember { mutableStateOf(false) }
@@ -328,9 +344,14 @@ fun LibraryScreen(
         mutableStateOf<YouTubePlaylistImportResult.Completed?>(null)
     }
     var showPlaylistPicker by rememberSaveable { mutableStateOf(false) }
-    var playlistOptions by remember { mutableStateOf<List<ListenBrainzPlaylist>>(emptyList()) }
+    var playlistOptions by remember { mutableStateOf<List<SavedPlaylist>>(emptyList()) }
     var isLoadingPlaylistOptions by remember { mutableStateOf(false) }
-    var playlistsToDelete by remember { mutableStateOf<List<ListenBrainzPlaylist>?>(null) }
+    var playlistMembershipIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var selectedPlaylistMembershipIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var isLoadingPlaylistMembership by remember { mutableStateOf(false) }
+    var hasLoadedPlaylistMembership by remember { mutableStateOf(false) }
+    var isSavingPlaylistMembership by remember { mutableStateOf(false) }
+    var playlistsToDelete by remember { mutableStateOf<List<SavedPlaylist>?>(null) }
     var isDeletingPlaylist by remember { mutableStateOf(false) }
     var showPlaylistSelectionOptions by remember { mutableStateOf(false) }
     var trackToAddToPlaylist by remember { mutableStateOf<HomeTrack?>(null) }
@@ -338,9 +359,23 @@ fun LibraryScreen(
     var selectedTrackOptionsQueue by remember { mutableStateOf<List<HomeTrack>>(emptyList()) }
     val snackbarHostState = remember { SnackbarHostState() }
 
+    LaunchedEffect(requestedTrackToAddToPlaylist?.id) {
+        val track = requestedTrackToAddToPlaylist ?: return@LaunchedEffect
+        trackToAddToPlaylist = track
+        showPlaylistPicker = true
+        onPlaylistAddRequestHandled()
+    }
+
     val activeCategory = categories.getOrNull(pagerState.currentPage) ?: categories.first()
     val activePlaylist = selectedPlaylist.takeIf { activeCategory.id == "playlists" }
-    BackHandler(enabled = activePlaylist != null) {
+    val updatedPlaylistDetailVisibilityCallback by rememberUpdatedState(onPlaylistDetailVisibilityChanged)
+    LaunchedEffect(activePlaylist?.id) {
+        updatedPlaylistDetailVisibilityCallback(activePlaylist != null)
+    }
+    DisposableEffect(Unit) {
+        onDispose { updatedPlaylistDetailVisibilityCallback(false) }
+    }
+    BackHandler(enabled = activePlaylist != null && !isPlayerExpanded) {
         selectedPlaylist = null
     }
     BackHandler(
@@ -363,18 +398,106 @@ fun LibraryScreen(
     val activePageKey = activePlaylist?.let { "playlist:${it.id}" } ?: activeCategory.id
     val activePageSupportsLocate = activeCategory.id in setOf("songs", "recent", "loved") ||
         activePlaylist != null
-    val showLocateButton = activePageSupportsLocate &&
-        locateVisibilityByPage[activePageKey] == true
     val activePageState = pageStates[activeCategory.id] ?: LibraryPageState(isLoading = true)
     val activeItems = if (activePlaylist != null) {
         playlistDetailState.items
     } else {
         activePageState.items
     }
+    val hasCurrentTrackInActivePage = currentTrack != null &&
+        activeItems.any { it.matchesCurrentTrack(currentTrack) }
+    val showLocateButton = activePageSupportsLocate &&
+        hasCurrentTrackInActivePage &&
+        locateVisibilityByPage[activePageKey] == true
     val headerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
     val navBarInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val listBottomPadding = FloatingNavBarClearance + navBarInset + 20.dp
+    val playlistDetailBottomPadding =
+        (if (currentTrack != null) MiniPlayerHeight + MiniPlayerSpacing else 0.dp) +
+            navBarInset + 12.dp
     val context = LocalContext.current
+
+    fun updatePlaylistCollection(playlists: List<SavedPlaylist>) {
+        playlistOptions = playlists
+        pageStates = pageStates + ("playlists" to LibraryPageState(
+            items = playlists.map(SavedPlaylist::toLibraryEntry),
+        ))
+        librarySongsCache.saveLibraryPlaylists(playlists)
+        selectedPlaylist = selectedPlaylist?.let { selected ->
+            playlists.firstOrNull { it.id == selected.id } ?: selected
+        }
+    }
+
+    fun updatePlaylistSummary(updated: SavedPlaylist) {
+        val existing = pageStates["playlists"]?.items
+            ?.firstOrNull { it.id == updated.id }
+            ?.playlist
+            ?: selectedPlaylist?.takeIf { it.id == updated.id }
+        val previewTrackIds = updated.previewTrackIds.ifEmpty { existing?.previewTrackIds.orEmpty() }
+        val merged = updated.copy(
+            previewTrackIds = previewTrackIds,
+            previewArtworkByTrackId = (
+                existing?.previewArtworkByTrackId.orEmpty() +
+                    updated.previewArtworkByTrackId +
+                    playlistDetailState.items.mapNotNull(LibraryEntry::track).mapNotNull { track ->
+                        val id = track.providerTrackId?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+                        val artwork = track.artworkUrl?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+                        id to artwork
+                    }.toMap()
+                ).filterKeys(previewTrackIds::contains),
+        )
+        if (selectedPlaylist?.id == merged.id) selectedPlaylist = merged
+        val playlistEntries = pageStates["playlists"]?.items.orEmpty().map { entry ->
+            if (entry.id == merged.id) entry.copy(playlist = merged) else entry
+        }
+        pageStates = pageStates + ("playlists" to LibraryPageState(items = playlistEntries))
+        if (playlistEntries.isNotEmpty()) {
+            librarySongsCache.saveLibraryPlaylists(playlistEntries.mapNotNull(LibraryEntry::playlist))
+        }
+        playlistOptions = playlistOptions.map { if (it.id == merged.id) merged else it }
+    }
+
+    suspend fun persistPlaylistTracks(playlist: SavedPlaylist, tracks: List<HomeTrack>): Boolean {
+        val trackIds = tracks.mapNotNull { it.providerTrackId?.takeIf(String::isNotBlank) }
+        if (trackIds.size != tracks.size) {
+            snackbarHostState.showSnackbar(context.getString(R.string.library_playlist_update_failed))
+            return false
+        }
+        val detail = repository.replaceUserPlaylistTracks(playlist.id, trackIds)
+        if (detail == null) {
+            snackbarHostState.showSnackbar(context.getString(R.string.library_playlist_update_failed))
+            return false
+        }
+        val previewIds = detail.playlist.previewTrackIds.ifEmpty { trackIds.take(4) }
+        val updated = detail.playlist.copy(
+            previewTrackIds = previewIds,
+            previewArtworkByTrackId = (
+                playlist.previewArtworkByTrackId +
+                    tracks.mapNotNull { track ->
+                        val id = track.providerTrackId?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+                        val artwork = track.artworkUrl?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+                        id to artwork
+                    }.toMap()
+                ).filterKeys(previewIds::contains),
+        )
+        selectedPlaylist = updated
+        playlistDetailState = LibraryPageState(items = tracks.map(HomeTrack::toLibraryEntry))
+        librarySongsCache.saveLibraryPlaylistTracks(playlist.id, tracks)
+        updatePlaylistSummary(updated)
+        snackbarHostState.showSnackbar(context.getString(R.string.library_playlist_tracks_updated))
+        return true
+    }
+
+    suspend fun renamePlaylist(playlist: SavedPlaylist, name: String): Boolean {
+        val renamed = repository.renameUserPlaylist(playlist.id, name)
+        if (renamed == null) {
+            snackbarHostState.showSnackbar(context.getString(R.string.library_playlist_rename_failed))
+            return false
+        }
+        updatePlaylistSummary(renamed)
+        snackbarHostState.showSnackbar(context.getString(R.string.library_playlist_renamed))
+        return true
+    }
 
     LaunchedEffect(activeCategory.id, refreshLibraryRequest) {
         val categoryId = activeCategory.id
@@ -389,12 +512,31 @@ fun LibraryScreen(
                 isRefreshing = previous.items.isNotEmpty(),
             ))
         }
-        val loadedItems = try {
+        val fetchedItems = try {
             fetchLibraryCategory(repository, categoryId)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
             emptyList()
+        }
+        val previousPlaylistsById = previous?.items
+            ?.mapNotNull(LibraryEntry::playlist)
+            ?.associateBy(SavedPlaylist::id)
+            .orEmpty()
+        val loadedItems = if (categoryId == "playlists") {
+            fetchedItems.map { entry ->
+                val freshPlaylist = entry.playlist ?: return@map entry
+                val cachedPlaylist = previousPlaylistsById[freshPlaylist.id] ?: return@map entry
+                entry.copy(
+                    playlist = freshPlaylist.copy(
+                        previewArtworkByTrackId = cachedPlaylist.previewArtworkByTrackId
+                            .filterKeys(freshPlaylist.previewTrackIds::contains) +
+                            freshPlaylist.previewArtworkByTrackId,
+                    ),
+                )
+            }
+        } else {
+            fetchedItems
         }
         if (loadedItems.isNotEmpty()) {
             when (categoryId) {
@@ -419,7 +561,7 @@ fun LibraryScreen(
         if (categoryId == "playlists" && visibleItems.isNotEmpty()) {
             val visiblePlaylistIds = visibleItems
                 .mapNotNull(LibraryEntry::playlist)
-                .map(ListenBrainzPlaylist::id)
+                .map(SavedPlaylist::id)
                 .toSet()
             selectedPlaylistIds = selectedPlaylistIds.filter(visiblePlaylistIds::contains)
         }
@@ -441,7 +583,7 @@ fun LibraryScreen(
             isRefreshing = previous.items.isNotEmpty(),
         )
         val loadedTracks = try {
-            repository.fetchListenBrainzPlaylistTracks(playlist.id)
+            repository.fetchUserPlaylistTracks(playlist.id)
                 .map(HomeTrack::toLibraryEntry)
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -461,18 +603,22 @@ fun LibraryScreen(
         )
     }
 
-    LaunchedEffect(showPlaylistPicker) {
+    LaunchedEffect(showPlaylistPicker, trackToAddToPlaylist?.providerTrackId) {
         if (!showPlaylistPicker) return@LaunchedEffect
+        isLoadingPlaylistMembership = false
+        playlistMembershipIds = emptySet()
+        selectedPlaylistMembershipIds = emptySet()
+        hasLoadedPlaylistMembership = false
         isLoadingPlaylistOptions = true
         val cachedPlaylists = pageStates["playlists"]?.items?.mapNotNull(LibraryEntry::playlist)
         playlistOptions = if (cachedPlaylists != null) {
             cachedPlaylists
         } else {
             try {
-                repository.fetchListenBrainzPlaylists().also { playlists ->
+                repository.fetchUserPlaylists().also { playlists ->
                     if (playlists.isNotEmpty()) librarySongsCache.saveLibraryPlaylists(playlists)
                     pageStates = pageStates + ("playlists" to LibraryPageState(
-                        items = playlists.map(ListenBrainzPlaylist::toLibraryEntry),
+                        items = playlists.map(SavedPlaylist::toLibraryEntry),
                     ))
                 }
             } catch (cancelled: CancellationException) {
@@ -482,20 +628,74 @@ fun LibraryScreen(
             }
         }
         isLoadingPlaylistOptions = false
+
+        val trackId = trackToAddToPlaylist?.providerTrackId?.takeIf(String::isNotBlank)
+        if (!repository.canManageUserPlaylists() || trackId == null) {
+            isLoadingPlaylistMembership = false
+            return@LaunchedEffect
+        }
+        isLoadingPlaylistMembership = true
+        val membership = try {
+            repository.fetchUserPlaylistMembership(
+                playlistIds = playlistOptions.map(SavedPlaylist::id),
+                trackId = trackId,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+        if (membership == null) {
+            snackbarHostState.showSnackbar(
+                context.getString(R.string.library_playlist_picker_update_failed),
+            )
+        } else {
+            playlistMembershipIds = membership
+            selectedPlaylistMembershipIds = membership
+            hasLoadedPlaylistMembership = true
+        }
+        isLoadingPlaylistMembership = false
     }
 
-    ScreenScaffold(
-        modifier = modifier,
-        background = headerColor,
-    ) {
-        Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = modifier.fillMaxSize()) {
+        if (activePlaylist != null) {
+            val playlist = activePlaylist
+            Box(modifier = Modifier.fillMaxSize()) {
+                PlaylistDetailScreen(
+                    playlist = playlist,
+                    tracks = playlistDetailState.items.mapNotNull(LibraryEntry::track),
+                    isLoading = playlistDetailState.isLoading,
+                    isRefreshing = playlistDetailState.isRefreshing,
+                    currentTrack = currentTrack,
+                    isPlaying = isPlaying,
+                    bottomContentPadding = playlistDetailBottomPadding,
+                    onBack = { selectedPlaylist = null },
+                    onRefresh = { refreshPlaylistRequest++ },
+                    onPlayTrack = onPlayTrack,
+                    onTrackOptions = { track, queue ->
+                        selectedTrackForOptions = track
+                        selectedTrackOptionsQueue = queue
+                    },
+                    onReplaceTracks = { updatedTracks ->
+                        persistPlaylistTracks(playlist, updatedTracks)
+                    },
+                    onRenamePlaylist = { name -> renamePlaylist(playlist, name) },
+                    onDeletePlaylist = { playlistsToDelete = listOf(playlist) },
+                )
+            }
+        } else {
+            ScreenScaffold(
+                modifier = Modifier.fillMaxSize(),
+                background = headerColor,
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(headerColor),
             ) {
                 LibraryTopBar(
-                    title = activePlaylist?.title ?: stringResource(activeCategory.title),
+                    title = activePlaylist?.name ?: stringResource(activeCategory.title),
                     titleIcon = activePlaylist?.let { "playlist_play" } ?: activeCategory.icon,
                     isTabSwitcherOpen = showTabSwitcher,
                     isPlaylistDetail = activePlaylist != null,
@@ -533,7 +733,7 @@ fun LibraryScreen(
                                     selectedCount = selectedPlaylists.size,
                                     allCount = allPlaylists.size,
                                     onSelectAll = {
-                                        selectedPlaylistIds = allPlaylists.map(ListenBrainzPlaylist::id)
+                                        selectedPlaylistIds = allPlaylists.map(SavedPlaylist::id)
                                     },
                                     onDeselect = { selectedPlaylistIds = emptyList() },
                                     onOptions = { showPlaylistSelectionOptions = true },
@@ -541,9 +741,7 @@ fun LibraryScreen(
                             } else {
                                 LibraryActionRow(
                                     isPlaylistTab = activeCategory.id == "playlists" && activePlaylist == null,
-                                    isSongsTab = activeCategory.id == "songs" && activePlaylist == null,
                                     isGridLayout = isGridLayout,
-                                    sort = sort,
                                     showLocateButton = showLocateButton,
                                     onShuffle = {
                                         when (activeCategory.id) {
@@ -567,8 +765,7 @@ fun LibraryScreen(
                                         locateRequest++
                                     },
                                     onToggleLayout = { isGridLayout = !isGridLayout },
-                                    onSort = { sort = it },
-                                    onOpenSongsSortSheet = { showSongsSortSheet = true },
+                                    onOpenSortSheet = { showSongsSortSheet = true },
                                 )
                             }
                         }
@@ -597,6 +794,7 @@ fun LibraryScreen(
                             LibraryCategoryPage(
                                 items = items,
                                 isActivePage = pageKey == activePageKey,
+                                isLovedTab = category.id == "loved" && !isShowingPlaylistDetail,
                                 isLoading = if (isShowingPlaylistDetail) {
                                     playlistDetailState.isLoading
                                 } else {
@@ -610,8 +808,8 @@ fun LibraryScreen(
                                 emptyMessage = when {
                                     isShowingPlaylistDetail -> R.string.library_playlist_no_tracks
                                     category.id == "playlists" &&
-                                            !repository.canManageListenBrainzPlaylists() ->
-                                        R.string.library_playlist_connect_listenbrainz
+                                            !repository.canManageUserPlaylists() ->
+                                        R.string.library_playlist_connect_account
                                     category.id == "playlists" -> R.string.library_playlist_empty
                                     else -> R.string.library_empty
                                 },
@@ -619,6 +817,7 @@ fun LibraryScreen(
                                 isPlaylistSelectionMode = isPlaylistSelectionMode,
                                 selectedPlaylistIds = selectedPlaylistIds,
                                 sort = sort,
+                                sortDescending = librarySortDescending,
                                 isSongsTab = category.id == "songs" && !isShowingPlaylistDetail,
                                 songsSortOption = songsSortOption,
                                 songsSortDescending = songsSortDescending,
@@ -644,7 +843,6 @@ fun LibraryScreen(
                                     selectedTrackForOptions = track
                                     selectedTrackOptionsQueue = queue
                                 },
-                                onDeletePlaylist = { playlistsToDelete = listOf(it) },
                                 onPlaylistLongPress = { playlist ->
                                     hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
                                     selectedPlaylistIds = if (playlist.id in selectedPlaylistIds) {
@@ -708,13 +906,15 @@ fun LibraryScreen(
                 }
             }
 
-            SnackbarHost(
-                hostState = snackbarHostState,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = listBottomPadding),
-            )
+                }
+            }
         }
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = listBottomPadding),
+        )
     }
 
     if (showTabSwitcher) {
@@ -777,7 +977,7 @@ fun LibraryScreen(
                     if (pendingPlaylists.size == 1) {
                         stringResource(
                             R.string.library_playlist_delete_message,
-                            pendingPlaylists.single().title,
+                            pendingPlaylists.single().name,
                         )
                     } else {
                         stringResource(
@@ -801,7 +1001,7 @@ fun LibraryScreen(
                             try {
                                 pendingPlaylists.forEach { playlist ->
                                     val deleted = try {
-                                        repository.deleteListenBrainzPlaylist(playlist.id)
+                                        repository.deleteUserPlaylist(playlist.id)
                                     } catch (cancelled: CancellationException) {
                                         throw cancelled
                                     } catch (_: Exception) {
@@ -836,7 +1036,7 @@ fun LibraryScreen(
                                     snackbarHostState.showSnackbar(
                                         context.getString(
                                             R.string.library_playlist_deleted,
-                                            pendingPlaylists.single().title,
+                                            pendingPlaylists.single().name,
                                         ),
                                     )
                                 failedCount == 0 || deletedIds.isNotEmpty() ->
@@ -884,10 +1084,13 @@ fun LibraryScreen(
     }
 
     if (showCreatePlaylist) {
-        val canManagePlaylists = repository.canManageListenBrainzPlaylists()
+        val canManagePlaylists = repository.canManageUserPlaylists()
         AlertDialog(
             onDismissRequest = {
-                if (!isCreatingPlaylist) showCreatePlaylist = false
+                if (!isCreatingPlaylist) {
+                    showCreatePlaylist = false
+                    createPlaylistForTrack = false
+                }
             },
             title = { Text(stringResource(R.string.library_playlist_create_title)) },
             text = {
@@ -901,7 +1104,7 @@ fun LibraryScreen(
                             enabled = !isCreatingPlaylist,
                         )
                     } else {
-                        Text(stringResource(R.string.library_playlist_connect_listenbrainz))
+                        Text(stringResource(R.string.library_playlist_connect_account))
                     }
                 }
             },
@@ -910,10 +1113,11 @@ fun LibraryScreen(
                     TextButton(
                         enabled = playlistName.isNotBlank() && !isCreatingPlaylist,
                         onClick = {
+                            val addTrackOnCreate = createPlaylistForTrack
                             isCreatingPlaylist = true
                             scope.launch {
                                 val created = try {
-                                    repository.createListenBrainzPlaylist(playlistName)
+                                    repository.createUserPlaylist(playlistName)
                                 } catch (cancelled: CancellationException) {
                                     isCreatingPlaylist = false
                                     throw cancelled
@@ -926,23 +1130,81 @@ fun LibraryScreen(
                                         context.getString(R.string.library_playlist_create_failed),
                                     )
                                 } else {
-                                    val entry = created.toLibraryEntry()
-                                    val existing = pageStates["playlists"]?.items.orEmpty()
-                                    val updatedPlaylists = listOf(entry) + existing.filterNot { it.id == entry.id }
-                                    pageStates = pageStates + ("playlists" to LibraryPageState(
-                                        items = updatedPlaylists,
-                                    ))
-                                    librarySongsCache.saveLibraryPlaylists(
-                                        updatedPlaylists.mapNotNull(LibraryEntry::playlist),
+                                    val track = trackToAddToPlaylist.takeIf { addTrackOnCreate }
+                                    val trackId = track?.providerTrackId?.takeIf(String::isNotBlank)
+                                    val detail = if (track != null && trackId != null) {
+                                        try {
+                                            repository.setUserPlaylistTrackMembership(
+                                                playlistId = created.id,
+                                                track = track,
+                                                shouldContainTrack = true,
+                                            )
+                                        } catch (cancelled: CancellationException) {
+                                            createPlaylistForTrack = false
+                                            throw cancelled
+                                        } catch (_: Exception) {
+                                            null
+                                        }
+                                    } else {
+                                        null
+                                    }
+                                    val addedTrack = detail?.takeIf {
+                                        trackId != null && trackId in it.trackIds
+                                    }
+                                    val createdPlaylist = if (addedTrack != null && trackId != null) {
+                                        val previewIds = addedTrack.playlist.previewTrackIds
+                                            .ifEmpty { addedTrack.trackIds.take(4) }
+                                        val artwork = track.artworkUrl
+                                            ?.takeIf(String::isNotBlank)
+                                            ?.let { mapOf(trackId to it) }
+                                            .orEmpty()
+                                        addedTrack.playlist.copy(
+                                            previewTrackIds = previewIds,
+                                            previewArtworkByTrackId = artwork.filterKeys(previewIds::contains),
+                                        )
+                                    } else {
+                                        created
+                                    }
+                                    val existingPlaylists = pageStates["playlists"]?.items
+                                        ?.mapNotNull(LibraryEntry::playlist)
+                                        ?: playlistOptions
+                                    updatePlaylistCollection(
+                                        listOf(createdPlaylist) + existingPlaylists.filterNot {
+                                            it.id == createdPlaylist.id
+                                        },
                                     )
+                                    if (addedTrack != null) {
+                                        playlistMembershipIds = playlistMembershipIds + created.id
+                                        selectedPlaylistMembershipIds = selectedPlaylistMembershipIds + created.id
+                                        hasLoadedPlaylistMembership = true
+                                    }
                                     playlistName = ""
                                     showCreatePlaylist = false
-                                    snackbarHostState.showSnackbar(
-                                        context.getString(
-                                            R.string.library_playlist_created,
-                                            created.title,
-                                        ),
-                                    )
+                                    createPlaylistForTrack = false
+                                    if (addTrackOnCreate && addedTrack != null) {
+                                        showPlaylistPicker = false
+                                        trackToAddToPlaylist = null
+                                        snackbarHostState.showSnackbar(
+                                            context.getString(
+                                                R.string.library_playlist_created_with_track,
+                                                created.name,
+                                            ),
+                                        )
+                                    } else if (addTrackOnCreate) {
+                                        snackbarHostState.showSnackbar(
+                                            context.getString(
+                                                R.string.library_playlist_create_track_failed,
+                                                created.name,
+                                            ),
+                                        )
+                                    } else {
+                                        snackbarHostState.showSnackbar(
+                                            context.getString(
+                                                R.string.library_playlist_created,
+                                                created.name,
+                                            ),
+                                        )
+                                    }
                                 }
                             }
                         },
@@ -957,6 +1219,7 @@ fun LibraryScreen(
                     TextButton(
                         onClick = {
                             showCreatePlaylist = false
+                            createPlaylistForTrack = false
                             onOpenSettings()
                         },
                     ) {
@@ -967,7 +1230,10 @@ fun LibraryScreen(
             dismissButton = {
                 TextButton(
                     enabled = !isCreatingPlaylist,
-                    onClick = { showCreatePlaylist = false },
+                    onClick = {
+                        showCreatePlaylist = false
+                        createPlaylistForTrack = false
+                    },
                 ) {
                     Text(stringResource(R.string.cancel))
                 }
@@ -976,7 +1242,7 @@ fun LibraryScreen(
     }
 
     if (showImportYouTubePlaylist) {
-        val canManagePlaylists = repository.canManageListenBrainzPlaylists()
+        val canManagePlaylists = repository.canManageUserPlaylists()
         AlertDialog(
             onDismissRequest = {
                 if (!isImportingYouTubePlaylist) showImportYouTubePlaylist = false
@@ -1003,7 +1269,7 @@ fun LibraryScreen(
                             }
                         }
                     } else {
-                        Text(stringResource(R.string.library_playlist_connect_listenbrainz))
+                        Text(stringResource(R.string.library_playlist_connect_account))
                     }
                 }
             },
@@ -1041,10 +1307,7 @@ fun LibraryScreen(
                                         youtubePlaylistImportReport = result
                                     }
 
-                                    YouTubePlaylistImportResult.ListenBrainzNotConnected -> {
-                                        showImportYouTubePlaylist = false
-                                        onOpenSettings()
-                                    }
+
 
                                     YouTubePlaylistImportResult.InvalidYouTubeLink ->
                                         snackbarHostState.showSnackbar(context.getString(R.string.library_playlist_import_invalid_link))
@@ -1097,86 +1360,165 @@ fun LibraryScreen(
     }
 
     if (showPlaylistPicker) {
-        AlertDialog(
-            onDismissRequest = { showPlaylistPicker = false },
-            title = { Text(stringResource(R.string.library_playlist_add_to_title)) },
-            text = {
-                when {
-                    isLoadingPlaylistOptions -> ContainedLoadingIndicator()
-                    !repository.canManageListenBrainzPlaylists() -> Text(
-                        stringResource(R.string.library_playlist_connect_listenbrainz),
-                    )
-                    playlistOptions.isEmpty() -> Text(
-                        stringResource(R.string.library_playlist_none_available),
-                    )
-                    else -> LazyColumn(
-                        modifier = Modifier.heightIn(max = 320.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        itemsIndexed(playlistOptions, key = { _, playlist -> playlist.id }) { _, playlist ->
-                            DropdownMenuItem(
-                                text = { Text(playlist.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                onClick = {
-                                    val track = trackToAddToPlaylist
-                                    showPlaylistPicker = false
-                                    if (track != null) scope.launch {
-                                        val added = repository.addTrackToListenBrainzPlaylist(
-                                            playlist.id,
-                                            track,
-                                        )
-                                        if (added) {
-                                            val updatedPlaylist = playlist.copy(
-                                                trackCount = playlist.trackCount?.plus(1),
-                                            )
-                                            playlistOptions = playlistOptions.map {
-                                                if (it.id == playlist.id) updatedPlaylist else it
-                                            }
-                                            val playlistPage = pageStates["playlists"]
-                                            if (playlistPage != null) {
-                                                val updatedPlaylistEntries = playlistPage.items.map {
-                                                    if (it.id == playlist.id) updatedPlaylist.toLibraryEntry() else it
-                                                }
-                                                pageStates = pageStates + ("playlists" to playlistPage.copy(
-                                                    items = updatedPlaylistEntries,
-                                                ))
-                                                librarySongsCache.saveLibraryPlaylists(
-                                                    updatedPlaylistEntries.mapNotNull(LibraryEntry::playlist),
-                                                )
-                                            }
-                                        }
-                                        snackbarHostState.showSnackbar(
-                                            if (added) {
-                                                context.getString(
-                                                    R.string.library_playlist_added,
-                                                    playlist.title,
-                                                )
-                                            } else {
-                                                context.getString(R.string.library_playlist_add_failed)
-                                            },
-                                        )
-                                    }
-                                },
-                            )
-                        }
-                    }
+        AddTrackToPlaylistSheet(
+            playlists = playlistOptions,
+            membershipPlaylistIds = playlistMembershipIds,
+            selectedPlaylistIds = selectedPlaylistMembershipIds,
+            isLoading = isLoadingPlaylistOptions || isLoadingPlaylistMembership,
+            isSaving = isSavingPlaylistMembership,
+            canSave = hasLoadedPlaylistMembership &&
+                trackToAddToPlaylist?.providerTrackId?.isNotBlank() == true,
+            canManagePlaylists = repository.canManageUserPlaylists(),
+            onDismiss = {
+                showPlaylistPicker = false
+                trackToAddToPlaylist = null
+            },
+            onCreatePlaylist = {
+                createPlaylistForTrack = true
+                showCreatePlaylist = true
+            },
+            onOpenSettings = {
+                showPlaylistPicker = false
+                trackToAddToPlaylist = null
+                onOpenSettings()
+            },
+            onSetPlaylistSelected = { playlistId, selected ->
+                selectedPlaylistMembershipIds = if (selected) {
+                    selectedPlaylistMembershipIds + playlistId
+                } else {
+                    selectedPlaylistMembershipIds - playlistId
                 }
             },
-            confirmButton = {
-                TextButton(onClick = { showPlaylistPicker = false }) {
-                    Text(stringResource(R.string.cancel))
+            onSave = {
+                val track = trackToAddToPlaylist
+                val trackId = track?.providerTrackId?.takeIf(String::isNotBlank)
+                if (track != null && trackId != null && hasLoadedPlaylistMembership) {
+                    val desiredMembership = selectedPlaylistMembershipIds
+                    val changedIds = (playlistMembershipIds + desiredMembership).filter { id ->
+                        (id in playlistMembershipIds) != (id in desiredMembership)
+                    }
+                    if (changedIds.isEmpty()) {
+                        showPlaylistPicker = false
+                        trackToAddToPlaylist = null
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                context.getString(R.string.library_playlist_picker_saved),
+                            )
+                        }
+                    } else {
+                        isSavingPlaylistMembership = true
+                        scope.launch {
+                            val results = try {
+                                coroutineScope {
+                                    changedIds.map { playlistId ->
+                                        async {
+                                            val detail = try {
+                                                repository.setUserPlaylistTrackMembership(
+                                                    playlistId = playlistId,
+                                                    track = track,
+                                                    shouldContainTrack = playlistId in desiredMembership,
+                                                )
+                                            } catch (cancelled: CancellationException) {
+                                                throw cancelled
+                                            } catch (_: Exception) {
+                                                null
+                                            }
+                                            playlistId to detail
+                                        }
+                                    }.awaitAll()
+                                }
+                            } catch (cancelled: CancellationException) {
+                                isSavingPlaylistMembership = false
+                                throw cancelled
+                            }
+
+                            val successfulResults = results.filter { (playlistId, detail) ->
+                                detail != null &&
+                                    (trackId in detail.trackIds) == (playlistId in desiredMembership)
+                            }
+                            val successfulIds = successfulResults.mapTo(mutableSetOf()) { it.first }
+                            val failedIds = results.map { it.first }.filterNot(successfulIds::contains)
+                            if (successfulResults.isNotEmpty()) {
+                                val summariesById = successfulResults.associate { (playlistId, detail) ->
+                                    val updatedDetail = requireNotNull(detail)
+                                    val previewIds = updatedDetail.playlist.previewTrackIds
+                                        .ifEmpty { updatedDetail.trackIds.take(4) }
+                                    val oldArtwork = playlistOptions
+                                        .firstOrNull { it.id == playlistId }
+                                        ?.previewArtworkByTrackId
+                                        .orEmpty()
+                                    val trackArtwork = track.artworkUrl
+                                        ?.takeIf(String::isNotBlank)
+                                        ?.let { artwork -> mapOf(trackId to artwork) }
+                                        .orEmpty()
+                                    playlistId to updatedDetail.playlist.copy(
+                                        previewTrackIds = previewIds,
+                                        previewArtworkByTrackId = (
+                                            oldArtwork + updatedDetail.playlist.previewArtworkByTrackId + trackArtwork
+                                            ).filterKeys(previewIds::contains),
+                                    )
+                                }
+                                updatePlaylistCollection(
+                                    playlistOptions.map { summariesById[it.id] ?: it },
+                                )
+                                val updatedMembership = playlistMembershipIds.toMutableSet()
+                                successfulResults.forEach { (playlistId, detail) ->
+                                    if (trackId in requireNotNull(detail).trackIds) {
+                                        updatedMembership += playlistId
+                                    } else {
+                                        updatedMembership -= playlistId
+                                    }
+                                }
+                                playlistMembershipIds = updatedMembership
+                                if (activePlaylist?.id?.let(summariesById::containsKey) == true) {
+                                    refreshPlaylistRequest++
+                                }
+                            }
+
+                            isSavingPlaylistMembership = false
+                            if (failedIds.isEmpty()) {
+                                showPlaylistPicker = false
+                                trackToAddToPlaylist = null
+                                snackbarHostState.showSnackbar(
+                                    context.getString(R.string.library_playlist_picker_saved),
+                                )
+                            } else {
+                                snackbarHostState.showSnackbar(
+                                    context.getString(R.string.library_playlist_picker_update_failed),
+                                )
+                            }
+                        }
+                    }
                 }
             },
         )
     }
 
     if (showSongsSortSheet) {
-        SongsLibrarySortBottomSheet(
-            selectedOption = songsSortOption,
-            isDescending = songsSortDescending,
-            onDismiss = { showSongsSortSheet = false },
-            onOptionSelected = { songsSortOption = it },
-            onDirectionToggle = { songsSortDescending = !songsSortDescending },
-        )
+        if (activeCategory.id == "songs") {
+            SongsLibrarySortBottomSheet(
+                selectedOption = songsSortOption,
+                isDescending = songsSortDescending,
+                onDismiss = { showSongsSortSheet = false },
+                onOptionSelected = { songsSortOption = it },
+                onDirectionToggle = { songsSortDescending = !songsSortDescending },
+            )
+        } else {
+            LibrarySortBottomSheet(
+                selectedOptionKey = sort.name,
+                isDescending = librarySortDescending,
+                options = LibrarySortSheetOptions,
+                onDismiss = { showSongsSortSheet = false },
+                onOptionSelected = { key ->
+                    val selectedSort = LibrarySort.valueOf(key)
+                    if (selectedSort != sort) {
+                        librarySortDescending = selectedSort == LibrarySort.RECENT
+                    }
+                    sort = selectedSort
+                },
+                onDirectionToggle = { librarySortDescending = !librarySortDescending },
+            )
+        }
     }
 
     selectedTrackForOptions?.let { track ->
@@ -1365,19 +1707,15 @@ private fun LibraryPageIndicator(
 @Composable
 private fun LibraryActionRow(
     isPlaylistTab: Boolean,
-    isSongsTab: Boolean,
     isGridLayout: Boolean,
-    sort: LibrarySort,
     showLocateButton: Boolean,
     onShuffle: () -> Unit,
     onNewPlaylist: () -> Unit,
     onImportPlaylist: () -> Unit,
     onLocate: () -> Unit,
     onToggleLayout: () -> Unit,
-    onSort: (LibrarySort) -> Unit,
-    onOpenSongsSortSheet: () -> Unit,
+    onOpenSortSheet: () -> Unit,
 ) {
-    var sortMenuExpanded by remember { mutableStateOf(false) }
     val outerCorner = 26.dp
     val innerCorner = 8.dp
     val newButtonEndCorner by animateDpAsState(
@@ -1492,47 +1830,17 @@ private fun LibraryActionRow(
             ),
         )
         Spacer(Modifier.width(4.dp))
-        Box {
-            LibraryActionIcon(
-                icon = "sort",
-                description = R.string.library_action_sort,
-                onClick = {
-                    if (isSongsTab) onOpenSongsSortSheet() else sortMenuExpanded = true
-                },
-                shape = RoundedCornerShape(
-                    topStart = innerCorner,
-                    bottomStart = innerCorner,
-                    topEnd = outerCorner,
-                    bottomEnd = outerCorner,
-                ),
-            )
-            if (!isSongsTab) {
-                DropdownMenu(
-                    expanded = sortMenuExpanded,
-                    onDismissRequest = { sortMenuExpanded = false },
-                ) {
-                    LibrarySort.entries.forEach { option ->
-                        DropdownMenuItem(
-                            text = { Text(stringResource(option.label)) },
-                            onClick = {
-                                onSort(option)
-                                sortMenuExpanded = false
-                            },
-                            trailingIcon = if (option == sort) {
-                                {
-                                    Icon(
-                                        painter = materialSymbolPainterResource("check"),
-                                        contentDescription = null,
-                                    )
-                                }
-                            } else {
-                                null
-                            },
-                        )
-                    }
-                }
-            }
-        }
+        LibraryActionIcon(
+            icon = "sort",
+            description = R.string.library_action_sort,
+            onClick = onOpenSortSheet,
+            shape = RoundedCornerShape(
+                topStart = innerCorner,
+                bottomStart = innerCorner,
+                topEnd = outerCorner,
+                bottomEnd = outerCorner,
+            ),
+        )
     }
 }
 
@@ -1731,7 +2039,7 @@ private fun YouTubePlaylistImportResultsDialog(
                     Text(
                         stringResource(
                             R.string.library_playlist_import_results_created,
-                            report.playlist.title,
+                            report.playlist.name,
                         ),
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -1822,11 +2130,7 @@ private fun YouTubePlaylistSkippedTrack.Reason.toStringResource(): Int = when (t
     YouTubePlaylistSkippedTrack.Reason.NO_APPLE_MATCH ->
         R.string.library_playlist_import_reason_no_apple_match
 
-    YouTubePlaylistSkippedTrack.Reason.LISTENBRAINZ_LOOKUP_FAILED ->
-        R.string.library_playlist_import_reason_listenbrainz_failed
 
-    YouTubePlaylistSkippedTrack.Reason.NO_LISTENBRAINZ_MATCH ->
-        R.string.library_playlist_import_reason_no_listenbrainz_match
 }
 
 @Composable
@@ -1916,6 +2220,7 @@ private fun PlaylistEmptyWaveDivider(
 private fun LibraryCategoryPage(
     items: List<LibraryEntry>,
     isActivePage: Boolean,
+    isLovedTab: Boolean,
     isLoading: Boolean,
     isRefreshing: Boolean,
     emptyMessage: Int,
@@ -1923,6 +2228,7 @@ private fun LibraryCategoryPage(
     isPlaylistSelectionMode: Boolean,
     selectedPlaylistIds: List<String>,
     sort: LibrarySort,
+    sortDescending: Boolean,
     isSongsTab: Boolean,
     songsSortOption: SongsLibrarySortOption,
     songsSortDescending: Boolean,
@@ -1934,9 +2240,8 @@ private fun LibraryCategoryPage(
     emptyStateBottomPadding: androidx.compose.ui.unit.Dp,
     onItemClick: (LibraryEntry) -> Unit,
     onTrackMoreOptions: (HomeTrack, List<HomeTrack>) -> Unit,
-    onDeletePlaylist: (ListenBrainzPlaylist) -> Unit,
-    onPlaylistLongPress: (ListenBrainzPlaylist) -> Unit,
-    onPlaylistSelectionToggle: (ListenBrainzPlaylist) -> Unit,
+    onPlaylistLongPress: (SavedPlaylist) -> Unit,
+    onPlaylistSelectionToggle: (SavedPlaylist) -> Unit,
     onRefresh: () -> Unit,
     onLocateNotFound: () -> Unit,
     onLocateHandled: () -> Unit,
@@ -1945,14 +2250,29 @@ private fun LibraryCategoryPage(
     val listState = rememberLazyListState()
     val gridState = rememberLazyGridState()
     val pullState = rememberPullToRefreshState()
-    val sortedItems = remember(items, sort, isSongsTab, songsSortOption, songsSortDescending) {
+    val sortedItems = remember(
+        items,
+        sort,
+        sortDescending,
+        isSongsTab,
+        songsSortOption,
+        songsSortDescending,
+    ) {
         if (isSongsTab) {
             sortSongLibraryEntries(items, songsSortOption, songsSortDescending)
         } else {
             when (sort) {
-                LibrarySort.RECENT -> items
-                LibrarySort.TITLE -> items.sortedBy { it.title.lowercase() }
-                LibrarySort.ARTIST -> items.sortedBy { it.subtitle.lowercase() }
+                LibrarySort.RECENT -> if (sortDescending) items else items.asReversed()
+                LibrarySort.TITLE -> if (sortDescending) {
+                    items.sortedByDescending { it.title.lowercase() }
+                } else {
+                    items.sortedBy { it.title.lowercase() }
+                }
+                LibrarySort.ARTIST -> if (sortDescending) {
+                    items.sortedByDescending { it.subtitle.lowercase() }
+                } else {
+                    items.sortedBy { it.subtitle.lowercase() }
+                }
             }
         }
     }
@@ -1997,7 +2317,7 @@ private fun LibraryCategoryPage(
             return@LaunchedEffect
         }
         if (currentTrackIndex == -1) {
-            locateVisibilityCallback(currentTrack != null)
+            locateVisibilityCallback(false)
             return@LaunchedEffect
         }
 
@@ -2050,6 +2370,10 @@ private fun LibraryCategoryPage(
         } else if (sortedItems.isEmpty()) {
             if (emptyMessage == R.string.library_playlist_empty) {
                 LibraryPlaylistEmptyState(emptyStateBottomPadding)
+            } else if (isLovedTab) {
+                LibraryLovedEmptyState(
+                    bottomPadding = emptyStateBottomPadding + 24.dp,
+                )
             } else {
                 Column(
                     modifier = Modifier
@@ -2099,7 +2423,6 @@ private fun LibraryCategoryPage(
                         selectedPlaylistIndex = selectedPlaylistIds.indexOf(item.id),
                         onPlaylistLongPress = onPlaylistLongPress,
                         onPlaylistSelectionToggle = onPlaylistSelectionToggle,
-                        onDeletePlaylist = onDeletePlaylist,
                     )
                 }
             }
@@ -2139,7 +2462,6 @@ private fun LibraryCategoryPage(
                             selectedPlaylistIndex = selectedPlaylistIds.indexOf(item.id),
                             onPlaylistLongPress = onPlaylistLongPress,
                             onPlaylistSelectionToggle = onPlaylistSelectionToggle,
-                            onDeletePlaylist = onDeletePlaylist,
                         )
                     }
                 }
@@ -2168,14 +2490,7 @@ private fun LibraryTrackRow(
 
 private fun HomeTrack.matchesCurrentTrack(currentTrack: HomeTrack?): Boolean {
     currentTrack ?: return false
-    val rowMbid = mbid?.trim()?.takeIf(String::isNotEmpty)
-    val activeMbid = currentTrack.mbid?.trim()?.takeIf(String::isNotEmpty)
-    return if (rowMbid != null && activeMbid != null) {
-        rowMbid.equals(activeMbid, ignoreCase = true)
-    } else {
-        TrackIdentity.normalizedTitle(title) == TrackIdentity.normalizedTitle(currentTrack.title) &&
-            TrackIdentity.normalizedArtist(artist) == TrackIdentity.normalizedArtist(currentTrack.artist)
-    }
+    return TrackIdentity.isSameTrack(this, currentTrack)
 }
 
 private fun LibraryEntry.matchesCurrentTrack(currentTrack: HomeTrack?): Boolean {
@@ -2202,9 +2517,8 @@ private fun LibraryListItem(
     onClick: () -> Unit,
     isPlaylistSelectionMode: Boolean,
     selectedPlaylistIndex: Int,
-    onPlaylistLongPress: (ListenBrainzPlaylist) -> Unit,
-    onPlaylistSelectionToggle: (ListenBrainzPlaylist) -> Unit,
-    onDeletePlaylist: (ListenBrainzPlaylist) -> Unit,
+    onPlaylistLongPress: (SavedPlaylist) -> Unit,
+    onPlaylistSelectionToggle: (SavedPlaylist) -> Unit,
 ) {
     val playlist = item.playlist
     val isPlaylistSelected = playlist != null && selectedPlaylistIndex >= 0
@@ -2279,7 +2593,6 @@ private fun LibraryListItem(
                 artworkShape = artworkShape,
                 selectedPlaylistIndex = selectedPlaylistIndex,
                 isPlaylistSelectionMode = isPlaylistSelectionMode,
-                onDeletePlaylist = onDeletePlaylist,
             )
         }
     } else if (item.artist != null) {
@@ -2290,7 +2603,6 @@ private fun LibraryListItem(
             artworkShape = artworkShape,
             selectedPlaylistIndex = -1,
             isPlaylistSelectionMode = false,
-            onDeletePlaylist = onDeletePlaylist,
         )
     } else {
         Surface(
@@ -2305,7 +2617,6 @@ private fun LibraryListItem(
                 artworkShape = artworkShape,
                 selectedPlaylistIndex = -1,
                 isPlaylistSelectionMode = false,
-                onDeletePlaylist = onDeletePlaylist,
             )
         }
     }
@@ -2319,14 +2630,13 @@ private fun LibraryListItemContent(
     artworkShape: Shape,
     selectedPlaylistIndex: Int,
     isPlaylistSelectionMode: Boolean,
-    onDeletePlaylist: (ListenBrainzPlaylist) -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(76.dp)
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(start = 12.dp, end = 6.dp),
+            .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         LibraryArtwork(item = item, index = index, size = 54.dp, shape = artworkShape)
@@ -2351,14 +2661,10 @@ private fun LibraryListItemContent(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        item.playlist?.let { playlist ->
+        item.playlist?.let {
             when {
                 selectedPlaylistIndex >= 0 && isPlaylistSelectionMode ->
                     PlaylistSelectionBadge(selectionIndex = selectedPlaylistIndex)
-                !isPlaylistSelectionMode -> LibraryPlaylistOptionsButton(
-                    playlist = playlist,
-                    onDelete = { onDeletePlaylist(playlist) },
-                )
             }
         }
     }
@@ -2371,9 +2677,8 @@ private fun LibraryGridItem(
     onClick: () -> Unit,
     isPlaylistSelectionMode: Boolean,
     selectedPlaylistIndex: Int,
-    onPlaylistLongPress: (ListenBrainzPlaylist) -> Unit,
-    onPlaylistSelectionToggle: (ListenBrainzPlaylist) -> Unit,
-    onDeletePlaylist: (ListenBrainzPlaylist) -> Unit,
+    onPlaylistLongPress: (SavedPlaylist) -> Unit,
+    onPlaylistSelectionToggle: (SavedPlaylist) -> Unit,
 ) {
     if (item.artist != null) {
         Column(
@@ -2388,7 +2693,7 @@ private fun LibraryGridItem(
                 index = index,
                 shape = rememberArtistArtworkShape(item.artist.id),
             )
-            LibraryGridItemMetadata(item, -1, false, onDeletePlaylist)
+            LibraryGridItemMetadata(item, -1, false)
         }
     } else if (item.playlist != null) {
         val playlist = item.playlist
@@ -2461,8 +2766,7 @@ private fun LibraryGridItem(
                     item = item,
                     selectedPlaylistIndex = selectedPlaylistIndex,
                     isPlaylistSelectionMode = isPlaylistSelectionMode,
-                    onDeletePlaylist = onDeletePlaylist,
-                )
+                    )
             }
         }
     } else {
@@ -2478,7 +2782,7 @@ private fun LibraryGridItem(
                     index = index,
                     shape = MaterialTheme.shapes.medium,
                 )
-                LibraryGridItemMetadata(item, -1, false, onDeletePlaylist)
+                LibraryGridItemMetadata(item, -1, false)
             }
         }
     }
@@ -2489,7 +2793,6 @@ private fun LibraryGridItemMetadata(
     item: LibraryEntry,
     selectedPlaylistIndex: Int,
     isPlaylistSelectionMode: Boolean,
-    onDeletePlaylist: (ListenBrainzPlaylist) -> Unit,
 ) {
     if (item.playlist != null) {
         Row(
@@ -2505,10 +2808,6 @@ private fun LibraryGridItemMetadata(
             when {
                 selectedPlaylistIndex >= 0 && isPlaylistSelectionMode ->
                     PlaylistSelectionBadge(selectionIndex = selectedPlaylistIndex)
-                !isPlaylistSelectionMode -> LibraryPlaylistOptionsButton(
-                    playlist = item.playlist,
-                    onDelete = { onDeletePlaylist(item.playlist) },
-                )
             }
         }
     } else {
@@ -2542,44 +2841,8 @@ private fun LibraryGridItemSubtitle(subtitle: String) {
 }
 
 @Composable
-private fun LibraryPlaylistOptionsButton(
-    playlist: ListenBrainzPlaylist,
-    onDelete: () -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        IconButton(onClick = { expanded = true }) {
-            Icon(
-                painter = materialSymbolPainterResource("more_vert"),
-                contentDescription = stringResource(R.string.library_more_options, playlist.title),
-                modifier = Modifier.size(24.dp),
-            )
-        }
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-        ) {
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.library_playlist_delete)) },
-                leadingIcon = {
-                    Icon(
-                        painter = materialSymbolPainterResource("delete"),
-                        contentDescription = null,
-                        modifier = Modifier.size(24.dp),
-                    )
-                },
-                onClick = {
-                    expanded = false
-                    onDelete()
-                },
-            )
-        }
-    }
-}
-
-@Composable
 private fun PlaylistSelectionOptionsSheet(
-    playlists: List<ListenBrainzPlaylist>,
+    playlists: List<SavedPlaylist>,
     onDismiss: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -2761,7 +3024,10 @@ private fun LibraryArtwork(
             .background(container),
         contentAlignment = Alignment.Center,
     ) {
-        if (item.artworkUrl.isNullOrBlank()) {
+        val playlistArtwork = item.playlist?.previewArtworkUrls.orEmpty()
+        if (item.playlist != null && playlistArtwork.isNotEmpty()) {
+            PlaylistArtworkCollage(playlistArtwork)
+        } else if (item.artworkUrl.isNullOrBlank()) {
             Icon(
                 painter = materialSymbolPainterResource(item.icon),
                 contentDescription = null,
@@ -2799,7 +3065,10 @@ private fun LibraryGridArtwork(
         ),
         contentAlignment = Alignment.Center,
     ) {
-        if (item.artworkUrl.isNullOrBlank()) {
+        val playlistArtwork = item.playlist?.previewArtworkUrls.orEmpty()
+        if (item.playlist != null && playlistArtwork.isNotEmpty()) {
+            PlaylistArtworkCollage(playlistArtwork)
+        } else if (item.artworkUrl.isNullOrBlank()) {
             Icon(
                 painter = materialSymbolPainterResource(item.icon),
                 contentDescription = null,
@@ -2821,6 +3090,31 @@ private fun LibraryGridArtwork(
     }
 }
 
+@Composable
+internal fun PlaylistArtworkCollage(artworkUrls: List<String>) {
+    val tiles = List(4) { artworkUrls[it % artworkUrls.size] }
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(1.dp),
+    ) {
+        repeat(2) { row ->
+            Row(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(1.dp),
+            ) {
+                repeat(2) { column ->
+                    AsyncImage(
+                        model = tiles[row * 2 + column],
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.weight(1f).fillMaxSize(),
+                    )
+                }
+            }
+        }
+    }
+}
+
 private suspend fun fetchLibraryCategory(
     repository: HomeFeedRepository,
     categoryId: String,
@@ -2828,7 +3122,7 @@ private suspend fun fetchLibraryCategory(
     "songs" -> repository.fetchLibrarySongs(forceRefresh = true).map(HomeTrack::toLibraryEntry)
     "albums" -> repository.fetchTopAlbums().map(HomeAlbum::toLibraryEntry)
     "artists" -> repository.fetchTopArtists(forceRefresh = true).map(HomeArtist::toLibraryEntry)
-    "playlists" -> repository.fetchListenBrainzPlaylists().map(ListenBrainzPlaylist::toLibraryEntry)
+    "playlists" -> repository.fetchUserPlaylists().map(SavedPlaylist::toLibraryEntry)
     "recent" -> repository.fetchLibraryRecentTracks(forceRefresh = true).map(HomeTrack::toLibraryEntry)
     "loved" -> repository.fetchLibraryLovedTracks(forceRefresh = true).map(HomeTrack::toLibraryEntry)
     else -> emptyList()
@@ -2861,13 +3155,11 @@ private fun HomeArtist.toLibraryEntry(): LibraryEntry = LibraryEntry(
     artist = this,
 )
 
-private fun ListenBrainzPlaylist.toLibraryEntry(): LibraryEntry = LibraryEntry(
+private fun SavedPlaylist.toLibraryEntry(): LibraryEntry = LibraryEntry(
     id = id,
-    title = title,
-    subtitle = listOfNotNull(creator, trackCount?.let { "$it tracks" })
-        .joinToString(" · ")
-        .ifBlank { "ListenBrainz" },
-    icon = "playlist_play",
+    title = name,
+    subtitle = if (isFavorites) "Favorites" else "$trackCount tracks",
+    icon = if (isFavorites) "favorite" else "playlist_play",
     playlist = this,
 )
 

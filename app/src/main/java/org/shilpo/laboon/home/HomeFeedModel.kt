@@ -18,8 +18,6 @@ data class HomeTrack(
     val backendTrackId: Int? = null,
     val isCached: Boolean = false,
     val codec: String? = null,
-    val mbid: String? = null,
-    val artistMbid: String? = null,
     val isrc: String? = null,
     val providerTrackId: String? = null,
     val availableFormats: List<String> = emptyList(),
@@ -38,7 +36,6 @@ data class HomeArtist(
     val playCount: Long = 0,
     val imageUrl: String? = null,
     val appleCatalogId: String? = null,
-    val mbid: String? = null,
     val source: String? = null,
 )
 
@@ -48,8 +45,6 @@ data class UserTasteProfile(
     val topTracks: List<HomeTrack> = emptyList(),
     val topArtists: List<HomeArtist> = emptyList(),
     val lovedTracks: List<HomeTrack> = emptyList(),
-    val lovedRecordingMbids: Set<String> = emptySet(),
-    val dislikedRecordingMbids: Set<String> = emptySet(),
 )
 
 data class HomeAlbum(

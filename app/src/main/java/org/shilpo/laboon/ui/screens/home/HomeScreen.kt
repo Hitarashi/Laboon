@@ -248,6 +248,8 @@ fun HomeScreen(
     val initialCachedFeed = remember { homeFeedCache.load() }
     var feedState by remember { mutableStateOf(initialCachedFeed ?: HomeFeedDefaults.defaultFeed) }
     var playerExpansionProgress by remember { mutableFloatStateOf(0f) }
+    var isLibraryPlaylistDetailOpen by remember { mutableStateOf(false) }
+    var requestedTrackToAddToPlaylist by remember { mutableStateOf<HomeTrack?>(null) }
     var isRefreshing by remember { mutableStateOf(false) }
     var showThemeQueue by rememberSaveable { mutableStateOf(false) }
     var showThemeLyrics by rememberSaveable { mutableStateOf(false) }
@@ -631,15 +633,16 @@ fun HomeScreen(
     val visualizerProgress = ripVisualizerBackState.progressFor(showRipVisualizer)
 
     val motionScheme = MaterialTheme.motionScheme
+    val isBottomChromeDocked = isAlbumOverlayVisible ||
+        (currentTab == MainTab.Library && isLibraryPlaylistDetailOpen)
     val albumChromeTransition = updateTransition(
-        targetState = isAlbumOverlayVisible,
+        targetState = isBottomChromeDocked,
         label = "albumBottomChrome",
     )
     val albumDockProgress by albumChromeTransition.animateFloat(
         transitionSpec = { motionScheme.defaultSpatialSpec() },
         label = "albumDockProgress",
     ) { albumOpen -> if (albumOpen) 1f else 0f }
-
     val scrimAlpha by animateFloatAsState(
         targetValue = when {
             showRipVisualizer -> (1f - visualizerProgress) * 0.4f
@@ -1588,7 +1591,6 @@ fun HomeScreen(
                                         VisualThemeAction.COPY_LYRICS,
                                         VisualThemeAction.SHARE_LYRICS,
                                         VisualThemeAction.CONNECT_LAST_FM,
-                                        VisualThemeAction.CONNECT_LISTENBRAINZ,
                                         VisualThemeAction.REQUEST_PERMISSION,
                                         VisualThemeAction.CONTINUE,
                                         VisualThemeAction.SEEK -> Unit
@@ -1771,6 +1773,11 @@ fun HomeScreen(
                             onAddToQueue = { track ->
                                 playbackManager.addToQueue(track)
                             },
+                            onAddToPlaylist = { track ->
+                                requestedTrackToAddToPlaylist = track
+                                onEvent(RouteEvent.TabSelected(MainTab.Library))
+                            },
+                            onLoadTrackGenres = albumDetailsRepository::getGenresForTrack,
                             ripTasks = ripState.activeTasks,
                             pendingRipTrackIds = ripState.pendingTrackIds,
                             onRipTrack = { track -> ripWsClient.startRip(track) },
@@ -1800,6 +1807,7 @@ fun HomeScreen(
                             },
                             currentTrack = activeTrack,
                             isPlaying = activeIsPlaying,
+                            isPlayerExpanded = playerExpansionProgress > 0.01f,
                             onPlayNextTrack = playbackManager::playNext,
                             onAddToQueueTrack = playbackManager::addToQueue,
                             onLoadTrackGenres = albumDetailsRepository::getGenresForTrack,
@@ -1809,6 +1817,9 @@ fun HomeScreen(
                             },
                             onShuffleAlbum = shuffleAlbum,
                             onShuffleArtist = shuffleArtist,
+                            onPlaylistDetailVisibilityChanged = { isLibraryPlaylistDetailOpen = it },
+                            requestedTrackToAddToPlaylist = requestedTrackToAddToPlaylist,
+                            onPlaylistAddRequestHandled = { requestedTrackToAddToPlaylist = null },
                         )
                     }
                 }
@@ -2026,7 +2037,7 @@ fun HomeScreen(
                             onActiveTrackChange?.invoke(null, true)
                         },
                         backdropState = liquidGlassBackdropState,
-                        albumDockProgress = albumDockProgress,
+                        bottomChromeHiddenProgress = albumDockProgress,
                         onExpansionProgressChange = { progress ->
                             playerExpansionProgress = progress
                         },
@@ -2067,7 +2078,7 @@ fun HomeScreen(
             }
 
             albumChromeTransition.AnimatedVisibility(
-                visible = { albumOpen -> !albumOpen },
+                visible = { bottomChromeDocked -> !bottomChromeDocked },
                 enter = slideInVertically(
                     animationSpec = motionScheme.defaultSpatialSpec(),
                     initialOffsetY = { it },

@@ -213,11 +213,11 @@ object LyricspornClient {
                 put(
                     JSONObject()
                         .put("appleId", appleId)
-                        .put("include", JSONArray().put("identifiers")),
+                        .put("include", JSONArray().put("artwork").put("identifiers")),
                 )
             }
         },
-    ).toString()
+    ).put("artworkSize", 300).toString()
 
     internal fun parseTrackBatchResponse(response: JSONObject): Map<String, LyricspornCatalogItem> =
         buildMap {
@@ -236,6 +236,8 @@ object LyricspornClient {
                         name = title,
                         artistName = track.stringOrNull("artist"),
                         albumName = track.stringOrNull("album"),
+                        artworkUrl = track.objOrNull("artwork")?.stringOrNull("url")
+                            ?.albumArtworkUrl(300),
                         durationMs = track.optLong("durationMs")
                             .takeIf { track.has("durationMs") && !track.isNull("durationMs") },
                         isrc = track.stringOrNull("isrc"),

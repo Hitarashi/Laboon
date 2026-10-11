@@ -37,7 +37,6 @@ class PlaybackPersistenceTest {
             backendTrackId = 101,
             isCached = true,
             codec = "alac",
-            mbid = "mbid-42",
         )
 
         persistence.saveLastTrack(track)

@@ -2,7 +2,6 @@ package org.shilpo.laboon.home
 
 object TrackIdentity {
 
-    private const val MBID_PREFIX = "mbid:"
     private const val META_PREFIX = "meta:"
     private const val META_SEPARATOR = ":::"
 
@@ -18,13 +17,9 @@ object TrackIdentity {
 
     private val EDGE_NOISE_CHARS = charArrayOf('-', '_', '.', ',', '!', '?')
 
-    fun keyOf(track: HomeTrack): String = keyOf(track.mbid, track.title, track.artist)
+    fun keyOf(track: HomeTrack): String = keyOf(track.title, track.artist)
 
-    fun keyOf(mbid: String?, title: String, artist: String): String {
-        val trimmedMbid = mbid?.trim().orEmpty()
-        if (trimmedMbid.isNotEmpty()) {
-            return MBID_PREFIX + trimmedMbid.lowercase()
-        }
+    fun keyOf(title: String, artist: String): String {
         return META_PREFIX + normalizedTitle(title) + META_SEPARATOR + normalizedArtist(artist)
     }
 

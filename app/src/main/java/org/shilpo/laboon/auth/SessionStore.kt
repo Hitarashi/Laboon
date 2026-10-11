@@ -2,6 +2,11 @@ package org.shilpo.laboon.auth
 
 class SessionStore(private val store: KeyValueStore) {
 
+    init {
+        listOf("listenbrainz_connected", "listenbrainz_username", "listenbrainz_token")
+            .forEach(store::remove)
+    }
+
     fun saveSession(session: AuthSession) {
         val normalized = session.normalized()
         store.putString(KEY_SERVER_URL, normalized.serverUrl)
@@ -42,7 +47,7 @@ class SessionStore(private val store: KeyValueStore) {
     fun hasSession(): Boolean = getSession() != null
 
     fun signOut() {
-        (SESSION_KEYS + LASTFM_KEYS + LISTENBRAINZ_KEYS).forEach(store::remove)
+        (SESSION_KEYS + LASTFM_KEYS).forEach(store::remove)
     }
 
     fun saveLastFmCredentials(credentials: LastFmCredentials) {
@@ -62,22 +67,6 @@ class SessionStore(private val store: KeyValueStore) {
             sessionKey = store.getString(KEY_LASTFM_SESSION_KEY).normalizedText(),
             apiKey = store.getString(KEY_LASTFM_API_KEY).normalizedText(),
             apiSecret = store.getString(KEY_LASTFM_API_SECRET).normalizedText(),
-        ).normalized()
-    }
-
-    fun saveListenBrainzCredentials(credentials: ListenBrainzCredentials) {
-        val normalized = credentials.normalized()
-        store.putBoolean(KEY_LISTENBRAINZ_CONNECTED, normalized.connected)
-        putStringOrRemove(KEY_LISTENBRAINZ_USERNAME, normalized.username)
-        putStringOrRemove(KEY_LISTENBRAINZ_TOKEN, normalized.token)
-    }
-
-    fun getListenBrainzCredentials(): ListenBrainzCredentials? {
-        if (!store.contains(KEY_LISTENBRAINZ_CONNECTED) && !store.contains(KEY_LISTENBRAINZ_TOKEN)) return null
-        return ListenBrainzCredentials(
-            connected = store.getBoolean(KEY_LISTENBRAINZ_CONNECTED),
-            username = store.getString(KEY_LISTENBRAINZ_USERNAME).normalizedText(),
-            token = store.getString(KEY_LISTENBRAINZ_TOKEN).normalizedText(),
         ).normalized()
     }
 
@@ -103,10 +92,6 @@ class SessionStore(private val store: KeyValueStore) {
         const val KEY_LASTFM_API_KEY = "lastfm_api_key"
         const val KEY_LASTFM_API_SECRET = "lastfm_api_secret"
 
-        const val KEY_LISTENBRAINZ_CONNECTED = "listenbrainz_connected"
-        const val KEY_LISTENBRAINZ_USERNAME = "listenbrainz_username"
-        const val KEY_LISTENBRAINZ_TOKEN = "listenbrainz_token"
-
         private val SESSION_KEYS = listOf(
             KEY_SERVER_URL,
             KEY_TOKEN,
@@ -128,10 +113,5 @@ class SessionStore(private val store: KeyValueStore) {
             KEY_LASTFM_API_SECRET,
         )
 
-        private val LISTENBRAINZ_KEYS = listOf(
-            KEY_LISTENBRAINZ_CONNECTED,
-            KEY_LISTENBRAINZ_USERNAME,
-            KEY_LISTENBRAINZ_TOKEN,
-        )
     }
 }

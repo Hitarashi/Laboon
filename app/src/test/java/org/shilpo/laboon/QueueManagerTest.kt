@@ -177,7 +177,7 @@ class QueueManagerTest {
     fun removedAutoplaySuggestionsStayExcludedForTheCurrentSession() {
         val manager = QueueManagerImpl()
         manager.play(track("s", "Seed"))
-        val removed = track("a", "Removed").copy(mbid = "removed-mbid")
+        val removed = track("a", "Removed")
         manager.appendDiscovery(listOf(removed))
         manager.removeUpNext(0)
 
@@ -186,7 +186,7 @@ class QueueManagerTest {
         assertEquals(listOf("Fresh"), manager.state.value.upcoming.map { it.title })
         assertTrue(TrackIdentity.keyOf(removed) in manager.state.value.dismissedAutoplayKeys)
         assertTrue(
-            TrackIdentity.keyOf(null, removed.title, removed.artist) in
+            TrackIdentity.keyOf(removed.title, removed.artist) in
                     manager.state.value.dismissedAutoplayKeys,
         )
     }

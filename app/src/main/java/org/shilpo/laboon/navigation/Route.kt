@@ -1,7 +1,6 @@
 package org.shilpo.laboon.navigation
 
 import org.shilpo.laboon.auth.LastFmCredentials
-import org.shilpo.laboon.auth.ListenBrainzCredentials
 
 sealed interface Route {
     val id: String
@@ -36,16 +35,6 @@ sealed interface Route {
         }
     }
 
-    data class ListenBrainz(val credentials: ListenBrainzCredentials?) : Route {
-        override val id: String = ID
-        override val isBackDestination: Boolean = true
-        override val backTarget: Route = LastFm(null)
-
-        companion object {
-            const val ID: String = "listenbrainz"
-        }
-    }
-
     data object Home : Route {
         override val id: String = "home"
         override val isBackDestination: Boolean = false
@@ -67,6 +56,5 @@ internal fun routeFromId(id: String): Route? = when (id) {
     Route.Connect.id -> Route.Connect
     Route.Home.id -> Route.Home
     Route.LastFm.ID -> Route.LastFm(null)
-    Route.ListenBrainz.ID -> Route.ListenBrainz(null)
     else -> null
 }

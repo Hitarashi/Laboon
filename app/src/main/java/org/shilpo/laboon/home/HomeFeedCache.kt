@@ -138,10 +138,10 @@ class HomeFeedCache(private val store: KeyValueStore) {
         saveCachedList(KEY_LIBRARY_ARTISTS_CACHE, encodeArtists(artists))
     }
 
-    fun loadLibraryPlaylists(): List<ListenBrainzPlaylist>? =
+    fun loadLibraryPlaylists(): List<SavedPlaylist>? =
         loadCachedList(KEY_LIBRARY_PLAYLISTS_CACHE, ::decodePlaylists)
 
-    fun saveLibraryPlaylists(playlists: List<ListenBrainzPlaylist>) {
+    fun saveLibraryPlaylists(playlists: List<SavedPlaylist>) {
         saveCachedList(KEY_LIBRARY_PLAYLISTS_CACHE, encodePlaylists(playlists))
     }
 
@@ -205,8 +205,6 @@ class HomeFeedCache(private val store: KeyValueStore) {
                 track.backendTrackId?.let { put("backendTrackId", it) }
                 put("isCached", track.isCached)
                 track.codec?.let { put("codec", it) }
-                track.mbid?.let { put("mbid", it) }
-                track.artistMbid?.let { put("artistMbid", it) }
                 track.isrc?.let { put("isrc", it) }
                 track.providerTrackId?.let { put("providerTrackId", it) }
                 track.durationMs?.let { put("durationMs", it) }
@@ -270,8 +268,6 @@ class HomeFeedCache(private val store: KeyValueStore) {
                     backendTrackId = if (obj.has("backendTrackId")) obj.optInt("backendTrackId") else null,
                     isCached = obj.optBoolean("isCached", false),
                     codec = obj.optString("codec").takeIf { it.isNotBlank() },
-                    mbid = obj.optString("mbid").takeIf { it.isNotBlank() },
-                    artistMbid = obj.optString("artistMbid").takeIf { it.isNotBlank() },
                     isrc = obj.optString("isrc").takeIf { it.isNotBlank() },
                     providerTrackId = obj.optString("providerTrackId").takeIf { it.isNotBlank() },
                     availableFormats = variants.map(TrackFormatVariant::format),
@@ -359,32 +355,52 @@ class HomeFeedCache(private val store: KeyValueStore) {
         return list
     }
 
-    private fun encodePlaylists(playlists: List<ListenBrainzPlaylist>): JSONArray = JSONArray().apply {
+    private fun encodePlaylists(playlists: List<SavedPlaylist>): JSONArray = JSONArray().apply {
         playlists.forEach { playlist ->
             put(JSONObject().apply {
                 put("id", playlist.id)
-                put("title", playlist.title)
-                playlist.creator?.let { put("creator", it) }
-                playlist.isPublic?.let { put("isPublic", it) }
-                playlist.trackCount?.let { put("trackCount", it) }
+                put("name", playlist.name)
+                put("isFavorites", playlist.isFavorites)
+                playlist.sourceUrl?.let { put("sourceUrl", it) }
+                put("trackCount", playlist.trackCount)
+                put("previewTrackIds", JSONArray(playlist.previewTrackIds))
+                put("previewArtworkByTrackId", JSONObject(playlist.previewArtworkByTrackId))
             })
         }
     }
 
-    private fun decodePlaylists(array: JSONArray?): List<ListenBrainzPlaylist> {
+    private fun decodePlaylists(array: JSONArray?): List<SavedPlaylist> {
         if (array == null) return emptyList()
         return buildList {
             for (index in 0 until array.length()) {
                 val obj = array.optJSONObject(index) ?: continue
                 val id = obj.optString("id").takeIf(String::isNotBlank) ?: continue
-                val title = obj.optString("title").takeIf(String::isNotBlank) ?: continue
+                val name = obj.optString("name").takeIf(String::isNotBlank) ?: continue
                 add(
-                    ListenBrainzPlaylist(
+                    SavedPlaylist(
                         id = id,
-                        title = title,
-                        creator = obj.optString("creator").takeIf(String::isNotBlank),
-                        isPublic = if (obj.has("isPublic")) obj.optBoolean("isPublic") else null,
-                        trackCount = obj.optInt("trackCount", -1).takeIf { it >= 0 },
+                        name = name,
+                        isFavorites = obj.optBoolean("isFavorites"),
+                        sourceUrl = obj.optString("sourceUrl").takeIf(String::isNotBlank),
+                        trackCount = obj.optInt("trackCount", 0).coerceAtLeast(0),
+                        previewTrackIds = obj.optJSONArray("previewTrackIds")?.let { rows ->
+                            buildList {
+                                for (trackIndex in 0 until rows.length()) {
+                                    rows.optString(trackIndex).takeIf(String::isNotBlank)?.let(::add)
+                                }
+                            }
+                        }.orEmpty(),
+                        previewArtworkByTrackId = obj.optJSONObject("previewArtworkByTrackId")
+                            ?.let { artwork ->
+                                buildMap {
+                                    val keys = artwork.keys()
+                                    while (keys.hasNext()) {
+                                        val trackId = keys.next()
+                                        artwork.optString(trackId).takeIf(String::isNotBlank)
+                                            ?.let { url -> put(trackId, url) }
+                                    }
+                                }
+                            }.orEmpty(),
                     ),
                 )
             }
@@ -398,9 +414,9 @@ class HomeFeedCache(private val store: KeyValueStore) {
         const val KEY_LIBRARY_LOVED_TRACKS_CACHE = "library_loved_tracks_cache_v1"
         const val KEY_LIBRARY_ALBUMS_CACHE = "library_albums_cache_v1"
         const val KEY_LIBRARY_ARTISTS_CACHE = "library_artists_cache_v1"
-        const val KEY_LIBRARY_PLAYLISTS_CACHE = "library_playlists_cache_v1"
-        const val KEY_LIBRARY_PLAYLIST_TRACKS_CACHE = "library_playlist_tracks_cache_v1"
-        const val TRACK_MAPPING_VERSION = 1
+        const val KEY_LIBRARY_PLAYLISTS_CACHE = "library_playlists_cache_v2"
+        const val KEY_LIBRARY_PLAYLIST_TRACKS_CACHE = "library_playlist_tracks_cache_v2"
+        const val TRACK_MAPPING_VERSION = 2
 
         val LIBRARY_CACHE_KEYS = listOf(
             KEY_LIBRARY_SONGS_CACHE,

@@ -58,6 +58,20 @@ internal enum class SongsLibrarySortOption(val label: Int) {
     DURATION(R.string.library_sort_duration),
 }
 
+internal data class LibrarySortSheetOption(
+    val key: String,
+    val label: Int,
+    val directionEnabled: Boolean = true,
+)
+
+private val SongsLibrarySortSheetOptions = SongsLibrarySortOption.entries.map { option ->
+    LibrarySortSheetOption(
+        key = option.name,
+        label = option.label,
+        directionEnabled = option != SongsLibrarySortOption.DEFAULT_ORDER,
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun SongsLibrarySortBottomSheet(
@@ -65,6 +79,30 @@ internal fun SongsLibrarySortBottomSheet(
     isDescending: Boolean,
     onDismiss: () -> Unit,
     onOptionSelected: (SongsLibrarySortOption) -> Unit,
+    onDirectionToggle: () -> Unit,
+) {
+    LibrarySortBottomSheet(
+        selectedOptionKey = selectedOption.name,
+        isDescending = isDescending,
+        options = SongsLibrarySortSheetOptions,
+        onDismiss = onDismiss,
+        onOptionSelected = { key ->
+            SongsLibrarySortOption.entries
+                .firstOrNull { it.name == key }
+                ?.let(onOptionSelected)
+        },
+        onDirectionToggle = onDirectionToggle,
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun LibrarySortBottomSheet(
+    selectedOptionKey: String,
+    isDescending: Boolean,
+    options: List<LibrarySortSheetOption>,
+    onDismiss: () -> Unit,
+    onOptionSelected: (String) -> Unit,
     onDirectionToggle: () -> Unit,
 ) {
     val sheetState = rememberBottomSheetState(
@@ -99,7 +137,8 @@ internal fun SongsLibrarySortBottomSheet(
             SongsSortDirectionCard(
                 modifier = Modifier.padding(bottom = 12.dp),
                 isDescending = isDescending,
-                enabled = selectedOption != SongsLibrarySortOption.DEFAULT_ORDER,
+                enabled = options.firstOrNull { it.key == selectedOptionKey }
+                    ?.directionEnabled == true,
                 onClick = onDirectionToggle,
             )
 
@@ -107,8 +146,8 @@ internal fun SongsLibrarySortBottomSheet(
                 modifier = Modifier.clip(RoundedCornerShape(20.dp)),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                SongsLibrarySortOption.entries.forEach { option ->
-                    val isSelected = selectedOption == option
+                options.forEach { option ->
+                    val isSelected = selectedOptionKey == option.key
                     Surface(
                         color = if (isSelected) selectedColor else unselectedColor,
                         shape = RoundedCornerShape(8.dp),
@@ -116,7 +155,7 @@ internal fun SongsLibrarySortBottomSheet(
                             .fillMaxWidth()
                             .selectable(
                                 selected = isSelected,
-                                onClick = { onOptionSelected(option) },
+                                onClick = { onOptionSelected(option.key) },
                                 role = Role.RadioButton,
                             )
                             .semantics { selected = isSelected },

@@ -15,7 +15,6 @@ data class LastFmTrackCandidate(
 
 data class LastFmArtistCandidate(
     val name: String,
-    val mbid: String? = null,
     val similarity: Double? = null,
 )
 
@@ -24,30 +23,19 @@ object LastFmApi {
     private const val BASE_URL = "https://ws.audioscrobbler.com/2.0/"
 
     fun similarTracksUrl(seed: HomeTrack, apiKey: String, limit: Int = 20): String =
-        url("track.getsimilar", apiKey, limit).let { base ->
-            if (!seed.mbid.isNullOrBlank()) "$base&mbid=${seed.mbid.encoded()}"
-            else "$base&track=${seed.title.encoded()}&artist=${seed.artist.encoded()}"
-        }
+        "${url("track.getsimilar", apiKey, limit)}&track=${seed.title.encoded()}&artist=${seed.artist.encoded()}"
 
     fun similarArtistsUrl(
         artistName: String,
-        artistMbid: String?,
         apiKey: String,
         limit: Int = 12,
-    ): String = url("artist.getsimilar", apiKey, limit).let { base ->
-        if (!artistMbid.isNullOrBlank()) "$base&mbid=${artistMbid.encoded()}"
-        else "$base&artist=${artistName.encoded()}"
-    }
+    ): String = "${url("artist.getsimilar", apiKey, limit)}&artist=${artistName.encoded()}"
 
     fun topTracksUrl(
         artistName: String,
-        artistMbid: String?,
         apiKey: String,
         limit: Int = 8,
-    ): String = url("artist.gettoptracks", apiKey, limit).let { base ->
-        if (!artistMbid.isNullOrBlank()) "$base&mbid=${artistMbid.encoded()}"
-        else "$base&artist=${artistName.encoded()}"
-    }
+    ): String = "${url("artist.gettoptracks", apiKey, limit)}&artist=${artistName.encoded()}"
 
     fun lovedTracksUrl(username: String, apiKey: String, limit: Int = 100): String =
         "$BASE_URL?method=user.getlovedtracks&user=${username.encoded()}" +
@@ -88,7 +76,6 @@ object LastFmApi {
                 add(
                     LastFmArtistCandidate(
                         name = name,
-                        mbid = item.stringOrNull("mbid")?.takeIf(String::isNotBlank),
                         similarity = item.optString("match").toDoubleOrNull(),
                     ),
                 )
@@ -104,18 +91,13 @@ object LastFmApi {
             val artist = artistObject?.stringOrNull("name")
                 ?: item.stringOrNull("artist")
                 ?: continue
-            val mbid = item.stringOrNull("mbid")?.takeIf(String::isNotBlank)
             add(
                 LastFmTrackCandidate(
                     track = HomeTrack(
-                        id = mbid?.let { "lfm_$it" }
-                            ?: "lfm_${title.hashCode()}_${artist.hashCode()}",
+                        id = "lfm_${title.hashCode()}_${artist.hashCode()}",
                         title = title,
                         artist = artist,
                         source = "Last.fm",
-                        mbid = mbid,
-                        artistMbid = artistObject?.stringOrNull("mbid")
-                            ?.takeIf(String::isNotBlank),
                     ),
                     similarity = item.optString("match").toDoubleOrNull(),
                 ),

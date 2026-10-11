@@ -299,102 +299,6 @@ class AuthClient(
         }
     }
 
-    suspend fun fetchListenBrainzStatus(
-        serverUrl: String,
-        token: String,
-    ): Result<ListenBrainzCredentials> = withContext(Dispatchers.IO) {
-        val cleanUrl = serverUrl.trimEnd('/')
-        val endpoint = "$cleanUrl/api/v1/integrations/listenbrainz/status"
-
-        val json = when (val outcome = http.getJson(endpoint, bearerHeaders(token))) {
-            is HttpOutcome.Failure -> {
-                logFailure("ListenBrainz status", endpoint, outcome.error)
-                if (outcome.error.statusCode == HTTP_UNAUTHORIZED) {
-                    sessionStore.signOut()
-                    return@withContext Result.failure(UnauthorizedException())
-                }
-                return@withContext Result.failure(
-                    Exception(
-                        "Failed to check ListenBrainz status: ${statusLabel(outcome.error)}"
-                    )
-                )
-            }
-
-            is HttpOutcome.Success -> outcome.value
-        }
-
-        try {
-            val credentials = ListenBrainzCredentials(
-                connected = json.optBoolean("connected", false),
-                username = json.optString("username").normalizedText(),
-                token = json.optString("token").normalizedText(),
-            ).normalized()
-
-            sessionStore.saveListenBrainzCredentials(credentials)
-            Result.success(credentials)
-        } catch (e: Exception) {
-            logFailure("ListenBrainz status", endpoint, malformed(endpoint, e))
-            Result.failure(e)
-        }
-    }
-
-    suspend fun loginListenBrainz(
-        serverUrl: String,
-        token: String,
-        listenbrainzToken: String,
-    ): Result<ListenBrainzCredentials> = withContext(Dispatchers.IO) {
-        val cleanUrl = serverUrl.trimEnd('/')
-        val endpoint = "$cleanUrl/api/v1/integrations/listenbrainz/login"
-        val requestJson = JSONObject().apply {
-            put("token", listenbrainzToken)
-        }
-
-        val response = when (val outcome = postJson(endpoint, requestJson, token)) {
-            is HttpOutcome.Failure -> {
-                logFailure("ListenBrainz login", endpoint, outcome.error)
-                return@withContext Result.failure(
-                    Exception("${LISTENBRAINZ_LOGIN_FAILED} (${statusLabel(outcome.error)})")
-                )
-            }
-
-            is HttpOutcome.Success -> outcome.value
-        }
-
-        if (response.statusCode == HTTP_UNAUTHORIZED) {
-            logStatusFailure("ListenBrainz login", endpoint, response.statusCode)
-            sessionStore.signOut()
-            return@withContext Result.failure(UnauthorizedException())
-        }
-
-        if (response.statusCode !in 200..299) {
-            logStatusFailure("ListenBrainz login", endpoint, response.statusCode)
-            return@withContext Result.failure(
-                Exception(
-                    friendlyMessage(
-                        response.body,
-                        LISTENBRAINZ_LOGIN_FAILED,
-                        response.statusCode,
-                    )
-                )
-            )
-        }
-
-        try {
-            val json = JSONObject(response.body)
-            val credentials = ListenBrainzCredentials(
-                connected = json.optBoolean("connected", true),
-                username = json.optString("username").normalizedText(),
-                token = json.optString("token").normalizedText() ?: listenbrainzToken,
-            ).normalized()
-
-            sessionStore.saveListenBrainzCredentials(credentials)
-            Result.success(credentials)
-        } catch (e: Exception) {
-            logFailure("ListenBrainz login", endpoint, malformed(endpoint, e))
-            Result.failure(e)
-        }
-    }
-
     private fun deviceName(): String = listOfNotNull(
         Build.MANUFACTURER?.replaceFirstChar { it.uppercase() },
         Build.MODEL,
@@ -523,7 +427,6 @@ class AuthClient(
         const val DEFAULT_DEVICE_NAME = "Android Device"
         const val EXCHANGE_FAILED = "Authentication failed"
         const val LASTFM_LOGIN_FAILED = "Last.fm authentication failed"
-        const val LISTENBRAINZ_LOGIN_FAILED = "ListenBrainz authentication failed"
         const val HTTP_UNAUTHORIZED = 401
         const val HTTP_FORBIDDEN = 403
         const val HTTP_TOO_MANY_REQUESTS = 429

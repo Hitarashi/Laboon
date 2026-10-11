@@ -227,7 +227,7 @@ class QueueManagerImpl(
                     dismissedAutoplayKeys = if (entry.origin == QueueOrigin.AUTOPLAY) {
                         current.dismissedAutoplayKeys + setOf(
                             TrackIdentity.keyOf(entry.track),
-                            TrackIdentity.keyOf(null, entry.track.title, entry.track.artist),
+                            TrackIdentity.keyOf(entry.track.title, entry.track.artist),
                         )
                     } else current.dismissedAutoplayKeys,
                 )

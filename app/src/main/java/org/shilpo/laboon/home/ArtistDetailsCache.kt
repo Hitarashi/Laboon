@@ -181,7 +181,6 @@ class ArtistDetailsCache(private val store: KeyValueStore) {
         putNullable("backendTrackId", backendTrackId)
         put("isCached", isCached)
         putNullable("codec", codec)
-        putNullable("mbid", mbid)
         putNullable("isrc", isrc)
         putNullable("providerTrackId", providerTrackId)
         put("availableFormats", JSONArray().apply { availableFormats.forEach { put(it) } })
@@ -215,7 +214,6 @@ class ArtistDetailsCache(private val store: KeyValueStore) {
             backendTrackId = readInt("backendTrackId"),
             isCached = optBoolean("isCached", false),
             codec = readString("codec"),
-            mbid = readString("mbid"),
             isrc = readString("isrc"),
             providerTrackId = readString("providerTrackId"),
             availableFormats = optJSONArray("availableFormats").toStringList()

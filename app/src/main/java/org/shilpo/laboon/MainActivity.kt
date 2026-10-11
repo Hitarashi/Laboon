@@ -88,7 +88,6 @@ import org.shilpo.laboon.ui.screens.connect.ConnectScreen
 import org.shilpo.laboon.ui.screens.connect.openTelegramApp
 import org.shilpo.laboon.ui.screens.home.HomeScreen
 import org.shilpo.laboon.ui.screens.lastfm.LastFmScreen
-import org.shilpo.laboon.ui.screens.listenbrainz.ListenBrainzScreen
 import org.shilpo.laboon.ui.screens.permissions.PermissionsScreen
 import org.shilpo.laboon.ui.screens.welcome.WelcomeScreen
 
@@ -110,9 +109,6 @@ class MainActivity : ComponentActivity() {
 
     private var isLastFmAuthenticating by mutableStateOf(false)
     private var lastFmErrorMessage by mutableStateOf<String?>(null)
-
-    private var isListenBrainzAuthenticating by mutableStateOf(false)
-    private var listenBrainzErrorMessage by mutableStateOf<String?>(null)
 
     private var permissionAnswersRevision by mutableIntStateOf(0)
     private var openThemeSelectionOnNextHome by mutableStateOf(false)
@@ -178,7 +174,6 @@ class MainActivity : ComponentActivity() {
                         AndroidPermissionState(applicationContext),
                     ),
                     lastFmCredentials = sessionStore.getLastFmCredentials(),
-                    listenBrainzCredentials = sessionStore.getListenBrainzCredentials(),
                 ),
             )
 
@@ -247,7 +242,6 @@ class MainActivity : ComponentActivity() {
                         val autofillManager = LocalAutofillManager.current
                         var customLastFmUsername by rememberSaveable { mutableStateOf("") }
                         var customLastFmPassword by rememberSaveable { mutableStateOf("") }
-                        var customListenBrainzToken by rememberSaveable { mutableStateOf("") }
                         val permissionCatalogue = remember {
                             permissionCatalogueForAndroidApi(Build.VERSION.SDK_INT)
                         }
@@ -262,7 +256,6 @@ class MainActivity : ComponentActivity() {
                                 RouteEvent.PermissionsCompleted(
                                     hasSession = sessionStore.hasSession(),
                                     lastFmCredentials = sessionStore.getLastFmCredentials(),
-                                    listenBrainzCredentials = sessionStore.getListenBrainzCredentials(),
                                 ),
                             )
                         }
@@ -291,11 +284,7 @@ class MainActivity : ComponentActivity() {
                                         onSuccess = {
                                             autofillManager?.commit()
                                             isLastFmAuthenticating = false
-                                            dispatch(
-                                                RouteEvent.LastFmConnected(
-                                                    listenBrainzCredentials = sessionStore.getListenBrainzCredentials(),
-                                                ),
-                                            )
+                                            dispatch(RouteEvent.LastFmConnected)
                                         },
                                         onFailure = { error ->
                                             autofillManager?.cancel()
@@ -310,43 +299,6 @@ class MainActivity : ComponentActivity() {
                                     )
                                 }
                             }
-                        val submitListenBrainz: (String) -> Unit = submitListenBrainz@{ token ->
-                            val cleanToken = token.trim()
-                            if (cleanToken.isEmpty()) {
-                                listenBrainzErrorMessage =
-                                    getString(R.string.listenbrainz_error_empty)
-                                return@submitListenBrainz
-                            }
-                            val session = sessionStore.getSession()
-                            if (session == null) {
-                                dispatch(RouteEvent.SessionMissing)
-                                return@submitListenBrainz
-                            }
-                            isListenBrainzAuthenticating = true
-                            listenBrainzErrorMessage = null
-                            lifecycleScope.launch {
-                                val result = authClient.loginListenBrainz(
-                                    serverUrl = session.serverUrl,
-                                    token = session.token,
-                                    listenbrainzToken = cleanToken,
-                                )
-                                result.fold(
-                                    onSuccess = {
-                                        isListenBrainzAuthenticating = false
-                                        dispatch(RouteEvent.ListenBrainzConnected)
-                                    },
-                                    onFailure = { error ->
-                                        isListenBrainzAuthenticating = false
-                                        if (error is UnauthorizedException) {
-                                            dispatch(RouteEvent.SessionMissing)
-                                        } else {
-                                            listenBrainzErrorMessage = error.message
-                                                ?: getString(R.string.connect_auth_failed)
-                                        }
-                                    },
-                                )
-                            }
-                        }
                         var contentVisible by remember { mutableStateOf(false) }
                         var splashDone by remember { mutableStateOf(false) }
                         LaunchedEffect(selectedTheme?.manifest?.id, splashDone) {
@@ -567,49 +519,6 @@ class MainActivity : ComponentActivity() {
                                             )
                                         }
 
-                                        is Route.ListenBrainz -> ThemeRouteContent(
-                                            theme = selectedTheme,
-                                            screenName = "listenBrainz",
-                                            presentation = VisualThemePresentation(
-                                                values = mapOf(
-                                                    "screen.title" to getString(R.string.listenbrainz_title),
-                                                    "screen.subtitle" to getString(R.string.listenbrainz_subtitle),
-                                                    "auth.isConnecting" to isListenBrainzAuthenticating.toString(),
-                                                    "auth.canSubmit" to (!isListenBrainzAuthenticating).toString(),
-                                                    "auth.error" to listenBrainzErrorMessage.orEmpty(),
-                                                ),
-                                                inputValues = mapOf("auth.listenBrainz.token" to customListenBrainzToken),
-                                            ),
-                                            availableActions = setOf(
-                                                VisualThemeAction.BACK,
-                                                VisualThemeAction.CONNECT_LISTENBRAINZ
-                                            ),
-                                            onAction = { action, parameters ->
-                                                when (action) {
-                                                    VisualThemeAction.BACK -> dispatch(RouteEvent.BackPressed)
-                                                    VisualThemeAction.CONNECT_LISTENBRAINZ -> submitListenBrainz(
-                                                        parameters["auth.listenBrainz.token"].orEmpty(),
-                                                    )
-
-                                                    else -> Unit
-                                                }
-                                            },
-                                            onFieldChange = { field, value ->
-                                                if (field == "auth.listenBrainz.token") customListenBrainzToken =
-                                                    value
-                                            },
-                                            modifier = Modifier.fillMaxSize(),
-                                        ) {
-                                            ListenBrainzScreen(
-                                                credentials = route.credentials,
-                                                hasSession = sessionStore.hasSession(),
-                                                isConnecting = isListenBrainzAuthenticating,
-                                                errorMessage = listenBrainzErrorMessage,
-                                                onConnect = submitListenBrainz,
-                                                modifier = Modifier.fillMaxSize(),
-                                            )
-                                        }
-
                                         Route.Home -> HomeScreen(
                                             state = routeState,
                                             session = sessionStore.getSession(),
@@ -717,16 +626,12 @@ class MainActivity : ComponentActivity() {
                     val lastFmResult =
                         authClient.fetchLastFmStatus(session.serverUrl, session.token)
                     val creds = lastFmResult.getOrNull()
-                    val lbResult =
-                        authClient.fetchListenBrainzStatus(session.serverUrl, session.token)
-                    val lbCreds = lbResult.getOrNull()
                     isExchangingCode = false
 
                     syncRipConnection()
                     dispatch(
                         RouteEvent.SessionEstablished(
                             lastFmCredentials = creds,
-                            listenBrainzCredentials = lbCreds,
                         ),
                     )
                 },

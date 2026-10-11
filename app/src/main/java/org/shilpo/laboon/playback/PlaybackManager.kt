@@ -1461,11 +1461,11 @@ class PlaybackManagerImpl(
                 val queuedKeys = buildSet {
                     stateAtStart.currentTrack?.let { track ->
                         add(TrackIdentity.keyOf(track))
-                        add(TrackIdentity.keyOf(null, track.title, track.artist))
+                        add(TrackIdentity.keyOf(track.title, track.artist))
                     }
                     stateAtStart.playbackUpcomingEntries.forEach { entry ->
                         add(TrackIdentity.keyOf(entry.track))
-                        add(TrackIdentity.keyOf(null, entry.track.title, entry.track.artist))
+                        add(TrackIdentity.keyOf(entry.track.title, entry.track.artist))
                     }
                     addAll(stateAtStart.dismissedAutoplayKeys)
                 }
