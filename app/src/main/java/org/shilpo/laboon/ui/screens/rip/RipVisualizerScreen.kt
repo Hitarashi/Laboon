@@ -1,11 +1,6 @@
 package org.shilpo.laboon.ui.screens.rip
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -23,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -63,7 +59,9 @@ import org.shilpo.laboon.rip.RipTaskSnapshot
 import org.shilpo.laboon.rip.RipTaskUploadLane
 import org.shilpo.laboon.rip.RipWebSocketClient
 import org.shilpo.laboon.rip.RipWsStatus
+import org.shilpo.laboon.ui.design.SkeletonTextLine
 import org.shilpo.laboon.ui.design.UserAvatar
+import org.shilpo.laboon.ui.design.frostedGlassShimmer
 import org.shilpo.laboon.ui.design.painterResource
 import java.util.Locale
 
@@ -79,14 +77,20 @@ fun RipVisualizerScreen(
 
     val orderedTasks = remember(state.activeTasks) {
         state.activeTasks.asReversed()
-            .sortedByDescending { it.download != null || it.upload != null }
+            .sortedByDescending { it.download != null || it.upload != null || it.uploads.isNotEmpty() }
     }
 
     val totalDownloadSpeed = remember(state.activeTasks) {
         state.activeTasks.sumOf { it.download?.speedBytesPerSec ?: 0L }
     }
     val totalUploadSpeed = remember(state.activeTasks) {
-        state.activeTasks.sumOf { it.upload?.speedBytesPerSec ?: 0L }
+        state.activeTasks.sumOf { task ->
+            if (task.uploads.isNotEmpty()) {
+                task.uploads.sumOf { it.speedBytesPerSec }
+            } else {
+                task.upload?.speedBytesPerSec ?: 0L
+            }
+        }
     }
 
     Box(
@@ -138,7 +142,6 @@ fun RipVisualizerScreen(
                             color = MaterialTheme.colorScheme.onBackground,
                         )
 
-                        LiveConnectionBadge(status = state.wsStatus)
                     }
 
                     UserAvatar(
@@ -161,7 +164,14 @@ fun RipVisualizerScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                if (orderedTasks.isNotEmpty()) {
+                if (state.wsStatus != RipWsStatus.CONNECTED) {
+                    item(key = "skeleton_telemetry") {
+                        SkeletonTelemetryPill()
+                    }
+                    items(count = 2, key = { "skeleton_task_$it" }) {
+                        SkeletonRipTaskCard()
+                    }
+                } else if (orderedTasks.isNotEmpty()) {
                     item(key = "telemetry_summary") {
                         GlobalTelemetryPill(
                             taskCount = orderedTasks.size,
@@ -182,7 +192,6 @@ fun RipVisualizerScreen(
                 } else {
                     item(key = "empty_state") {
                         ModernEmptyState(
-                            wsStatus = state.wsStatus,
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
@@ -193,54 +202,179 @@ fun RipVisualizerScreen(
 }
 
 @Composable
-private fun LiveConnectionBadge(
-    status: RipWsStatus,
+private fun SkeletonTelemetryPill(
     modifier: Modifier = Modifier,
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "badgePulse")
-    val pulseAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(900, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "pulseAlpha",
-    )
-
-    val (statusColor, statusText, isPulsing) = when (status) {
-        RipWsStatus.CONNECTED -> Triple(Color(0xFF22C55E), "LIVE", true)
-        RipWsStatus.CONNECTING -> Triple(Color(0xFFF59E0B), "CONNECTING", true)
-        RipWsStatus.DISCONNECTED -> Triple(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), "OFFLINE", false)
-        RipWsStatus.ERROR -> Triple(MaterialTheme.colorScheme.error, "ERROR", false)
-    }
-
     Surface(
-        shape = CircleShape,
-        color = statusColor.copy(alpha = 0.12f),
-        border = BorderStroke(1.dp, statusColor.copy(alpha = 0.25f)),
-        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.65f),
+        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)),
+        modifier = modifier.fillMaxWidth(),
     ) {
         Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(6.dp)
-                    .clip(CircleShape)
-                    .background(statusColor.copy(alpha = if (isPulsing) pulseAlpha else 1f)),
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .frostedGlassShimmer(),
+                )
+                SkeletonTextLine(
+                    width = 86.dp,
+                    height = 14.dp,
+                )
+            }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    SkeletonTextLine(
+                        width = 48.dp,
+                        height = 13.dp,
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .height(12.dp)
+                        .width(1.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                )
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    SkeletonTextLine(
+                        width = 48.dp,
+                        height = 13.dp,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SkeletonRipTaskCard(
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.18f)),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .frostedGlassShimmer(),
+                )
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    SkeletonTextLine(
+                        width = 160.dp,
+                        height = 15.dp,
+                    )
+                    SkeletonTextLine(
+                        width = 100.dp,
+                        height = 12.dp,
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider(
+                thickness = 0.8.dp,
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f),
             )
-            Text(
-                text = statusText,
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 10.sp,
-                    letterSpacing = 0.5.sp,
-                ),
-                color = statusColor,
-            )
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(14.dp)
+                                .clip(CircleShape)
+                                .frostedGlassShimmer(),
+                        )
+                        SkeletonTextLine(
+                            width = 110.dp,
+                            height = 13.dp,
+                        )
+                    }
+
+                    SkeletonTextLine(
+                        width = 54.dp,
+                        height = 12.dp,
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .frostedGlassShimmer(),
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    SkeletonTextLine(
+                        width = 80.dp,
+                        height = 11.dp,
+                    )
+                    SkeletonTextLine(
+                        width = 28.dp,
+                        height = 11.dp,
+                    )
+                }
+            }
         }
     }
 }
@@ -477,7 +611,8 @@ private fun RipTaskCard(
                 }
             }
 
-            val hasLanes = task.download != null || task.upload != null
+            val uploadLanes = if (task.uploads.isNotEmpty()) task.uploads else listOfNotNull(task.upload)
+            val hasLanes = task.download != null || uploadLanes.isNotEmpty()
             if (hasLanes) {
                 Spacer(modifier = Modifier.height(12.dp))
                 HorizontalDivider(
@@ -493,11 +628,14 @@ private fun RipTaskCard(
                     )
                 }
 
-                if (task.download != null && task.upload != null) {
+                if (task.download != null && uploadLanes.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(10.dp))
                 }
 
-                task.upload?.let { lane ->
+                uploadLanes.forEachIndexed { index, lane ->
+                    if (index > 0) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
                     UploadLaneGauge(
                         lane = lane,
                         task = task,
@@ -580,6 +718,13 @@ private fun UploadLaneGauge(
         lane.title ?: (task.currentTrackTitle ?: if (task.isAlbum) null else task.title)
     }
 
+    val workerBadge = when {
+        lane.dcId != null && lane.workerId != null -> "DC${lane.dcId} • Bot #${lane.workerId}"
+        lane.dcId != null -> "DC${lane.dcId}"
+        lane.workerId != null -> "Bot #${lane.workerId}"
+        else -> null
+    }
+
     LaneProgressIndicator(
         isDownload = false,
         stage = lane.stage,
@@ -589,6 +734,7 @@ private fun UploadLaneGauge(
         speedBytesPerSec = lane.speedBytesPerSec,
         trackTitle = trackTitle,
         trackPosition = trackPosition,
+        workerBadge = workerBadge,
         modifier = modifier,
     )
 }
@@ -603,6 +749,7 @@ private fun LaneProgressIndicator(
     speedBytesPerSec: Long,
     trackTitle: String? = null,
     trackPosition: String? = null,
+    workerBadge: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val progress = (percent ?: 0f) / 100f
@@ -764,14 +911,35 @@ private fun LaneProgressIndicator(
                 if (isDownload) "Processing..." else "Uploading..."
             }
 
-            Text(
-                text = bytesText,
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontSize = 11.sp,
-                    fontFeatureSettings = "tnum",
-                ),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                Text(
+                    text = bytesText,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontSize = 11.sp,
+                        fontFeatureSettings = "tnum",
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (!workerBadge.isNullOrBlank()) {
+                    Text(
+                        text = "•",
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    )
+                    Text(
+                        text = workerBadge,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            fontFeatureSettings = "tnum",
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
 
             Text(
                 text = "${(progress * 100).toInt()}%",
@@ -788,7 +956,6 @@ private fun LaneProgressIndicator(
 
 @Composable
 private fun ModernEmptyState(
-    wsStatus: RipWsStatus,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -820,7 +987,7 @@ private fun ModernEmptyState(
         Spacer(modifier = Modifier.height(20.dp))
 
         Text(
-            text = "Pipeline Idle",
+            text = "No active rip",
             style = MaterialTheme.typography.titleMedium.copy(
                 fontWeight = FontWeight.Bold,
                 fontSize = 18.sp,
@@ -831,7 +998,7 @@ private fun ModernEmptyState(
         Spacer(modifier = Modifier.height(6.dp))
 
         Text(
-            text = "No active downloads or uploads. Tracks and albums dispatched from Search or Home stream live here.",
+            text = "Active downloads and uploads will stream live here.",
             style = MaterialTheme.typography.bodySmall.copy(
                 lineHeight = 18.sp,
             ),
@@ -839,42 +1006,6 @@ private fun ModernEmptyState(
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth(0.85f),
         )
-
-        Spacer(modifier = Modifier.height(18.dp))
-
-        val (dotColor, statusMsg) = when (wsStatus) {
-            RipWsStatus.CONNECTED -> Color(0xFF22C55E) to "Connected to pipeline backend"
-            RipWsStatus.CONNECTING -> Color(0xFFF59E0B) to "Connecting to pipeline backend…"
-            RipWsStatus.DISCONNECTED -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) to "Pipeline server offline"
-            RipWsStatus.ERROR -> MaterialTheme.colorScheme.error to "Pipeline connection error"
-        }
-
-        Surface(
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.5f),
-            border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f)),
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(6.dp)
-                        .clip(CircleShape)
-                        .background(dotColor),
-                )
-                Text(
-                    text = statusMsg,
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                    ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
     }
 }
 

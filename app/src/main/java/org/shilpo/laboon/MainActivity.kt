@@ -92,6 +92,10 @@ import org.shilpo.laboon.ui.screens.home.TrackFavoriteActions
 import org.shilpo.laboon.ui.screens.lastfm.LastFmScreen
 import org.shilpo.laboon.ui.screens.permissions.PermissionsScreen
 import org.shilpo.laboon.ui.screens.welcome.WelcomeScreen
+import org.shilpo.laboon.update.AppUpdatePreferences
+import org.shilpo.laboon.update.GithubUpdateRepository
+import org.shilpo.laboon.update.UpdateCheckResult
+import org.shilpo.laboon.update.UpdateNotificationManager
 
 private const val ROUTE_STATE_KEY = "org.shilpo.laboon.routeState"
 
@@ -150,6 +154,27 @@ class MainActivity : ComponentActivity() {
         RipConnectionHolderInstance.getInstance(applicationContext, sessionStore).syncWithSession()
     }
 
+    private fun scheduleUpdateCheck() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val updatePrefs = AppUpdatePreferences(applicationContext)
+                if (updatePrefs.shouldAutoCheck()) {
+                    val updateRepository = GithubUpdateRepository(preferences = updatePrefs)
+                    val result = updateRepository.checkForUpdate(force = false)
+                    if (result is UpdateCheckResult.Available) {
+                        UpdateNotificationManager.notifyIfNewVersion(
+                            context = applicationContext,
+                            release = result.release,
+                            preferences = updatePrefs,
+                        )
+                    }
+                }
+            } catch (_: Exception) {
+                // Background update check is best-effort
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
@@ -163,6 +188,7 @@ class MainActivity : ComponentActivity() {
         playbackPersistence = PlaybackPersistence(keyValueStore)
         verifySessionIfPresent()
         syncRipConnection()
+        scheduleUpdateCheck()
 
         val restoredTokens = savedInstanceState?.getStringArrayList(ROUTE_STATE_KEY)
         routeState = restoredTokens?.let { routeStateFromTokens(it) }

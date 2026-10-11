@@ -106,6 +106,8 @@ data class RipTaskUploadLane(
     val trackIndex: Int? = null,
     val totalTracks: Int? = null,
     val artworkUrl: String? = null,
+    val workerId: Int? = null,
+    val dcId: Int? = null,
 ) {
     companion object {
         fun fromJson(
@@ -130,6 +132,10 @@ data class RipTaskUploadLane(
                 if (json.has("track_index") && !json.isNull("track_index")) json.optInt("track_index") else null
             val totalTracks =
                 if (json.has("total_tracks") && !json.isNull("total_tracks")) json.optInt("total_tracks") else null
+            val workerId =
+                if (json.has("worker_id") && !json.isNull("worker_id")) json.optInt("worker_id") else null
+            val dcId =
+                if (json.has("dc_id") && !json.isNull("dc_id")) json.optInt("dc_id") else null
 
             var speed = previous?.speedBytesPerSec ?: 0L
             var lastProgress = previous?.lastProgressMs ?: now
@@ -176,6 +182,8 @@ data class RipTaskUploadLane(
                 trackIndex = trackIndex,
                 totalTracks = totalTracks,
                 artworkUrl = artworkUrl,
+                workerId = workerId,
+                dcId = dcId,
             )
         }
     }
@@ -191,6 +199,7 @@ data class RipTaskSnapshot(
     val jobStage: String? = null,
     val download: RipTaskDownloadLane? = null,
     val upload: RipTaskUploadLane? = null,
+    val uploads: List<RipTaskUploadLane> = emptyList(),
     val percent: Float? = null,
     val resultTrackId: Int? = null,
     val isCached: Boolean? = null,
@@ -215,9 +224,32 @@ data class RipTaskSnapshot(
             val downloadLane = json.objOrNull("download")?.let {
                 RipTaskDownloadLane.fromJson(it, previous?.download, now)
             }
-            val uploadLane = json.objOrNull("upload")?.let {
+            val rawUploadLane = json.objOrNull("upload")?.let {
                 RipTaskUploadLane.fromJson(it, previous?.upload, now)
             }
+            val uploadsArray = json.optJSONArray("uploads")
+            val uploadsList = if (uploadsArray != null && uploadsArray.length() > 0) {
+                val list = mutableListOf<RipTaskUploadLane>()
+                for (i in 0 until uploadsArray.length()) {
+                    val itemObj = uploadsArray.optJSONObject(i) ?: continue
+                    val itemTitle = itemObj.stringOrNull("title")
+                    val itemTrackIndex =
+                        if (itemObj.has("track_index") && !itemObj.isNull("track_index")) itemObj.optInt("track_index") else null
+                    val prevMatch = previous?.uploads?.firstOrNull { prev ->
+                        (itemTrackIndex != null && prev.trackIndex == itemTrackIndex) ||
+                                (itemTitle != null && prev.title.equals(itemTitle, ignoreCase = true))
+                    } ?: previous?.upload?.takeIf { prev ->
+                        (itemTrackIndex != null && prev.trackIndex == itemTrackIndex) ||
+                                (itemTitle != null && prev.title.equals(itemTitle, ignoreCase = true))
+                    }
+                    list.add(RipTaskUploadLane.fromJson(itemObj, prevMatch, now))
+                }
+                list
+            } else {
+                rawUploadLane?.let { listOf(it) } ?: emptyList()
+            }
+            val uploadLane = rawUploadLane ?: uploadsList.firstOrNull()
+
             val title = json.stringOrNull("title") ?: previous?.title
             val artist = json.stringOrNull("artist") ?: previous?.artist
             val album = json.stringOrNull("album") ?: previous?.album
@@ -225,6 +257,7 @@ data class RipTaskSnapshot(
                 ?: json.stringOrNull("current_track_artwork_url")
                 ?: downloadLane?.artworkUrl
                 ?: uploadLane?.artworkUrl
+                ?: uploadsList.firstOrNull()?.artworkUrl
                 ?: previous?.takeIf {
                     it.title.equals(title, ignoreCase = true) &&
                             it.artist.equals(artist, ignoreCase = true)
@@ -240,6 +273,7 @@ data class RipTaskSnapshot(
                 jobStage = json.stringOrNull("job_stage"),
                 download = downloadLane,
                 upload = uploadLane,
+                uploads = uploadsList,
                 percent = if (json.has("percent") && !json.isNull("percent")) json.optDouble("percent")
                     .toFloat() else null,
                 resultTrackId = if (json.has("result_track_id") && !json.isNull("result_track_id")) json.optInt(

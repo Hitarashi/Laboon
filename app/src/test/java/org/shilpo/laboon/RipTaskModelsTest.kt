@@ -146,4 +146,106 @@ class RipTaskModelsTest {
         assertEquals(2, snapshot.completedTracks)
         assertEquals(1, snapshot.failedTracks)
     }
+
+    @Test
+    fun parseUploadLane_populatesWorkerIdAndDcId() {
+        val json = JSONObject(
+            """
+            {
+                "stage": "uploading_track",
+                "title": "Lavender Haze",
+                "bytes_done": 1048576,
+                "bytes_total": 5242880,
+                "percent": 20.0,
+                "worker_id": 3,
+                "dc_id": 1
+            }
+        """.trimIndent()
+        )
+        val lane = RipTaskUploadLane.fromJson(json)
+
+        assertEquals("uploading_track", lane.stage)
+        assertEquals(3, lane.workerId)
+        assertEquals(1, lane.dcId)
+    }
+
+    @Test
+    fun parseRipTaskSnapshot_concurrentUploads_matchesTrackIndexForSmoothSpeed() {
+        val step1Json = JSONObject(
+            """
+            {
+                "task_id": "task_1",
+                "source_track_id": "album_1",
+                "uploads": [
+                    {
+                        "stage": "uploading_track",
+                        "title": "Track 1",
+                        "track_index": 1,
+                        "bytes_done": 1000000,
+                        "bytes_total": 5000000,
+                        "worker_id": 1,
+                        "dc_id": 1
+                    },
+                    {
+                        "stage": "uploading_track",
+                        "title": "Track 2",
+                        "track_index": 2,
+                        "bytes_done": 500000,
+                        "bytes_total": 4000000,
+                        "worker_id": 2,
+                        "dc_id": 5
+                    }
+                ]
+            }
+        """.trimIndent()
+        )
+        val snapshot1 = RipTaskSnapshot.fromJson(step1Json)
+        assertEquals(2, snapshot1.uploads.size)
+        assertEquals(1, snapshot1.uploads[0].workerId)
+        assertEquals(1, snapshot1.uploads[0].dcId)
+        assertEquals(2, snapshot1.uploads[1].workerId)
+        assertEquals(5, snapshot1.uploads[1].dcId)
+
+        val step2Json = JSONObject(
+            """
+            {
+                "task_id": "task_1",
+                "source_track_id": "album_1",
+                "uploads": [
+                    {
+                        "stage": "uploading_track",
+                        "title": "Track 1",
+                        "track_index": 1,
+                        "bytes_done": 2000000,
+                        "bytes_total": 5000000,
+                        "worker_id": 1,
+                        "dc_id": 1
+                    },
+                    {
+                        "stage": "uploading_track",
+                        "title": "Track 2",
+                        "track_index": 2,
+                        "bytes_done": 1500000,
+                        "bytes_total": 4000000,
+                        "worker_id": 2,
+                        "dc_id": 5
+                    }
+                ]
+            }
+        """.trimIndent()
+        )
+        val snapshot2 = RipTaskSnapshot.fromJson(step2Json, previous = snapshot1)
+        assertEquals(2, snapshot2.uploads.size)
+
+        // Both lanes should have positive smooth speeds calculated without interfering with each other
+        val lane1 = snapshot2.uploads[0]
+        val lane2 = snapshot2.uploads[1]
+        assertEquals("Track 1", lane1.title)
+        assertEquals(2000000L, lane1.bytesDone)
+        assertTrue("lane 1 should have positive speed", lane1.speedBytesPerSec > 0)
+
+        assertEquals("Track 2", lane2.title)
+        assertEquals(1500000L, lane2.bytesDone)
+        assertTrue("lane 2 should have positive speed", lane2.speedBytesPerSec > 0)
+    }
 }

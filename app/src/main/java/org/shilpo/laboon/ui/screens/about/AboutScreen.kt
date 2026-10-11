@@ -37,11 +37,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -50,6 +53,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,6 +62,11 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.stringResource
+import kotlinx.coroutines.launch
+import org.shilpo.laboon.update.AppUpdatePreferences
+import org.shilpo.laboon.update.GithubUpdateRepository
+import org.shilpo.laboon.update.UpdateCheckResult
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -85,6 +94,11 @@ fun AboutScreen(
     var aboutData by remember { mutableStateOf<AboutData?>(null) }
     val uriHandler = LocalUriHandler.current
     val context = LocalContext.current
+    val updatePreferences = remember { AppUpdatePreferences(context) }
+    val updateRepository = remember { GithubUpdateRepository(preferences = updatePreferences) }
+    var updateCheckResult by remember { mutableStateOf<UpdateCheckResult?>(null) }
+    var isCheckingUpdates by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
         aboutData = repository.getAboutData()
@@ -127,6 +141,38 @@ fun AboutScreen(
                             "$versionText copied to clipboard",
                             Toast.LENGTH_SHORT
                         ).show()
+                    },
+                )
+            }
+
+            // App Updates Section
+            item {
+                AboutUpdateSection(
+                    result = updateCheckResult,
+                    isChecking = isCheckingUpdates,
+                    onCheckUpdates = {
+                        if (isCheckingUpdates) return@AboutUpdateSection
+                        isCheckingUpdates = true
+                        coroutineScope.launch {
+                            try {
+                                val result = updateRepository.checkForUpdate(force = true)
+                                updateCheckResult = result
+                            } catch (e: Exception) {
+                                updateCheckResult = UpdateCheckResult.Failed(e.message ?: "Failed to check for updates")
+                            } finally {
+                                isCheckingUpdates = false
+                            }
+                        }
+                    },
+                    onDownloadApk = { url ->
+                        try {
+                            uriHandler.openUri(url)
+                        } catch (_: Exception) {}
+                    },
+                    onViewReleaseNotes = { url ->
+                        try {
+                            uriHandler.openUri(url)
+                        } catch (_: Exception) {}
                     },
                 )
             }
@@ -677,3 +723,196 @@ private fun AboutTopAppBar(
         }
     }
 }
+
+/**
+ * Expressive update status card displaying current version, check action,
+ * and direct download buttons when a release is available.
+ */
+@Composable
+private fun AboutUpdateSection(
+    result: UpdateCheckResult?,
+    isChecking: Boolean,
+    onCheckUpdates: () -> Unit,
+    onDownloadApk: (String) -> Unit,
+    onViewReleaseNotes: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = "APP UPDATES",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+            letterSpacing = 1.2.sp,
+            modifier = Modifier.padding(start = 8.dp, bottom = 2.dp),
+        )
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = AppCardShape,
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            ),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(
+                                when (result) {
+                                    is UpdateCheckResult.Available -> MaterialTheme.colorScheme.primaryContainer
+                                    is UpdateCheckResult.UpToDate -> MaterialTheme.colorScheme.tertiaryContainer
+                                    is UpdateCheckResult.Failed -> MaterialTheme.colorScheme.errorContainer
+                                    null -> MaterialTheme.colorScheme.surfaceContainerHigh
+                                }
+                            ),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (isChecking) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        } else {
+                            val iconRes = when (result) {
+                                is UpdateCheckResult.Available -> R.drawable.ic_cloud_download
+                                is UpdateCheckResult.UpToDate -> R.drawable.ic_check
+                                is UpdateCheckResult.Failed -> R.drawable.ic_info_circle
+                                null -> R.drawable.ic_clockwise_clock
+                            }
+                            val iconTint = when (result) {
+                                is UpdateCheckResult.Available -> MaterialTheme.colorScheme.primary
+                                is UpdateCheckResult.UpToDate -> MaterialTheme.colorScheme.tertiary
+                                is UpdateCheckResult.Failed -> MaterialTheme.colorScheme.error
+                                null -> MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                            Icon(
+                                painter = painterResource(iconRes),
+                                contentDescription = null,
+                                tint = iconTint,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
+                    }
+
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        val statusTitle = when {
+                            isChecking -> stringResource(R.string.update_status_checking)
+                            result is UpdateCheckResult.Available -> stringResource(
+                                R.string.update_status_available,
+                                result.release.versionName
+                            )
+                            result is UpdateCheckResult.UpToDate -> stringResource(
+                                R.string.update_status_up_to_date,
+                                result.currentVersion
+                            )
+                            result is UpdateCheckResult.Failed -> stringResource(R.string.update_status_error)
+                            else -> "Release Channel: Stable"
+                        }
+                        val statusSubtitle = when {
+                            isChecking -> "Connecting to GitHub Releases API…"
+                            result is UpdateCheckResult.Available -> "A new version of Laboon is ready to install."
+                            result is UpdateCheckResult.UpToDate -> "You are running the latest version."
+                            result is UpdateCheckResult.Failed -> result.error
+                            else -> "Check GitHub releases for updates and new features."
+                        }
+
+                        Text(
+                            text = statusTitle,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = statusSubtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                        )
+                    }
+                }
+
+                // Actions
+                if (result is UpdateCheckResult.Available) {
+                    val release = result.release
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilledTonalButton(
+                            onClick = { onDownloadApk(release.downloadUrl ?: release.htmlUrl) },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_cloud_download),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(text = stringResource(R.string.update_action_download))
+                        }
+
+                        OutlinedButton(
+                            onClick = { onViewReleaseNotes(release.htmlUrl) },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_info_circle),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(text = stringResource(R.string.update_action_view))
+                        }
+                    }
+                } else {
+                    FilledTonalButton(
+                        onClick = onCheckUpdates,
+                        enabled = !isChecking,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                    ) {
+                        if (isChecking) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(text = stringResource(R.string.update_status_checking))
+                        } else {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_clockwise_clock),
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(text = stringResource(R.string.update_check_button))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+

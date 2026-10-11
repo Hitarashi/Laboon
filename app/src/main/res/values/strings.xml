@@ -279,4 +279,17 @@
     <string name="artist_picker_title">Pick an Artist</string>
     <string name="artist_picker_primary_label">Primary artist</string>
     <string name="artist_picker_shortcut_label">Artist page</string>
+
+    <!-- App Updates -->
+    <string name="update_notification_channel_name">App Updates</string>
+    <string name="update_notification_channel_desc">Notifications for new Laboon releases and updates</string>
+    <string name="update_notification_title">Laboon v%1$s is available</string>
+    <string name="update_notification_text">A new version of Laboon is ready to download.</string>
+    <string name="update_action_download">Download APK</string>
+    <string name="update_action_view">Changelog</string>
+    <string name="update_status_checking">Checking for updates…</string>
+    <string name="update_status_up_to_date">Laboon is up to date (v%1$s)</string>
+    <string name="update_status_available">Update available: v%1$s</string>
+    <string name="update_status_error">Couldn\'t check for updates</string>
+    <string name="update_check_button">Check for updates</string>
 </resources>
