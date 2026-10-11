@@ -46,6 +46,7 @@ object ListenBrainzLabs {
     const val LISTENBRAINZ_BASE = "https://api.listenbrainz.org"
 
     const val MAX_SEEDS_PER_REQUEST = 25
+    const val MAX_METADATA_LOOKUPS_PER_POST = 50
 
     const val DEFAULT_ALGORITHM =
         "session_based_days_9000_session_300_contribution_5_threshold_15_limit_50_skip_30"
@@ -97,6 +98,48 @@ object ListenBrainzLabs {
         }
     }
 
+    fun metadataLookupBatchUrl(): String = "$LISTENBRAINZ_BASE/1/metadata/lookup/"
+
+    fun metadataLookupBatchBody(tracks: List<HomeTrack>): String = JSONObject().put(
+        "recordings",
+        JSONArray().apply {
+            tracks.forEach { track ->
+                put(
+                    JSONObject()
+                        .put("recording_name", track.title)
+                        .put("artist_name", track.artist)
+                        .apply {
+                            track.album?.takeIf(String::isNotBlank)?.let { put("release_name", it) }
+                        },
+                )
+            }
+        },
+    ).toString()
+
+    fun parseMetadataLookupBatch(
+        response: JSONArray,
+        requestedTracks: List<HomeTrack>,
+    ): Map<Int, String> = buildMap {
+        for (responseIndex in 0 until response.length()) {
+            val item = response.optJSONObject(responseIndex) ?: continue
+            val requestIndex = item.optInt("index", responseIndex)
+            val requested = requestedTracks.getOrNull(requestIndex) ?: continue
+            val recordingMbid = item.stringOrNull("recording_mbid")
+                ?.takeIf(MUSICBRAINZ_MBID_PATTERN::matches)
+                ?: continue
+            val title = item.stringOrNull("recording_name") ?: continue
+            val artist = item.stringOrNull("artist_credit_name") ?: continue
+            if (!YouTubePlaylistTrackMatcher.isLikelySameRecording(
+                    sourceTitle = requested.title,
+                    sourceArtist = requested.artist,
+                    candidateTitle = title,
+                    candidateArtist = artist,
+                )
+            ) continue
+            put(requestIndex, recordingMbid)
+        }
+    }
+
     fun tagSimilarityUrl(tag: String): String =
         "$LABS_BASE/tag-similarity/json?tag=${tag.urlEncoded()}"
 
@@ -132,6 +175,9 @@ object ListenBrainzLabs {
     }
 
     private fun String.urlEncoded(): String = URLEncoder.encode(this, StandardCharsets.UTF_8.name())
+
+    private val MUSICBRAINZ_MBID_PATTERN =
+        Regex("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
     fun parseSimilarRecordings(array: JSONArray): List<HomeTrack> {
         return parseSimilarRecordingCandidates(array).map(ListenBrainzSimilarRecording::track)

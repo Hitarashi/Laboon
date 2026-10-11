@@ -4,6 +4,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import org.json.JSONArray
 import org.json.JSONObject
 import org.shilpo.laboon.home.HomeAlbum
 import org.shilpo.laboon.net.HttpError
@@ -69,6 +70,7 @@ private data class LyricspornTrackDetails(
 
 object LyricspornClient {
     private const val MAX_ARTWORK_LOOKUPS = 3
+    private const val MAX_TRACK_BATCH_SIZE = 50
     private const val DEFAULT_STOREFRONT = "us"
 
     private val http = HttpJsonClient()
@@ -179,6 +181,68 @@ object LyricspornClient {
             }
         }
     }
+
+    suspend fun fetchTrackCatalogItems(
+        apiBaseUrl: String?,
+        appleTrackIds: List<String>,
+    ): Map<String, LyricspornCatalogItem> {
+        val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return emptyMap()
+        val trackIds = appleTrackIds.distinct().filter { it.isNumericAppleId() }
+        if (trackIds.isEmpty()) return emptyMap()
+
+        return buildMap {
+            trackIds.chunked(MAX_TRACK_BATCH_SIZE).forEach { batch ->
+                val response = when (
+                    val outcome = http.postJson(
+                        "$baseUrl/tracks/batch".withCurrentStorefront(),
+                        trackBatchRequestBody(batch),
+                    )
+                ) {
+                    is HttpOutcome.Success -> runCatching { JSONObject(outcome.value) }.getOrNull()
+                    is HttpOutcome.Failure -> null
+                } ?: return@forEach
+                putAll(parseTrackBatchResponse(response))
+            }
+        }
+    }
+
+    internal fun trackBatchRequestBody(appleTrackIds: List<String>): String = JSONObject().put(
+        "items",
+        JSONArray().apply {
+            appleTrackIds.distinct().filter { it.isNumericAppleId() }.forEach { appleId ->
+                put(
+                    JSONObject()
+                        .put("appleId", appleId)
+                        .put("include", JSONArray().put("identifiers")),
+                )
+            }
+        },
+    ).toString()
+
+    internal fun parseTrackBatchResponse(response: JSONObject): Map<String, LyricspornCatalogItem> =
+        buildMap {
+            val items = response.arrOrNull("items") ?: return@buildMap
+            for (index in 0 until items.length()) {
+                val result = items.objAtOrNull(index) ?: continue
+                if (result.stringOrNull("status") != "matched") continue
+                val track = result.objOrNull("track") ?: continue
+                val id = track.stringOrNull("id")?.takeIf { it.isNumericAppleId() } ?: continue
+                val title = track.stringOrNull("title")?.takeIf(String::isNotBlank) ?: continue
+                put(
+                    id,
+                    LyricspornCatalogItem(
+                        id = id,
+                        type = "song",
+                        name = title,
+                        artistName = track.stringOrNull("artist"),
+                        albumName = track.stringOrNull("album"),
+                        durationMs = track.optLong("durationMs")
+                            .takeIf { track.has("durationMs") && !track.isNull("durationMs") },
+                        isrc = track.stringOrNull("isrc"),
+                    ),
+                )
+            }
+        }
 
     suspend fun getTrackLyricsOutcome(
         apiBaseUrl: String?,

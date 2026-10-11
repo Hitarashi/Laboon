@@ -162,6 +162,13 @@ class HomeFeedCache(private val store: KeyValueStore) {
         }
     }
 
+    fun removeLibraryPlaylistTracks(playlistId: String) {
+        val raw = store.getString(KEY_LIBRARY_PLAYLIST_TRACKS_CACHE) ?: return
+        val root = runCatching { JSONObject(raw) }.getOrNull() ?: return
+        root.remove(playlistId)
+        runCatching { store.putString(KEY_LIBRARY_PLAYLIST_TRACKS_CACHE, root.toString()) }
+    }
+
     fun clear() {
         store.remove(KEY_FEED_CACHE)
         LIBRARY_CACHE_KEYS.forEach(store::remove)

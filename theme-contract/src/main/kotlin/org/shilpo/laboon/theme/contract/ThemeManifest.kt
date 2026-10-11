@@ -261,6 +261,7 @@ object MaterialSymbolCatalog {
         "arrow_downward",
         "fast_forward",
         "library_add_check",
+        "upload_file",
         "track_changes",
         "clear_all",
         "more_horiz",

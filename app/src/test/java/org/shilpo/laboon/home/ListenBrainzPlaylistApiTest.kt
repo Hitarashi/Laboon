@@ -18,6 +18,14 @@ class ListenBrainzPlaylistApiTest {
     }
 
     @Test
+    fun deletePlaylistUrlEncodesPlaylistId() {
+        assertEquals(
+            "https://api.listenbrainz.org/1/playlist/playlist%2Fid/delete",
+            ListenBrainzPlaylistApi.deletePlaylistUrl("playlist/id"),
+        )
+    }
+
+    @Test
     fun parsePlaylistsReadsJspfMetadataAndPlaylistId() {
         val root = JSONObject(
             """
@@ -95,6 +103,29 @@ class ListenBrainzPlaylistApiTest {
         assertEquals("Mix \"one\"", body.getString("title"))
         assertEquals("listener", body.getString("creator"))
         assertEquals(0, body.getJSONArray("track").length())
+        assertFalse(
+            body.getJSONObject("extension")
+                .getJSONObject("https://musicbrainz.org/doc/jspf#playlist")
+                .getBoolean("public"),
+        )
+    }
+
+    @Test
+    fun createPlaylistBodyCanCreateAPlaylistWithMatchedRecordings() {
+        val body = JSONObject(
+            ListenBrainzPlaylistApi.createPlaylistBody(
+                "Imported mix",
+                "listener",
+                listOf("mbid-1", "mbid-2"),
+            ),
+        ).getJSONObject("playlist")
+
+        assertEquals("Imported mix", body.getString("title"))
+        assertEquals(2, body.getJSONArray("track").length())
+        assertEquals(
+            "https://musicbrainz.org/recording/mbid-2",
+            body.getJSONArray("track").getJSONObject(1).getJSONArray("identifier").getString(0),
+        )
     }
 
     @Test
@@ -127,5 +158,15 @@ class ListenBrainzPlaylistApiTest {
         assertEquals("new-id", playlist?.id)
         assertEquals("Fresh mix", playlist?.title)
         assertNull(ListenBrainzPlaylistApi.parseCreatedPlaylist(JSONObject()))
+    }
+
+    @Test
+    fun parseCreatedPlaylistUsesSubmittedTitleWhenResponseOmitsIt() {
+        val playlist = ListenBrainzPlaylistApi.parseCreatedPlaylist(
+            JSONObject("""{"playlist_mbid":"new-id"}"""),
+            fallbackTitle = "Imported YouTube mix",
+        )
+
+        assertEquals("Imported YouTube mix", playlist?.title)
     }
 }

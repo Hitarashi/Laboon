@@ -297,4 +297,98 @@ class ListenBrainzLabsTest {
             0.0
         )
     }
+
+    @Test
+    fun `metadata lookup batch posts catalog identities and accepts exact recording mappings`() {
+        val track = HomeTrack("yt-1", "A Song", "An Artist", album = "An Album")
+        val request = JSONObject(ListenBrainzLabs.metadataLookupBatchBody(listOf(track)))
+        val recording = request.getJSONArray("recordings").getJSONObject(0)
+
+        assertEquals("A Song", recording.getString("recording_name"))
+        assertEquals("An Artist", recording.getString("artist_name"))
+        assertEquals("An Album", recording.getString("release_name"))
+
+        val response = JSONArray().put(
+            JSONObject()
+                .put("index", 0)
+                .put("recording_mbid", seedA)
+                .put("recording_name", "A Song")
+                .put("artist_credit_name", "An Artist")
+                .put("release_name", "An Album"),
+        )
+
+        assertEquals(
+            mapOf(0 to seedA),
+            ListenBrainzLabs.parseMetadataLookupBatch(response, listOf(track)),
+        )
+    }
+
+    @Test
+    fun `metadata lookup batch drops fuzzy results that conflict with the Apple identity`() {
+        val track = HomeTrack("yt-1", "A Song", "An Artist", album = "An Album")
+        val response = JSONArray().put(
+            JSONObject()
+                .put("index", 0)
+                .put("recording_mbid", seedA)
+                .put("recording_name", "A Different Song")
+                .put("artist_credit_name", "An Artist")
+                .put("release_name", "An Album"),
+        )
+
+        assertTrue(ListenBrainzLabs.parseMetadataLookupBatch(response, listOf(track)).isEmpty())
+    }
+
+    @Test
+    fun `metadata lookup keeps an exact recording when MusicBrainz returns another release`() {
+        val track = HomeTrack("apple-1", "A Song", "An Artist", album = "Apple Album")
+        val response = JSONArray().put(
+            JSONObject()
+                .put("index", 0)
+                .put("recording_mbid", seedA)
+                .put("recording_name", "A Song")
+                .put("artist_credit_name", "An Artist")
+                .put("release_name", "MusicBrainz Compilation"),
+        )
+
+        assertEquals(
+            mapOf(0 to seedA),
+            ListenBrainzLabs.parseMetadataLookupBatch(response, listOf(track)),
+        )
+    }
+
+    @Test
+    fun `metadata lookup accepts canonical spelling and artist credit differences`() {
+        val track = HomeTrack(
+            "apple-1",
+            "Neel Rang Bhison Priyo",
+            "Rupam Islam",
+            album = "Apple Album",
+        )
+        val response = JSONArray().put(
+            JSONObject()
+                .put("index", 0)
+                .put("recording_mbid", seedA)
+                .put("recording_name", "Neel Rong Bhishon Priyo")
+                .put("artist_credit_name", "Rupam Islam"),
+        )
+
+        assertEquals(
+            mapOf(0 to seedA),
+            ListenBrainzLabs.parseMetadataLookupBatch(response, listOf(track)),
+        )
+    }
+
+    @Test
+    fun `metadata lookup still rejects an explicit version mismatch`() {
+        val track = HomeTrack("apple-1", "A Song", "An Artist")
+        val response = JSONArray().put(
+            JSONObject()
+                .put("index", 0)
+                .put("recording_mbid", seedA)
+                .put("recording_name", "A Song (Live)")
+                .put("artist_credit_name", "An Artist"),
+        )
+
+        assertTrue(ListenBrainzLabs.parseMetadataLookupBatch(response, listOf(track)).isEmpty())
+    }
 }

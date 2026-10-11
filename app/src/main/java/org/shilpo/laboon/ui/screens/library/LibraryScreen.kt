@@ -6,14 +6,29 @@
 
 package org.shilpo.laboon.ui.screens.library
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +44,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -93,8 +109,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -105,11 +127,14 @@ import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalDensity
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.collect
+import kotlin.math.PI
+import kotlin.math.sin
 import coil3.compose.AsyncImage
 import org.shilpo.laboon.R
 import org.shilpo.laboon.auth.AuthSession
@@ -120,6 +145,8 @@ import org.shilpo.laboon.home.HomeFeedRepository
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.home.ListenBrainzPlaylist
 import org.shilpo.laboon.home.TrackIdentity
+import org.shilpo.laboon.home.YouTubePlaylistImportResult
+import org.shilpo.laboon.home.YouTubePlaylistSkippedTrack
 import org.shilpo.laboon.theme.renderer.materialSymbolPainterResource
 import org.shilpo.laboon.ui.design.FloatingNavBarClearance
 import org.shilpo.laboon.ui.design.rememberArtistArtworkShape
@@ -281,6 +308,7 @@ fun LibraryScreen(
     }
     var pageStates by remember(librarySongsCache) { mutableStateOf(cachedPageStates) }
     var selectedPlaylist by remember { mutableStateOf<ListenBrainzPlaylist?>(null) }
+    var selectedPlaylistIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var playlistDetailState by remember { mutableStateOf(LibraryPageState(isLoading = false)) }
     fun openPlaylist(playlist: ListenBrainzPlaylist) {
         val cachedTracks = librarySongsCache.loadLibraryPlaylistTracks(playlist.id)
@@ -293,9 +321,18 @@ fun LibraryScreen(
     var showCreatePlaylist by rememberSaveable { mutableStateOf(false) }
     var playlistName by rememberSaveable { mutableStateOf("") }
     var isCreatingPlaylist by remember { mutableStateOf(false) }
+    var showImportYouTubePlaylist by rememberSaveable { mutableStateOf(false) }
+    var youtubePlaylistUrl by rememberSaveable { mutableStateOf("") }
+    var isImportingYouTubePlaylist by remember { mutableStateOf(false) }
+    var youtubePlaylistImportReport by remember {
+        mutableStateOf<YouTubePlaylistImportResult.Completed?>(null)
+    }
     var showPlaylistPicker by rememberSaveable { mutableStateOf(false) }
     var playlistOptions by remember { mutableStateOf<List<ListenBrainzPlaylist>>(emptyList()) }
     var isLoadingPlaylistOptions by remember { mutableStateOf(false) }
+    var playlistsToDelete by remember { mutableStateOf<List<ListenBrainzPlaylist>?>(null) }
+    var isDeletingPlaylist by remember { mutableStateOf(false) }
+    var showPlaylistSelectionOptions by remember { mutableStateOf(false) }
     var trackToAddToPlaylist by remember { mutableStateOf<HomeTrack?>(null) }
     var selectedTrackForOptions by remember { mutableStateOf<HomeTrack?>(null) }
     var selectedTrackOptionsQueue by remember { mutableStateOf<List<HomeTrack>>(emptyList()) }
@@ -303,6 +340,26 @@ fun LibraryScreen(
 
     val activeCategory = categories.getOrNull(pagerState.currentPage) ?: categories.first()
     val activePlaylist = selectedPlaylist.takeIf { activeCategory.id == "playlists" }
+    BackHandler(enabled = activePlaylist != null) {
+        selectedPlaylist = null
+    }
+    BackHandler(
+        enabled = activeCategory.id == "playlists" &&
+            activePlaylist == null &&
+            selectedPlaylistIds.isNotEmpty(),
+    ) {
+        selectedPlaylistIds = emptyList()
+    }
+    LaunchedEffect(activeCategory.id) {
+        if (activeCategory.id != "playlists") selectedPlaylistIds = emptyList()
+    }
+    val allPlaylists = pageStates["playlists"]?.items.orEmpty().mapNotNull(LibraryEntry::playlist)
+    val selectedPlaylists = remember(allPlaylists, selectedPlaylistIds) {
+        selectedPlaylistIds.mapNotNull { id -> allPlaylists.firstOrNull { it.id == id } }
+    }
+    val isPlaylistSelectionMode = activeCategory.id == "playlists" &&
+        activePlaylist == null && selectedPlaylists.isNotEmpty()
+    val hapticFeedback = LocalHapticFeedback.current
     val activePageKey = activePlaylist?.let { "playlist:${it.id}" } ?: activeCategory.id
     val activePageSupportsLocate = activeCategory.id in setOf("songs", "recent", "loved") ||
         activePlaylist != null
@@ -359,6 +416,13 @@ fun LibraryScreen(
             ?.takeIf { loadedItems.isEmpty() && it.isNotEmpty() }
             ?: loadedItems
         pageStates = pageStates + (categoryId to LibraryPageState(items = visibleItems))
+        if (categoryId == "playlists" && visibleItems.isNotEmpty()) {
+            val visiblePlaylistIds = visibleItems
+                .mapNotNull(LibraryEntry::playlist)
+                .map(ListenBrainzPlaylist::id)
+                .toSet()
+            selectedPlaylistIds = selectedPlaylistIds.filter(visiblePlaylistIds::contains)
+        }
         if (isExplicitRefresh) refreshCategoryOnRequest = null
     }
 
@@ -455,42 +519,66 @@ fun LibraryScreen(
                     shape = MaterialTheme.shapes.extraLarge,
                 ) {
                     Column(modifier = Modifier.fillMaxSize()) {
-                        LibraryActionRow(
-                            isPlaylistTab = activeCategory.id == "playlists" && activePlaylist == null,
-                            isSongsTab = activeCategory.id == "songs" && activePlaylist == null,
-                            isGridLayout = isGridLayout,
-                            sort = sort,
-                            showLocateButton = showLocateButton,
-                            onShuffle = {
-                                when (activeCategory.id) {
-                                    "albums" -> activeItems.mapNotNull(LibraryEntry::album)
-                                        .randomOrNull()?.let(onShuffleAlbum)
-                                    "artists" -> activeItems.mapNotNull(LibraryEntry::artist)
-                                        .randomOrNull()?.let(onShuffleArtist)
-                                    else -> {
-                                        val tracks = activeItems.mapNotNull(LibraryEntry::track)
-                                        if (tracks.isNotEmpty()) {
-                                            val shuffled = tracks.shuffled()
-                                            onPlayTrack(shuffled.first(), shuffled)
+                        AnimatedContent(
+                            targetState = isPlaylistSelectionMode,
+                            label = "playlistActionModeSwitch",
+                            transitionSpec = {
+                                (slideInHorizontally { -it } + fadeIn()) togetherWith
+                                    (slideOutHorizontally { it } + fadeOut())
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { inSelectionMode ->
+                            if (inSelectionMode) {
+                                PlaylistSelectionActionRow(
+                                    selectedCount = selectedPlaylists.size,
+                                    allCount = allPlaylists.size,
+                                    onSelectAll = {
+                                        selectedPlaylistIds = allPlaylists.map(ListenBrainzPlaylist::id)
+                                    },
+                                    onDeselect = { selectedPlaylistIds = emptyList() },
+                                    onOptions = { showPlaylistSelectionOptions = true },
+                                )
+                            } else {
+                                LibraryActionRow(
+                                    isPlaylistTab = activeCategory.id == "playlists" && activePlaylist == null,
+                                    isSongsTab = activeCategory.id == "songs" && activePlaylist == null,
+                                    isGridLayout = isGridLayout,
+                                    sort = sort,
+                                    showLocateButton = showLocateButton,
+                                    onShuffle = {
+                                        when (activeCategory.id) {
+                                            "albums" -> activeItems.mapNotNull(LibraryEntry::album)
+                                                .randomOrNull()?.let(onShuffleAlbum)
+                                            "artists" -> activeItems.mapNotNull(LibraryEntry::artist)
+                                                .randomOrNull()?.let(onShuffleArtist)
+                                            else -> {
+                                                val tracks = activeItems.mapNotNull(LibraryEntry::track)
+                                                if (tracks.isNotEmpty()) {
+                                                    val shuffled = tracks.shuffled()
+                                                    onPlayTrack(shuffled.first(), shuffled)
+                                                }
+                                            }
                                         }
-                                    }
-                                }
-                            },
-                            onNewPlaylist = { showCreatePlaylist = true },
-                            onLocate = {
-                                locateTargetPageKey = activePageKey
-                                locateRequest++
-                            },
-                            onToggleLayout = { isGridLayout = !isGridLayout },
-                            onSort = { sort = it },
-                            onOpenSongsSortSheet = { showSongsSortSheet = true },
-                        )
+                                    },
+                                    onNewPlaylist = { showCreatePlaylist = true },
+                                    onImportPlaylist = { showImportYouTubePlaylist = true },
+                                    onLocate = {
+                                        locateTargetPageKey = activePageKey
+                                        locateRequest++
+                                    },
+                                    onToggleLayout = { isGridLayout = !isGridLayout },
+                                    onSort = { sort = it },
+                                    onOpenSongsSortSheet = { showSongsSortSheet = true },
+                                )
+                            }
+                        }
 
-                        HorizontalPager(
-                            state = pagerState,
-                            modifier = Modifier.weight(1f),
-                            key = { page -> categories[page].id },
-                        ) { page ->
+                        Box(modifier = Modifier.weight(1f)) {
+                            HorizontalPager(
+                                state = pagerState,
+                                modifier = Modifier.fillMaxSize(),
+                                key = { page -> categories[page].id },
+                            ) { page ->
                             val category = categories[page]
                             val pageState = pageStates[category.id]
                                 ?: LibraryPageState(isLoading = category.id == activeCategory.id)
@@ -528,6 +616,8 @@ fun LibraryScreen(
                                     else -> R.string.library_empty
                                 },
                                 isGridLayout = isGridLayout,
+                                isPlaylistSelectionMode = isPlaylistSelectionMode,
+                                selectedPlaylistIds = selectedPlaylistIds,
                                 sort = sort,
                                 isSongsTab = category.id == "songs" && !isShowingPlaylistDetail,
                                 songsSortOption = songsSortOption,
@@ -538,6 +628,7 @@ fun LibraryScreen(
                                     pageKey == locateTargetPageKey
                                 } ?: 0,
                                 contentBottomPadding = listBottomPadding,
+                                emptyStateBottomPadding = FloatingNavBarClearance + navBarInset,
                                 onItemClick = { entry ->
                                     when {
                                         entry.track != null -> onPlayTrack(
@@ -552,6 +643,22 @@ fun LibraryScreen(
                                 onTrackMoreOptions = { track, queue ->
                                     selectedTrackForOptions = track
                                     selectedTrackOptionsQueue = queue
+                                },
+                                onDeletePlaylist = { playlistsToDelete = listOf(it) },
+                                onPlaylistLongPress = { playlist ->
+                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    selectedPlaylistIds = if (playlist.id in selectedPlaylistIds) {
+                                        selectedPlaylistIds.filterNot { it == playlist.id }
+                                    } else {
+                                        selectedPlaylistIds + playlist.id
+                                    }
+                                },
+                                onPlaylistSelectionToggle = { playlist ->
+                                    selectedPlaylistIds = if (playlist.id in selectedPlaylistIds) {
+                                        selectedPlaylistIds.filterNot { it == playlist.id }
+                                    } else {
+                                        selectedPlaylistIds + playlist.id
+                                    }
                                 },
                                 onRefresh = {
                                     if (isShowingPlaylistDetail) {
@@ -590,6 +697,11 @@ fun LibraryScreen(
                                         refreshLibraryRequest++
                                     }
                                 },
+                            )
+                            }
+                            PlaylistSelectionCountPill(
+                                selectedCount = selectedPlaylists.size.takeIf { isPlaylistSelectionMode } ?: 0,
+                                modifier = Modifier.align(Alignment.TopCenter),
                             )
                         }
                     }
@@ -641,6 +753,133 @@ fun LibraryScreen(
                 }
             },
             onDismiss = { showReorderTabs = false },
+        )
+    }
+
+    playlistsToDelete?.let { pendingPlaylists ->
+        AlertDialog(
+            onDismissRequest = {
+                if (!isDeletingPlaylist) playlistsToDelete = null
+            },
+            title = {
+                Text(
+                    stringResource(
+                        if (pendingPlaylists.size == 1) {
+                            R.string.library_playlist_delete_title
+                        } else {
+                            R.string.library_playlist_delete_multiple_title
+                        },
+                    ),
+                )
+            },
+            text = {
+                Text(
+                    if (pendingPlaylists.size == 1) {
+                        stringResource(
+                            R.string.library_playlist_delete_message,
+                            pendingPlaylists.single().title,
+                        )
+                    } else {
+                        stringResource(
+                            R.string.library_playlist_delete_multiple_message,
+                            pendingPlaylists.size,
+                        )
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !isDeletingPlaylist,
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                    onClick = {
+                        isDeletingPlaylist = true
+                        scope.launch {
+                            val deletedIds = mutableSetOf<String>()
+                            var failedCount = 0
+                            try {
+                                pendingPlaylists.forEach { playlist ->
+                                    val deleted = try {
+                                        repository.deleteListenBrainzPlaylist(playlist.id)
+                                    } catch (cancelled: CancellationException) {
+                                        throw cancelled
+                                    } catch (_: Exception) {
+                                        false
+                                    }
+                                    if (deleted) deletedIds += playlist.id else failedCount++
+                                }
+                            } catch (cancelled: CancellationException) {
+                                isDeletingPlaylist = false
+                                throw cancelled
+                            }
+                            isDeletingPlaylist = false
+                            playlistsToDelete = null
+                            if (deletedIds.isNotEmpty()) {
+                                val remainingEntries = pageStates["playlists"]?.items.orEmpty()
+                                    .filterNot { it.id in deletedIds }
+                                pageStates = pageStates + ("playlists" to LibraryPageState(
+                                    items = remainingEntries,
+                                ))
+                                playlistOptions = playlistOptions.filterNot { it.id in deletedIds }
+                                librarySongsCache.saveLibraryPlaylists(
+                                    remainingEntries.mapNotNull(LibraryEntry::playlist),
+                                )
+                                deletedIds.forEach(librarySongsCache::removeLibraryPlaylistTracks)
+                                selectedPlaylistIds = selectedPlaylistIds.filterNot(deletedIds::contains)
+                                if (selectedPlaylist?.id?.let(deletedIds::contains) == true) {
+                                    selectedPlaylist = null
+                                }
+                            }
+                            when {
+                                failedCount == 0 && pendingPlaylists.size == 1 ->
+                                    snackbarHostState.showSnackbar(
+                                        context.getString(
+                                            R.string.library_playlist_deleted,
+                                            pendingPlaylists.single().title,
+                                        ),
+                                    )
+                                failedCount == 0 || deletedIds.isNotEmpty() ->
+                                    snackbarHostState.showSnackbar(
+                                        context.getString(
+                                            R.string.library_playlist_delete_multiple_result,
+                                            deletedIds.size,
+                                            failedCount,
+                                        ),
+                                    )
+                                else -> snackbarHostState.showSnackbar(
+                                    context.getString(R.string.library_playlist_delete_failed),
+                                )
+                            }
+                        }
+                    },
+                ) {
+                    if (isDeletingPlaylist) {
+                        ContainedLoadingIndicator(modifier = Modifier.size(18.dp))
+                    } else {
+                        Text(stringResource(R.string.library_playlist_delete))
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                enabled = !isDeletingPlaylist,
+                    onClick = { playlistsToDelete = null },
+                ) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    if (showPlaylistSelectionOptions && selectedPlaylists.isNotEmpty()) {
+        PlaylistSelectionOptionsSheet(
+            playlists = selectedPlaylists,
+            onDismiss = { showPlaylistSelectionOptions = false },
+            onDelete = {
+                showPlaylistSelectionOptions = false
+                playlistsToDelete = selectedPlaylists
+            },
         )
     }
 
@@ -733,6 +972,127 @@ fun LibraryScreen(
                     Text(stringResource(R.string.cancel))
                 }
             },
+        )
+    }
+
+    if (showImportYouTubePlaylist) {
+        val canManagePlaylists = repository.canManageListenBrainzPlaylists()
+        AlertDialog(
+            onDismissRequest = {
+                if (!isImportingYouTubePlaylist) showImportYouTubePlaylist = false
+            },
+            title = { Text(stringResource(R.string.library_playlist_import_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (canManagePlaylists) {
+                        OutlinedTextField(
+                            value = youtubePlaylistUrl,
+                            onValueChange = { youtubePlaylistUrl = it },
+                            label = { Text(stringResource(R.string.library_playlist_import_url)) },
+                            singleLine = true,
+                            enabled = !isImportingYouTubePlaylist,
+                        )
+                        Text(stringResource(R.string.library_playlist_import_description))
+                        if (isImportingYouTubePlaylist) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                ContainedLoadingIndicator(modifier = Modifier.size(20.dp))
+                                Text(stringResource(R.string.library_playlist_importing))
+                            }
+                        }
+                    } else {
+                        Text(stringResource(R.string.library_playlist_connect_listenbrainz))
+                    }
+                }
+            },
+            confirmButton = {
+                if (canManagePlaylists) {
+                    TextButton(
+                        enabled = youtubePlaylistUrl.isNotBlank() && !isImportingYouTubePlaylist,
+                        onClick = {
+                            isImportingYouTubePlaylist = true
+                            scope.launch {
+                                val result = try {
+                                    repository.importPublicYouTubePlaylist(youtubePlaylistUrl)
+                                } catch (cancelled: CancellationException) {
+                                    isImportingYouTubePlaylist = false
+                                    throw cancelled
+                                } catch (_: Exception) {
+                                    YouTubePlaylistImportResult.PlaylistUnavailable
+                                }
+                                isImportingYouTubePlaylist = false
+                                when (result) {
+                                    is YouTubePlaylistImportResult.Completed -> {
+                                        result.playlist?.let { playlist ->
+                                            val entry = playlist.toLibraryEntry()
+                                            val existing = pageStates["playlists"]?.items.orEmpty()
+                                            val updatedPlaylists = listOf(entry) + existing.filterNot { it.id == entry.id }
+                                            pageStates = pageStates + ("playlists" to LibraryPageState(
+                                                items = updatedPlaylists,
+                                            ))
+                                            librarySongsCache.saveLibraryPlaylists(
+                                                updatedPlaylists.mapNotNull(LibraryEntry::playlist),
+                                            )
+                                        }
+                                        youtubePlaylistUrl = ""
+                                        showImportYouTubePlaylist = false
+                                        youtubePlaylistImportReport = result
+                                    }
+
+                                    YouTubePlaylistImportResult.ListenBrainzNotConnected -> {
+                                        showImportYouTubePlaylist = false
+                                        onOpenSettings()
+                                    }
+
+                                    YouTubePlaylistImportResult.InvalidYouTubeLink ->
+                                        snackbarHostState.showSnackbar(context.getString(R.string.library_playlist_import_invalid_link))
+
+                                    YouTubePlaylistImportResult.PlaylistUnavailable ->
+                                        snackbarHostState.showSnackbar(context.getString(R.string.library_playlist_import_unavailable))
+
+                                    YouTubePlaylistImportResult.PlaylistHasNoTracks ->
+                                        snackbarHostState.showSnackbar(context.getString(R.string.library_playlist_import_no_tracks))
+
+                                    YouTubePlaylistImportResult.CouldNotCreatePlaylist ->
+                                        snackbarHostState.showSnackbar(context.getString(R.string.library_playlist_import_create_failed))
+                                }
+                            }
+                        },
+                    ) {
+                        if (isImportingYouTubePlaylist) {
+                            ContainedLoadingIndicator(modifier = Modifier.size(18.dp))
+                        } else {
+                            Text(stringResource(R.string.library_playlist_import))
+                        }
+                    }
+                } else {
+                    TextButton(
+                        onClick = {
+                            showImportYouTubePlaylist = false
+                            onOpenSettings()
+                        },
+                    ) {
+                        Text(stringResource(R.string.library_playlist_open_settings))
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !isImportingYouTubePlaylist,
+                    onClick = { showImportYouTubePlaylist = false },
+                ) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    youtubePlaylistImportReport?.let { report ->
+        YouTubePlaylistImportResultsDialog(
+            report = report,
+            onDismiss = { youtubePlaylistImportReport = null },
         )
     }
 
@@ -1011,6 +1371,7 @@ private fun LibraryActionRow(
     showLocateButton: Boolean,
     onShuffle: () -> Unit,
     onNewPlaylist: () -> Unit,
+    onImportPlaylist: () -> Unit,
     onLocate: () -> Unit,
     onToggleLayout: () -> Unit,
     onSort: (LibrarySort) -> Unit,
@@ -1019,6 +1380,10 @@ private fun LibraryActionRow(
     var sortMenuExpanded by remember { mutableStateOf(false) }
     val outerCorner = 26.dp
     val innerCorner = 8.dp
+    val newButtonEndCorner by animateDpAsState(
+        targetValue = if (isPlaylistTab) innerCorner else outerCorner,
+        label = "libraryNewButtonEndCorner",
+    )
     val layoutStartCorner by animateDpAsState(
         targetValue = if (showLocateButton) innerCorner else outerCorner,
         label = "libraryLayoutGroupStartCorner",
@@ -1036,7 +1401,12 @@ private fun LibraryActionRow(
         FilledTonalButton(
             onClick = if (isPlaylistTab) onNewPlaylist else onShuffle,
             modifier = Modifier.height(42.dp),
-            shape = CircleShape,
+            shape = RoundedCornerShape(
+                topStart = outerCorner,
+                bottomStart = outerCorner,
+                topEnd = newButtonEndCorner,
+                bottomEnd = newButtonEndCorner,
+            ),
             colors = ButtonDefaults.filledTonalButtonColors(
                 containerColor = MaterialTheme.colorScheme.tertiaryContainer,
                 contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
@@ -1055,7 +1425,40 @@ private fun LibraryActionRow(
                 stringResource(
                     if (isPlaylistTab) R.string.library_action_new else R.string.library_action_shuffle,
                 ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
+        }
+
+        if (isPlaylistTab) {
+            Spacer(Modifier.width(8.dp))
+            FilledTonalButton(
+                onClick = onImportPlaylist,
+                modifier = Modifier.height(42.dp),
+                shape = RoundedCornerShape(
+                    topStart = innerCorner,
+                    bottomStart = innerCorner,
+                    topEnd = outerCorner,
+                    bottomEnd = outerCorner,
+                ),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                ),
+                contentPadding = PaddingValues(horizontal = 14.dp),
+            ) {
+                Icon(
+                    painter = materialSymbolPainterResource("upload_file"),
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                )
+                Text(
+                    stringResource(R.string.library_playlist_import_button),
+                    modifier = Modifier.padding(start = 8.dp),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
 
         Spacer(Modifier.weight(1f))
@@ -1158,6 +1561,358 @@ private fun LibraryActionIcon(
 }
 
 @Composable
+private fun PlaylistSelectionActionRow(
+    selectedCount: Int,
+    allCount: Int,
+    onSelectAll: () -> Unit,
+    onDeselect: () -> Unit,
+    onOptions: () -> Unit,
+) {
+    val outerCorner = 26.dp
+    val innerCorner = 8.dp
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            FilledTonalButton(
+                enabled = selectedCount < allCount,
+                onClick = onSelectAll,
+                modifier = Modifier.height(44.dp),
+                shape = RoundedCornerShape(
+                    topStart = outerCorner,
+                    bottomStart = outerCorner,
+                    topEnd = innerCorner,
+                    bottomEnd = innerCorner,
+                ),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                ),
+                contentPadding = PaddingValues(horizontal = 12.dp),
+            ) {
+                Icon(
+                    painter = materialSymbolPainterResource("select_all"),
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(stringResource(R.string.library_playlist_select_all), maxLines = 1)
+            }
+            FilledTonalButton(
+                onClick = onDeselect,
+                modifier = Modifier.height(44.dp),
+                shape = RoundedCornerShape(
+                    topStart = innerCorner,
+                    bottomStart = innerCorner,
+                    topEnd = outerCorner,
+                    bottomEnd = outerCorner,
+                ),
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = MaterialTheme.colorScheme.secondary,
+                    contentColor = MaterialTheme.colorScheme.onSecondary,
+                ),
+                contentPadding = PaddingValues(horizontal = 12.dp),
+            ) {
+                Icon(
+                    painter = materialSymbolPainterResource("deselect"),
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(stringResource(R.string.library_playlist_deselect), maxLines = 1)
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        FilledTonalIconButton(
+            onClick = onOptions,
+            modifier = Modifier.width(36.dp).height(44.dp),
+            shape = CircleShape,
+            colors = IconButtonDefaults.filledTonalIconButtonColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            ),
+        ) {
+            Icon(
+                painter = materialSymbolPainterResource("more_vert"),
+                contentDescription = stringResource(R.string.library_playlist_selection_options),
+                modifier = Modifier.size(24.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlaylistSelectionBadge(selectionIndex: Int) {
+    Box(
+        modifier = Modifier
+            .padding(horizontal = 6.dp)
+            .size(26.dp)
+            .background(MaterialTheme.colorScheme.primary, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = (selectionIndex + 1).toString(),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onPrimary,
+        )
+    }
+}
+
+@Composable
+private fun PlaylistSelectionCountPill(
+    selectedCount: Int,
+    modifier: Modifier = Modifier,
+) {
+    AnimatedVisibility(
+        visible = selectedCount > 0,
+        enter = slideInVertically(
+            initialOffsetY = { -it },
+            animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        ) + fadeIn() + scaleIn(initialScale = 0.8f),
+        exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut() + scaleOut(targetScale = 0.8f),
+        modifier = modifier,
+    ) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.primaryContainer,
+            shadowElevation = 6.dp,
+            tonalElevation = 2.dp,
+            modifier = Modifier.padding(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    painter = materialSymbolPainterResource("check_circle"),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = selectedCount.toString(),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    fontFamily = RoundedSans,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun YouTubePlaylistImportResultsDialog(
+    report: YouTubePlaylistImportResult.Completed,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.library_playlist_import_results_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    stringResource(
+                        R.string.library_playlist_import_results_summary,
+                        report.importedTrackCount,
+                        report.skippedTracks.size,
+                    ),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                if (report.playlist != null) {
+                    Text(
+                        stringResource(
+                            R.string.library_playlist_import_results_created,
+                            report.playlist.title,
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                } else {
+                    Text(
+                        stringResource(R.string.library_playlist_import_results_no_playlist),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                if (report.isTruncated) {
+                    Text(
+                        stringResource(
+                            R.string.library_playlist_import_results_truncated,
+                            report.sourceTrackCount,
+                        ),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                if (report.skippedTracks.isNotEmpty()) {
+                    Text(
+                        stringResource(
+                            R.string.library_playlist_import_results_skipped,
+                            report.skippedTracks.size,
+                        ),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 280.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        itemsIndexed(
+                            items = report.skippedTracks,
+                            key = { index, skipped -> "${skipped.track.videoId ?: skipped.track.title}-$index" },
+                        ) { _, skipped ->
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = MaterialTheme.shapes.medium,
+                                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                                ) {
+                                    Text(
+                                        text = skipped.track.title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        text = skipped.track.artist,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        text = stringResource(skipped.reason.toStringResource()),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Text(
+                        stringResource(R.string.library_playlist_import_results_all_matched),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.library_playlist_import_done))
+            }
+        },
+    )
+}
+
+private fun YouTubePlaylistSkippedTrack.Reason.toStringResource(): Int = when (this) {
+    YouTubePlaylistSkippedTrack.Reason.NO_APPLE_MATCH ->
+        R.string.library_playlist_import_reason_no_apple_match
+
+    YouTubePlaylistSkippedTrack.Reason.LISTENBRAINZ_LOOKUP_FAILED ->
+        R.string.library_playlist_import_reason_listenbrainz_failed
+
+    YouTubePlaylistSkippedTrack.Reason.NO_LISTENBRAINZ_MATCH ->
+        R.string.library_playlist_import_reason_no_listenbrainz_match
+}
+
+@Composable
+private fun LibraryPlaylistEmptyState(contentBottomPadding: androidx.compose.ui.unit.Dp) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(start = 28.dp, end = 28.dp, bottom = contentBottomPadding)
+            .offset(y = (-114).dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            PlaylistEmptyWaveDivider(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(32.dp)
+                    .padding(horizontal = 8.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.8f),
+            )
+            Icon(
+                painter = materialSymbolPainterResource("playlist_play", filled = true),
+                contentDescription = null,
+                modifier = Modifier.size(32.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.library_playlist_empty),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontFamily = RoundedSans,
+                    fontWeight = FontWeight.Medium,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
+                Text(
+                    text = stringResource(R.string.library_playlist_empty_subtitle),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
+            }
+        }
+    }
+}
+
+/** Matches PixelPlayer's static sine-wave divider above the empty-playlist content. */
+@Composable
+private fun PlaylistEmptyWaveDivider(
+    modifier: Modifier = Modifier,
+    color: androidx.compose.ui.graphics.Color,
+) {
+    val density = LocalDensity.current
+    Canvas(modifier = modifier) {
+        val width = size.width
+        if (width <= 0f) return@Canvas
+
+        val centerY = size.height / 2f
+        val amplitude = with(density) { 4.dp.toPx() }
+        val strokeWidth = with(density) { 3.dp.toPx() }
+        val waves = 7.6f
+        val samples = 400
+        val path = Path()
+        for (index in 0 until samples) {
+            val x = width * index / (samples - 1)
+            val theta = (x / width) * (2f * PI.toFloat() * waves)
+            val y = centerY + amplitude * sin(theta)
+            if (index == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+
+        drawPath(
+            path = path,
+            color = color,
+            style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
+            alpha = 0.95f,
+        )
+    }
+}
+
+@Composable
 private fun LibraryCategoryPage(
     items: List<LibraryEntry>,
     isActivePage: Boolean,
@@ -1165,6 +1920,8 @@ private fun LibraryCategoryPage(
     isRefreshing: Boolean,
     emptyMessage: Int,
     isGridLayout: Boolean,
+    isPlaylistSelectionMode: Boolean,
+    selectedPlaylistIds: List<String>,
     sort: LibrarySort,
     isSongsTab: Boolean,
     songsSortOption: SongsLibrarySortOption,
@@ -1174,8 +1931,12 @@ private fun LibraryCategoryPage(
     locateRequest: Int,
     onLocateVisibilityChanged: (Boolean) -> Unit,
     contentBottomPadding: androidx.compose.ui.unit.Dp,
+    emptyStateBottomPadding: androidx.compose.ui.unit.Dp,
     onItemClick: (LibraryEntry) -> Unit,
     onTrackMoreOptions: (HomeTrack, List<HomeTrack>) -> Unit,
+    onDeletePlaylist: (ListenBrainzPlaylist) -> Unit,
+    onPlaylistLongPress: (ListenBrainzPlaylist) -> Unit,
+    onPlaylistSelectionToggle: (ListenBrainzPlaylist) -> Unit,
     onRefresh: () -> Unit,
     onLocateNotFound: () -> Unit,
     onLocateHandled: () -> Unit,
@@ -1287,28 +2048,32 @@ private fun LibraryCategoryPage(
                 Text(stringResource(R.string.library_loading))
             }
         } else if (sortedItems.isEmpty()) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 28.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Icon(
-                    painter = materialSymbolPainterResource("music_off"),
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(42.dp),
-                )
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    text = stringResource(emptyMessage),
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(8.dp))
-                TextButton(onClick = onRetry) {
-                    Text(stringResource(R.string.library_retry))
+            if (emptyMessage == R.string.library_playlist_empty) {
+                LibraryPlaylistEmptyState(emptyStateBottomPadding)
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 28.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Icon(
+                        painter = materialSymbolPainterResource("music_off"),
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(42.dp),
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = stringResource(emptyMessage),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = onRetry) {
+                        Text(stringResource(R.string.library_retry))
+                    }
                 }
             }
         } else if (isGridLayout) {
@@ -1330,6 +2095,11 @@ private fun LibraryCategoryPage(
                         item = item,
                         index = index,
                         onClick = { onItemClick(item) },
+                        isPlaylistSelectionMode = isPlaylistSelectionMode,
+                        selectedPlaylistIndex = selectedPlaylistIds.indexOf(item.id),
+                        onPlaylistLongPress = onPlaylistLongPress,
+                        onPlaylistSelectionToggle = onPlaylistSelectionToggle,
+                        onDeletePlaylist = onDeletePlaylist,
                     )
                 }
             }
@@ -1365,6 +2135,11 @@ private fun LibraryCategoryPage(
                             item = item,
                             index = index,
                             onClick = { onItemClick(item) },
+                            isPlaylistSelectionMode = isPlaylistSelectionMode,
+                            selectedPlaylistIndex = selectedPlaylistIds.indexOf(item.id),
+                            onPlaylistLongPress = onPlaylistLongPress,
+                            onPlaylistSelectionToggle = onPlaylistSelectionToggle,
+                            onDeletePlaylist = onDeletePlaylist,
                         )
                     }
                 }
@@ -1425,21 +2200,113 @@ private fun LibraryListItem(
     item: LibraryEntry,
     index: Int,
     onClick: () -> Unit,
+    isPlaylistSelectionMode: Boolean,
+    selectedPlaylistIndex: Int,
+    onPlaylistLongPress: (ListenBrainzPlaylist) -> Unit,
+    onPlaylistSelectionToggle: (ListenBrainzPlaylist) -> Unit,
+    onDeletePlaylist: (ListenBrainzPlaylist) -> Unit,
 ) {
+    val playlist = item.playlist
+    val isPlaylistSelected = playlist != null && selectedPlaylistIndex >= 0
+    val selectionScale by animateFloatAsState(
+        targetValue = if (isPlaylistSelected) 0.98f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessLow,
+        ),
+        label = "playlistSelectionScale",
+    )
+    val selectionBorderWidth by animateDpAsState(
+        targetValue = if (isPlaylistSelected) 2.5.dp else 0.dp,
+        animationSpec = tween(durationMillis = 250),
+        label = "playlistSelectionBorderWidth",
+    )
+    val selectionContainerColor by animateColorAsState(
+        targetValue = if (isPlaylistSelected) {
+            MaterialTheme.colorScheme.secondaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerHigh
+        },
+        animationSpec = tween(durationMillis = 300),
+        label = "playlistSelectionContainerColor",
+    )
+    val selectionBorderColor by animateColorAsState(
+        targetValue = if (isPlaylistSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0f),
+        animationSpec = tween(durationMillis = 250),
+        label = "playlistSelectionBorderColor",
+    )
     val artworkShape = if (item.artist != null) {
         rememberArtistArtworkShape(item.artist.id)
     } else {
         MaterialTheme.shapes.medium
     }
-    if (item.artist != null) {
-        LibraryListItemContent(item, index, onClick, artworkShape)
+    if (playlist != null) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer {
+                    scaleX = selectionScale
+                    scaleY = selectionScale
+                }
+                .then(
+                    if (isPlaylistSelected || selectionBorderWidth > 0.dp) {
+                        Modifier.border(
+                            width = selectionBorderWidth,
+                            color = selectionBorderColor,
+                            shape = MaterialTheme.shapes.large,
+                        )
+                    } else {
+                        Modifier
+                    },
+                )
+                .combinedClickable(
+                    onClick = {
+                        if (isPlaylistSelectionMode) {
+                            onPlaylistSelectionToggle(playlist)
+                        } else {
+                            onClick()
+                        }
+                    },
+                    onLongClick = { onPlaylistLongPress(playlist) },
+                ),
+            shape = MaterialTheme.shapes.large,
+            color = selectionContainerColor,
+        ) {
+            LibraryListItemContent(
+                item = item,
+                index = index,
+                onClick = null,
+                artworkShape = artworkShape,
+                selectedPlaylistIndex = selectedPlaylistIndex,
+                isPlaylistSelectionMode = isPlaylistSelectionMode,
+                onDeletePlaylist = onDeletePlaylist,
+            )
+        }
+    } else if (item.artist != null) {
+        LibraryListItemContent(
+            item = item,
+            index = index,
+            onClick = onClick,
+            artworkShape = artworkShape,
+            selectedPlaylistIndex = -1,
+            isPlaylistSelectionMode = false,
+            onDeletePlaylist = onDeletePlaylist,
+        )
     } else {
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = MaterialTheme.shapes.large,
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
         ) {
-            LibraryListItemContent(item, index, onClick, artworkShape)
+            LibraryListItemContent(
+                item = item,
+                index = index,
+                onClick = onClick,
+                artworkShape = artworkShape,
+                selectedPlaylistIndex = -1,
+                isPlaylistSelectionMode = false,
+                onDeletePlaylist = onDeletePlaylist,
+            )
         }
     }
 }
@@ -1448,14 +2315,17 @@ private fun LibraryListItem(
 private fun LibraryListItemContent(
     item: LibraryEntry,
     index: Int,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)?,
     artworkShape: Shape,
+    selectedPlaylistIndex: Int,
+    isPlaylistSelectionMode: Boolean,
+    onDeletePlaylist: (ListenBrainzPlaylist) -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(76.dp)
-            .clickable(onClick = onClick)
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(start = 12.dp, end = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1481,6 +2351,16 @@ private fun LibraryListItemContent(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        item.playlist?.let { playlist ->
+            when {
+                selectedPlaylistIndex >= 0 && isPlaylistSelectionMode ->
+                    PlaylistSelectionBadge(selectionIndex = selectedPlaylistIndex)
+                !isPlaylistSelectionMode -> LibraryPlaylistOptionsButton(
+                    playlist = playlist,
+                    onDelete = { onDeletePlaylist(playlist) },
+                )
+            }
+        }
     }
 }
 
@@ -1489,6 +2369,11 @@ private fun LibraryGridItem(
     item: LibraryEntry,
     index: Int,
     onClick: () -> Unit,
+    isPlaylistSelectionMode: Boolean,
+    selectedPlaylistIndex: Int,
+    onPlaylistLongPress: (ListenBrainzPlaylist) -> Unit,
+    onPlaylistSelectionToggle: (ListenBrainzPlaylist) -> Unit,
+    onDeletePlaylist: (ListenBrainzPlaylist) -> Unit,
 ) {
     if (item.artist != null) {
         Column(
@@ -1503,7 +2388,82 @@ private fun LibraryGridItem(
                 index = index,
                 shape = rememberArtistArtworkShape(item.artist.id),
             )
-            LibraryGridItemMetadata(item)
+            LibraryGridItemMetadata(item, -1, false, onDeletePlaylist)
+        }
+    } else if (item.playlist != null) {
+        val playlist = item.playlist
+        val isPlaylistSelected = selectedPlaylistIndex >= 0
+        val selectionScale by animateFloatAsState(
+            targetValue = if (isPlaylistSelected) 0.98f else 1f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessLow,
+            ),
+            label = "playlistGridSelectionScale",
+        )
+        val selectionBorderWidth by animateDpAsState(
+            targetValue = if (isPlaylistSelected) 2.5.dp else 0.dp,
+            animationSpec = tween(durationMillis = 250),
+            label = "playlistGridSelectionBorderWidth",
+        )
+        val selectionContainerColor by animateColorAsState(
+            targetValue = if (isPlaylistSelected) {
+                MaterialTheme.colorScheme.secondaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerHigh
+            },
+            animationSpec = tween(durationMillis = 300),
+            label = "playlistGridSelectionContainerColor",
+        )
+        val selectionBorderColor by animateColorAsState(
+            targetValue = if (isPlaylistSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary.copy(alpha = 0f),
+            animationSpec = tween(durationMillis = 250),
+            label = "playlistGridSelectionBorderColor",
+        )
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer {
+                    scaleX = selectionScale
+                    scaleY = selectionScale
+                }
+                .then(
+                    if (isPlaylistSelected || selectionBorderWidth > 0.dp) {
+                        Modifier.border(
+                            width = selectionBorderWidth,
+                            color = selectionBorderColor,
+                            shape = MaterialTheme.shapes.large,
+                        )
+                    } else {
+                        Modifier
+                    },
+                )
+                .combinedClickable(
+                    onClick = {
+                        if (isPlaylistSelectionMode) {
+                            onPlaylistSelectionToggle(playlist)
+                        } else {
+                            onClick()
+                        }
+                    },
+                    onLongClick = { onPlaylistLongPress(playlist) },
+                ),
+            shape = MaterialTheme.shapes.large,
+            color = selectionContainerColor,
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                LibraryGridArtwork(
+                    item = item,
+                    index = index,
+                    shape = MaterialTheme.shapes.medium,
+                )
+                LibraryGridItemMetadata(
+                    item = item,
+                    selectedPlaylistIndex = selectedPlaylistIndex,
+                    isPlaylistSelectionMode = isPlaylistSelectionMode,
+                    onDeletePlaylist = onDeletePlaylist,
+                )
+            }
         }
     } else {
         Card(
@@ -1518,29 +2478,263 @@ private fun LibraryGridItem(
                     index = index,
                     shape = MaterialTheme.shapes.medium,
                 )
-                LibraryGridItemMetadata(item)
+                LibraryGridItemMetadata(item, -1, false, onDeletePlaylist)
             }
         }
     }
 }
 
 @Composable
-private fun LibraryGridItemMetadata(item: LibraryEntry) {
+private fun LibraryGridItemMetadata(
+    item: LibraryEntry,
+    selectedPlaylistIndex: Int,
+    isPlaylistSelectionMode: Boolean,
+    onDeletePlaylist: (ListenBrainzPlaylist) -> Unit,
+) {
+    if (item.playlist != null) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                LibraryGridItemTitle(item.title)
+                LibraryGridItemSubtitle(item.subtitle)
+            }
+            when {
+                selectedPlaylistIndex >= 0 && isPlaylistSelectionMode ->
+                    PlaylistSelectionBadge(selectionIndex = selectedPlaylistIndex)
+                !isPlaylistSelectionMode -> LibraryPlaylistOptionsButton(
+                    playlist = item.playlist,
+                    onDelete = { onDeletePlaylist(item.playlist) },
+                )
+            }
+        }
+    } else {
+        Column(modifier = Modifier.padding(top = 10.dp)) {
+            LibraryGridItemTitle(item.title)
+            LibraryGridItemSubtitle(item.subtitle)
+        }
+    }
+}
+
+@Composable
+private fun LibraryGridItemTitle(title: String) {
     Text(
-        text = item.title,
-        modifier = Modifier.padding(top = 10.dp),
+        text = title,
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.onSurface,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
     )
+}
+
+@Composable
+private fun LibraryGridItemSubtitle(subtitle: String) {
     Text(
-        text = item.subtitle,
+        text = subtitle,
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
     )
+}
+
+@Composable
+private fun LibraryPlaylistOptionsButton(
+    playlist: ListenBrainzPlaylist,
+    onDelete: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            Icon(
+                painter = materialSymbolPainterResource("more_vert"),
+                contentDescription = stringResource(R.string.library_more_options, playlist.title),
+                modifier = Modifier.size(24.dp),
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.library_playlist_delete)) },
+                leadingIcon = {
+                    Icon(
+                        painter = materialSymbolPainterResource("delete"),
+                        contentDescription = null,
+                        modifier = Modifier.size(24.dp),
+                    )
+                },
+                onClick = {
+                    expanded = false
+                    onDelete()
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlaylistSelectionOptionsSheet(
+    playlists: List<ListenBrainzPlaylist>,
+    onDismiss: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val sheetState = rememberBottomSheetState(
+        initialValue = SheetValue.Hidden,
+        enabledValues = setOf(SheetValue.Hidden, SheetValue.Expanded),
+    )
+    val previewPlaylists = playlists.take(4)
+    val imageSize = 66.dp
+    val overlap = 33.dp
+    val stackWidth = if (previewPlaylists.isEmpty()) 0.dp else {
+        imageSize + overlap * (previewPlaylists.size - 1)
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(80.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .height(74.dp)
+                        .width(stackWidth),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    previewPlaylists.forEachIndexed { index, playlist ->
+                        Box(
+                            modifier = Modifier
+                                .offset(x = overlap * index)
+                                .size(imageSize)
+                                .border(
+                                    width = 3.dp,
+                                    color = MaterialTheme.colorScheme.surface,
+                                    shape = MaterialTheme.shapes.medium,
+                                )
+                                .padding(3.dp),
+                        ) {
+                            LibraryArtwork(
+                                item = playlist.toLibraryEntry(),
+                                index = index,
+                                size = 60.dp,
+                                shape = MaterialTheme.shapes.small,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.width(16.dp))
+                Column {
+                    Text(
+                        text = stringResource(
+                            if (playlists.size == 1) {
+                                R.string.library_playlist_selection_title_single
+                            } else {
+                                R.string.library_playlist_selection_title_plural
+                            },
+                            playlists.size,
+                        ),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = RoundedSans,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = stringResource(R.string.library_playlist_selected),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontFamily = RoundedSans,
+                    )
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    FilledTonalButton(
+                        onClick = onDelete,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 66.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                        ),
+                        shape = CircleShape,
+                    ) {
+                        Icon(
+                            painter = materialSymbolPainterResource("delete"),
+                            contentDescription = null,
+                            modifier = Modifier.size(24.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.library_playlist_delete))
+                    }
+                    UnsupportedPlaylistAction(
+                        label = R.string.library_playlist_export,
+                        icon = "download",
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    UnsupportedPlaylistAction(
+                        label = R.string.library_playlist_merge,
+                        icon = "merge",
+                        modifier = Modifier.weight(1f),
+                    )
+                    UnsupportedPlaylistAction(
+                        label = R.string.library_playlist_share,
+                        icon = "share",
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun UnsupportedPlaylistAction(
+    label: Int,
+    icon: String,
+    modifier: Modifier = Modifier,
+) {
+    FilledTonalButton(
+        onClick = {},
+        enabled = false,
+        modifier = modifier.heightIn(min = 66.dp),
+        shape = CircleShape,
+    ) {
+        Icon(
+            painter = materialSymbolPainterResource(icon),
+            contentDescription = null,
+            modifier = Modifier.size(24.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(stringResource(label))
+    }
 }
 
 @Composable

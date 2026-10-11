@@ -161,6 +161,10 @@ class HomeFeedCacheTest {
         assertEquals(listOf(artist), cache.loadLibraryArtists())
         assertEquals(listOf(playlist), cache.loadLibraryPlaylists())
         assertEquals(playlistTracks, cache.loadLibraryPlaylistTracks(playlist.id))
+
+        cache.removeLibraryPlaylistTracks(playlist.id)
+
+        assertNull(cache.loadLibraryPlaylistTracks(playlist.id))
     }
 
     @Test

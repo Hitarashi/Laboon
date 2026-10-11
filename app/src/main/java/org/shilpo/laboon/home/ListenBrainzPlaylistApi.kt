@@ -41,17 +41,37 @@ object ListenBrainzPlaylistApi {
     fun addItemsUrl(playlistId: String): String =
         "$BASE_URL/playlist/${playlistId.urlEncoded()}/item/add"
 
-    fun createPlaylistBody(title: String, creator: String): String = JSONObject()
+    fun deletePlaylistUrl(playlistId: String): String =
+        "$BASE_URL/playlist/${playlistId.urlEncoded()}/delete"
+
+    fun createPlaylistBody(title: String, creator: String): String =
+        createPlaylistBody(title, creator, emptyList())
+
+    fun createPlaylistBody(
+        title: String,
+        creator: String,
+        recordingMbids: List<String>,
+    ): String = JSONObject()
         .put(
             "playlist",
             JSONObject()
                 .put("title", title.trim())
                 .put("creator", creator.trim())
-                .put("track", JSONArray()),
+                .put(
+                    "extension",
+                    JSONObject().put(
+                        PLAYLIST_EXTENSION,
+                        JSONObject().put("public", false),
+                    ),
+                )
+                .put("track", recordingTracks(recordingMbids)),
         )
         .toString()
 
-    fun addTracksBody(recordingMbids: List<String>): String {
+    fun addTracksBody(recordingMbids: List<String>): String =
+        JSONObject().put("playlist", JSONObject().put("track", recordingTracks(recordingMbids))).toString()
+
+    private fun recordingTracks(recordingMbids: List<String>): JSONArray {
         val tracks = JSONArray()
         recordingMbids.map(String::trim).filter(String::isNotEmpty).forEach { mbid ->
             tracks.put(
@@ -61,7 +81,7 @@ object ListenBrainzPlaylistApi {
                 ),
             )
         }
-        return JSONObject().put("playlist", JSONObject().put("track", tracks)).toString()
+        return tracks
     }
 
     fun parsePlaylists(root: JSONObject): List<ListenBrainzPlaylist> {
@@ -93,7 +113,7 @@ object ListenBrainzPlaylistApi {
         }
     }
 
-    fun parseCreatedPlaylist(root: JSONObject): ListenBrainzPlaylist? {
+    fun parseCreatedPlaylist(root: JSONObject, fallbackTitle: String? = null): ListenBrainzPlaylist? {
         val playlist = root.objOrNull("playlist") ?: root
         val id = root.stringOrNull("playlist_mbid")
             ?: playlist.stringOrNull("playlist_mbid")
@@ -103,6 +123,7 @@ object ListenBrainzPlaylistApi {
             id = id,
             title = playlist.stringOrNull("title")?.trim()?.takeIf(String::isNotEmpty)
                 ?: root.stringOrNull("title")?.trim()?.takeIf(String::isNotEmpty)
+                ?: fallbackTitle?.trim()?.takeIf(String::isNotEmpty)
                 ?: "Untitled playlist",
             creator = playlist.stringOrNull("creator"),
             isPublic = playlist.objOrNull("extension")?.objOrNull(PLAYLIST_EXTENSION)

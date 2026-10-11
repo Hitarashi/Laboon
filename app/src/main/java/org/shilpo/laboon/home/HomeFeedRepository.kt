@@ -33,7 +33,24 @@ class HomeFeedRepository(
     private val sessionStore: SessionStore,
     private val artworkResolver: LyricspornClient = LyricspornClient,
     private val availabilityResolver: SearchRepository = SearchRepositoryImpl(sessionStore),
+    private val youtubePlaylistClient: YouTubePlaylistClient = YouTubePlaylistClient(),
 ) {
+    private val youtubePlaylistTrackResolver = YouTubePlaylistTrackResolver(
+        songLinkLookup = SongLinkScraper()::findAppleTrack,
+        lyricspornLookup = { apiBaseUrl, track ->
+            val query = listOf(track.title, track.artist)
+                .map(String::trim)
+                .filter(String::isNotEmpty)
+                .joinToString(" ")
+            val candidates = artworkResolver.searchCatalog(
+                apiBaseUrl = apiBaseUrl,
+                term = query,
+                types = "songs",
+                limit = 25,
+            ).songs
+            YouTubePlaylistTrackMatcher.bestCandidate(track, candidates)
+        },
+    )
     private val recentTracksMutex = Mutex()
     private val listenBrainzTrendingMutex = Mutex()
     private val accountCacheMutex = Mutex()
@@ -270,6 +287,12 @@ class HomeFeedRepository(
         }
 
     suspend fun createListenBrainzPlaylist(title: String): ListenBrainzPlaylist? =
+        createListenBrainzPlaylist(title, emptyList())
+
+    suspend fun createListenBrainzPlaylist(
+        title: String,
+        recordingMbids: List<String>,
+    ): ListenBrainzPlaylist? =
         withContext(Dispatchers.IO) {
             val cleanTitle = title.trim().takeIf(String::isNotEmpty) ?: return@withContext null
             val credentials = sessionStore.getListenBrainzCredentials()
@@ -279,10 +302,125 @@ class HomeFeedRepository(
                 ?: return@withContext null
             val root = postListenBrainzJson(
                 ListenBrainzPlaylistApi.createPlaylistUrl(),
-                ListenBrainzPlaylistApi.createPlaylistBody(cleanTitle, username),
+                ListenBrainzPlaylistApi.createPlaylistBody(cleanTitle, username, recordingMbids),
                 token,
             ) ?: return@withContext null
-            ListenBrainzPlaylistApi.parseCreatedPlaylist(root)
+            ListenBrainzPlaylistApi.parseCreatedPlaylist(root, fallbackTitle = cleanTitle)
+        }
+
+    suspend fun importPublicYouTubePlaylist(url: String): YouTubePlaylistImportResult =
+        withContext(Dispatchers.IO) {
+            val credentials = sessionStore.getListenBrainzCredentials()
+            val username = credentials?.username?.trim()?.takeIf(String::isNotEmpty)
+            val token = credentials?.token?.trim()?.takeIf(String::isNotEmpty)
+            if (username == null || token == null) {
+                return@withContext YouTubePlaylistImportResult.ListenBrainzNotConnected
+            }
+            if (YouTubePlaylistApi.playlistIdFromUrl(url) == null) {
+                return@withContext YouTubePlaylistImportResult.InvalidYouTubeLink
+            }
+
+            val sourcePlaylist = youtubePlaylistClient.fetchPublicPlaylist(url)
+                ?: return@withContext YouTubePlaylistImportResult.PlaylistUnavailable
+            if (sourcePlaylist.tracks.isEmpty()) {
+                return@withContext YouTubePlaylistImportResult.PlaylistHasNoTracks
+            }
+
+            val apiBaseUrl = sessionStore.getSession()?.lyricspornApiUrl
+            val rawAppleMatchedTracks = coroutineScope {
+                sourcePlaylist.tracks.mapIndexed { index, sourceTrack ->
+                    async {
+                        val match = youtubePlaylistTrackResolver.resolve(apiBaseUrl, sourceTrack)
+                            ?: return@async null
+                        index to HomeTrack(
+                            id = "youtube-import-${sourceTrack.videoId ?: index}",
+                            title = match.title,
+                            artist = match.artist,
+                            album = match.album,
+                            artworkUrl = match.artworkUrl,
+                            source = "YouTube Music",
+                            isrc = match.isrc,
+                            providerTrackId = match.appleTrackId,
+                            durationMs = match.durationMs ?: sourceTrack.durationMs,
+                        )
+                    }
+                }.awaitAll().filterNotNull()
+            }
+            val matchedAppleTrackIds = rawAppleMatchedTracks.mapNotNull { (_, track) ->
+                track.providerTrackId
+            }
+            val canonicalAppleTracks =
+                artworkResolver.fetchTrackCatalogItems(apiBaseUrl, matchedAppleTrackIds)
+            val appleMatchedTracks = rawAppleMatchedTracks.map { (sourceIndex, track) ->
+                val canonical = track.providerTrackId?.let(canonicalAppleTracks::get)
+                if (canonical == null) {
+                    sourceIndex to track
+                } else {
+                    sourceIndex to track.copy(
+                        title = canonical.name,
+                        artist = canonical.artistName?.trim()?.takeIf(String::isNotEmpty) ?: track.artist,
+                        album = canonical.albumName?.trim()?.takeIf(String::isNotEmpty) ?: track.album,
+                        artworkUrl = canonical.artworkUrl ?: track.artworkUrl,
+                        durationMs = canonical.durationMs ?: track.durationMs,
+                        isrc = canonical.isrc?.trim()?.takeIf(String::isNotEmpty) ?: track.isrc,
+                    )
+                }
+            }
+            val appleMatchedSourceIndices = appleMatchedTracks.map { it.first }.toSet()
+            val recordingMbidsBySourceIndex = mutableMapOf<Int, String>()
+            val lookupFailedSourceIndices = mutableSetOf<Int>()
+            val isrcRecordings = MusicBrainzIsrcLookup.findRecordings(
+                appleMatchedTracks.mapNotNull { (_, track) -> track.isrc },
+            )
+            MusicBrainzIsrcLookup.matchTracks(
+                appleMatchedTracks.map { it.second },
+                isrcRecordings,
+            ).forEach { (trackIndex, mbid) ->
+                appleMatchedTracks.getOrNull(trackIndex)?.first?.let { sourceIndex ->
+                    recordingMbidsBySourceIndex[sourceIndex] = mbid
+                }
+            }
+            appleMatchedTracks
+                .filterNot { (sourceIndex, _) -> sourceIndex in recordingMbidsBySourceIndex }
+                .chunked(ListenBrainzLabs.MAX_METADATA_LOOKUPS_PER_POST)
+                .forEach { batch ->
+                    val batchTracks = batch.map { it.second }
+                    val response = postListenBrainzJsonArray(
+                        ListenBrainzLabs.metadataLookupBatchUrl(),
+                        ListenBrainzLabs.metadataLookupBatchBody(batchTracks),
+                        token,
+                    )
+                    if (response == null) {
+                        lookupFailedSourceIndices += batch.map { it.first }
+                        return@forEach
+                    }
+                    ListenBrainzLabs.parseMetadataLookupBatch(response, batchTracks).forEach { (batchIndex, mbid) ->
+                        batch.getOrNull(batchIndex)?.first?.let { sourceIndex ->
+                            recordingMbidsBySourceIndex[sourceIndex] = mbid
+                        }
+                    }
+                }
+            val resolvedSourceIndices = recordingMbidsBySourceIndex.keys
+            val skippedTracks = skippedYouTubePlaylistTracks(
+                sourceTracks = sourcePlaylist.tracks,
+                appleMatchedSourceIndices = appleMatchedSourceIndices,
+                resolvedSourceIndices = resolvedSourceIndices,
+                lookupFailedSourceIndices = lookupFailedSourceIndices,
+            )
+            val recordingMbids = recordingMbidsBySourceIndex.toSortedMap().values.toList()
+            val importedPlaylist = if (recordingMbids.isEmpty()) {
+                null
+            } else {
+                createListenBrainzPlaylist(sourcePlaylist.title, recordingMbids)
+                    ?: return@withContext YouTubePlaylistImportResult.CouldNotCreatePlaylist
+            }
+            YouTubePlaylistImportResult.Completed(
+                playlist = importedPlaylist,
+                sourceTrackCount = sourcePlaylist.tracks.size,
+                importedTrackCount = recordingMbids.size,
+                skippedTracks = skippedTracks,
+                isTruncated = sourcePlaylist.isTruncated,
+            )
         }
 
     suspend fun fetchListenBrainzPlaylistTracks(playlistId: String): List<HomeTrack> =
@@ -346,6 +484,19 @@ class HomeFeedRepository(
         )
         response != null
     }
+
+    suspend fun deleteListenBrainzPlaylist(playlistId: String): Boolean =
+        withContext(Dispatchers.IO) {
+            val token = sessionStore.getListenBrainzCredentials()?.token
+                ?.trim()
+                ?.takeIf(String::isNotEmpty)
+                ?: return@withContext false
+            postListenBrainzBody(
+                ListenBrainzPlaylistApi.deletePlaylistUrl(playlistId),
+                "{}",
+                token,
+            ) != null
+        }
 
     suspend fun fetchRecommended(): List<HomeTrack> = withContext(Dispatchers.IO) {
         val taste = fetchTasteProfile()
@@ -1076,7 +1227,7 @@ class HomeFeedRepository(
             }
         }
         val response = if (url.contains("listenbrainz.org", ignoreCase = true)) {
-            ListenBrainzRequestPolicy.execute { http.getJson(url, headers) }
+            ListenBrainzRequestPolicy.execute { listenBrainzHttp.getJson(url, headers) }
         } else {
             http.getJson(url, headers)
         }
@@ -1096,20 +1247,39 @@ class HomeFeedRepository(
         url: String,
         body: String,
         token: String,
-    ): JSONObject? {
+    ): JSONObject? = postListenBrainzBody(url, body, token)?.let { raw ->
+        runCatching { JSONObject(raw) }.getOrElse {
+            logWarning("Malformed JSON from ${redactApiKey(url)}: ${it.message.orEmpty()}")
+            null
+        }
+    }
+
+    private suspend fun postListenBrainzJsonArray(
+        url: String,
+        body: String,
+        token: String,
+    ): JSONArray? = postListenBrainzBody(url, body, token)?.let { raw ->
+        runCatching { JSONArray(raw) }.getOrElse {
+            logWarning("Malformed JSON array from ${redactApiKey(url)}: ${it.message.orEmpty()}")
+            null
+        }
+    }
+
+    private suspend fun postListenBrainzBody(
+        url: String,
+        body: String,
+        token: String,
+    ): String? {
         val headers = mapOf(
             "Accept" to "application/json",
             "User-Agent" to ListenBrainzRequestPolicy.USER_AGENT,
             "Authorization" to "Token ${token.trim()}",
         )
-        val response = ListenBrainzRequestPolicy.execute { http.postJson(url, body, headers) }
+        val response = ListenBrainzRequestPolicy.execute {
+            listenBrainzHttp.postJson(url, body, headers)
+        }
         return response.fold(
-            onSuccess = { raw ->
-                runCatching { JSONObject(raw) }.getOrElse {
-                    logWarning("Malformed JSON from ${redactApiKey(url)}: ${it.message.orEmpty()}")
-                    null
-                }
-            },
+            onSuccess = { it },
             onFailure = { error ->
                 logWarning(
                     "Feed request failed (${describe(error)}) for ${redactApiKey(url)}: " +
@@ -1131,7 +1301,7 @@ class HomeFeedRepository(
             }
         }
         val response = if (url.contains("listenbrainz.org", ignoreCase = true)) {
-            ListenBrainzRequestPolicy.execute { http.get(url, headers) }
+            ListenBrainzRequestPolicy.execute { listenBrainzHttp.get(url, headers) }
         } else {
             http.get(url, headers)
         }
@@ -1172,10 +1342,12 @@ class HomeFeedRepository(
 
     private companion object {
         private val http = HttpJsonClient()
+        private val listenBrainzHttp = HttpJsonClient(readTimeoutMs = LISTEN_BRAINZ_READ_TIMEOUT_MS)
         private val tasteProfileMutex = Mutex()
         private val tasteProfileCache = mutableMapOf<String, CachedTasteProfile>()
         private val API_KEY_QUERY = Regex("api_key=[^&]*", RegexOption.IGNORE_CASE)
         private const val TAG = "HomeFeed"
+        private const val LISTEN_BRAINZ_READ_TIMEOUT_MS = 30_000L
         private const val MAX_RECENT_TRACKS = 25
         private const val MAX_RECOMMENDATION_SEEDS = 5
         private const val MAX_RECOMMENDATION_CANDIDATES = 20
