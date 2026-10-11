@@ -32,8 +32,8 @@ android {
         applicationId = "org.shilpo.laboon"
         minSdk = 29
         targetSdk = 37
-        versionCode = 4
-        versionName = "0.0.4"
+        versionCode = 5
+        versionName = "0.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
