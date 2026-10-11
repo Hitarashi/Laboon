@@ -672,7 +672,7 @@ fun HomeScreen(
     val visualizerProgress = ripVisualizerBackState.progressFor(showRipVisualizer)
 
     val motionScheme = MaterialTheme.motionScheme
-    val isBottomChromeDocked = isAlbumOverlayVisible ||
+    val isBottomChromeDocked = isAlbumOverlayVisible || showRipVisualizer ||
         (currentTab == MainTab.Library && isLibraryPlaylistDetailOpen)
     val albumChromeTransition = updateTransition(
         targetState = isBottomChromeDocked,
@@ -684,7 +684,6 @@ fun HomeScreen(
     ) { albumOpen -> if (albumOpen) 1f else 0f }
     val scrimAlpha by animateFloatAsState(
         targetValue = when {
-            showRipVisualizer -> (1f - visualizerProgress) * 0.4f
             showSettings -> (1f - settingsProgress) * 0.4f
             else -> 0f
         },
@@ -2040,6 +2039,32 @@ fun HomeScreen(
             }
 
             AnimatedVisibility(
+                visible = showRipVisualizer,
+                enter = slideInHorizontally(
+                    animationSpec = motionScheme.defaultSpatialSpec(),
+                    initialOffsetX = { it },
+                ) + fadeIn(animationSpec = motionScheme.defaultEffectsSpec()),
+                exit = slideOutHorizontally(
+                    animationSpec = motionScheme.defaultSpatialSpec(),
+                    targetOffsetX = { it },
+                ) + fadeOut(animationSpec = motionScheme.defaultEffectsSpec()),
+            ) {
+                PredictiveBackSurface(
+                    state = ripVisualizerBackState,
+                    spec = PredictiveBackSpec.HomeSettings,
+                    active = showRipVisualizer,
+                ) { visualizerSurface ->
+                    RipVisualizerScreen(
+                        client = ripWsClient,
+                        session = session,
+                        bottomClearance = albumBottomClearance,
+                        onBack = { showRipVisualizer = false },
+                        modifier = visualizerSurface.fillMaxSize(),
+                    )
+                }
+            }
+
+            AnimatedVisibility(
                 visible = activeTrack != null,
                 enter = fadeIn(animationSpec = motionScheme.defaultEffectsSpec()),
                 exit = fadeOut(animationSpec = motionScheme.defaultEffectsSpec()),
@@ -2180,7 +2205,7 @@ fun HomeScreen(
                 )
             }
 
-            if (showSettings || showRipVisualizer || scrimAlpha > 0.01f) {
+            if (showSettings || scrimAlpha > 0.01f) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -2216,31 +2241,6 @@ fun HomeScreen(
                             onDisconnect()
                         },
                         modifier = settingsSurface.fillMaxSize(),
-                    )
-                }
-            }
-
-            AnimatedVisibility(
-                visible = showRipVisualizer,
-                enter = slideInHorizontally(
-                    animationSpec = motionScheme.defaultSpatialSpec(),
-                    initialOffsetX = { it },
-                ) + fadeIn(animationSpec = motionScheme.defaultEffectsSpec()),
-                exit = slideOutHorizontally(
-                    animationSpec = motionScheme.defaultSpatialSpec(),
-                    targetOffsetX = { it },
-                ) + fadeOut(animationSpec = motionScheme.defaultEffectsSpec()),
-            ) {
-                PredictiveBackSurface(
-                    state = ripVisualizerBackState,
-                    spec = PredictiveBackSpec.HomeSettings,
-                    active = showRipVisualizer,
-                ) { visualizerSurface ->
-                    RipVisualizerScreen(
-                        client = ripWsClient,
-                        session = session,
-                        onBack = { showRipVisualizer = false },
-                        modifier = visualizerSurface.fillMaxSize(),
                     )
                 }
             }

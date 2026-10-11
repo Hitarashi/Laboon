@@ -1,9 +1,13 @@
-@file:OptIn(ExperimentalMaterial3ExpressiveApi::class)
-
 package org.shilpo.laboon.ui.screens.rip
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,18 +21,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,12 +41,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.text.HtmlCompat
@@ -58,7 +62,7 @@ import org.shilpo.laboon.rip.RipTaskDownloadLane
 import org.shilpo.laboon.rip.RipTaskSnapshot
 import org.shilpo.laboon.rip.RipTaskUploadLane
 import org.shilpo.laboon.rip.RipWebSocketClient
-import org.shilpo.laboon.ui.design.CodecIcon
+import org.shilpo.laboon.rip.RipWsStatus
 import org.shilpo.laboon.ui.design.UserAvatar
 import org.shilpo.laboon.ui.design.painterResource
 import java.util.Locale
@@ -69,8 +73,21 @@ fun RipVisualizerScreen(
     session: AuthSession?,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
+    bottomClearance: Dp = 0.dp,
 ) {
     val state by client.state.collectAsState()
+
+    val orderedTasks = remember(state.activeTasks) {
+        state.activeTasks.asReversed()
+            .sortedByDescending { it.download != null || it.upload != null }
+    }
+
+    val totalDownloadSpeed = remember(state.activeTasks) {
+        state.activeTasks.sumOf { it.download?.speedBytesPerSec ?: 0L }
+    }
+    val totalUploadSpeed = remember(state.activeTasks) {
+        state.activeTasks.sumOf { it.upload?.speedBytesPerSec ?: 0L }
+    }
 
     Box(
         modifier = modifier
@@ -84,94 +101,89 @@ fun RipVisualizerScreen(
                 modifier = Modifier.fillMaxWidth(),
                 color = MaterialTheme.colorScheme.background,
             ) {
-                Column(
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .statusBarsPadding()
-                        .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 12.dp),
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.weight(1f, fill = false),
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier.weight(1f),
+                        IconButton(
+                            onClick = onBack,
+                            modifier = Modifier.size(40.dp),
                         ) {
-                            IconButton(
-                                onClick = onBack,
-                                modifier = Modifier.size(42.dp),
-                            ) {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_chevron),
-                                    contentDescription = "Back",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier
-                                        .size(24.dp)
-                                        .rotate(90f),
-                                )
-                            }
-                            Column {
-                                Text(
-                                    text = stringResource(R.string.home_title),
-                                    style = MaterialTheme.typography.titleLargeEmphasized.copy(
-                                        fontSize = 25.sp,
-                                        lineHeight = 30.sp,
-                                    ),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                )
-                                Text(
-                                    text = "Live pipeline",
-                                    style = MaterialTheme.typography.bodySmall.copy(
-                                        fontSize = 14.sp,
-                                    ),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
+                            Icon(
+                                painter = painterResource(R.drawable.ic_chevron),
+                                contentDescription = "Back",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .rotate(90f),
+                            )
                         }
 
-                        UserAvatar(
-                            session = session,
-                            onClick = null,
-                            size = 48.dp,
-                            modifier = Modifier.padding(end = 4.dp),
+                        Text(
+                            text = "Live Pipeline",
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 21.sp,
+                                letterSpacing = (-0.3).sp,
+                            ),
+                            color = MaterialTheme.colorScheme.onBackground,
                         )
-                    }
-                }
-            }
 
-            val orderedTasks = remember(state.activeTasks) {
-                state.activeTasks.asReversed()
-                    .sortedByDescending { it.download != null || it.upload != null }
+                        LiveConnectionBadge(status = state.wsStatus)
+                    }
+
+                    UserAvatar(
+                        session = session,
+                        onClick = null,
+                        size = 38.dp,
+                    )
+                }
             }
 
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
+                contentPadding = PaddingValues(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 4.dp,
+                    bottom = bottomClearance + 16.dp,
+                ),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                if (orderedTasks.isEmpty()) {
-                    item {
-                        EmptyTasksState(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 40.dp)
+                if (orderedTasks.isNotEmpty()) {
+                    item(key = "telemetry_summary") {
+                        GlobalTelemetryPill(
+                            taskCount = orderedTasks.size,
+                            downloadSpeed = totalDownloadSpeed,
+                            uploadSpeed = totalUploadSpeed,
                         )
                     }
-                } else {
+
                     itemsIndexed(
                         items = orderedTasks,
                         key = { _, task -> task.taskId },
-                    ) { index, task ->
-                        RipTaskSegmentedItem(
+                    ) { _, task ->
+                        RipTaskCard(
                             task = task,
                             onCancel = { client.cancelTask(task.taskId) },
-                            index = index,
-                            count = orderedTasks.size,
+                        )
+                    }
+                } else {
+                    item(key = "empty_state") {
+                        ModernEmptyState(
+                            wsStatus = state.wsStatus,
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                 }
@@ -181,150 +193,319 @@ fun RipVisualizerScreen(
 }
 
 @Composable
-private fun RipTaskSegmentedItem(
-    task: RipTaskSnapshot,
-    onCancel: () -> Unit,
-    index: Int,
-    count: Int,
+private fun LiveConnectionBadge(
+    status: RipWsStatus,
     modifier: Modifier = Modifier,
 ) {
-    SegmentedListItem(
-        shapes = ListItemDefaults.segmentedShapes(
-            index = index,
-            count = count,
+    val infiniteTransition = rememberInfiniteTransition(label = "badgePulse")
+    val pulseAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(900, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse,
         ),
-        colors = ListItemDefaults.segmentedColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainer,
-        ),
-        contentPadding = PaddingValues(16.dp),
+        label = "pulseAlpha",
+    )
+
+    val (statusColor, statusText, isPulsing) = when (status) {
+        RipWsStatus.CONNECTED -> Triple(Color(0xFF22C55E), "LIVE", true)
+        RipWsStatus.CONNECTING -> Triple(Color(0xFFF59E0B), "CONNECTING", true)
+        RipWsStatus.DISCONNECTED -> Triple(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f), "OFFLINE", false)
+        RipWsStatus.ERROR -> Triple(MaterialTheme.colorScheme.error, "ERROR", false)
+    }
+
+    Surface(
+        shape = CircleShape,
+        color = statusColor.copy(alpha = 0.12f),
+        border = BorderStroke(1.dp, statusColor.copy(alpha = 0.25f)),
+        modifier = modifier,
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(statusColor.copy(alpha = if (isPulsing) pulseAlpha else 1f)),
+            )
+            Text(
+                text = statusText,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 10.sp,
+                    letterSpacing = 0.5.sp,
+                ),
+                color = statusColor,
+            )
+        }
+    }
+}
+
+@Composable
+private fun GlobalTelemetryPill(
+    taskCount: Int,
+    downloadSpeed: Long,
+    uploadSpeed: Long,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.65f),
+        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)),
         modifier = modifier.fillMaxWidth(),
-        content = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                )
+                Text(
+                    text = if (taskCount == 1) "1 Active Task" else "$taskCount Active Tasks",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.SemiBold,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    AsyncImage(
-                        model = ImageRequest.Builder(LocalContext.current)
-                            .data(ArtworkUrlHelper.toLowQuality(task.artworkUrl))
-                            .crossfade(true)
-                            .build(),
-                        placeholder = painterResource(R.drawable.app_icon_small),
-                        error = painterResource(R.drawable.app_icon_small),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(46.dp)
-                            .clip(RoundedCornerShape(12.dp)),
+                    Text(
+                        text = "↓",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                        ),
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        text = speedToHumanReadable(downloadSpeed),
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            fontFeatureSettings = "tnum",
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .height(12.dp)
+                        .width(1.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                )
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        text = "↑",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                        ),
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
+                    Text(
+                        text = speedToHumanReadable(uploadSpeed),
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            fontFeatureSettings = "tnum",
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RipTaskCard(
+    task: RipTaskSnapshot,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.18f)),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(ArtworkUrlHelper.toLowQuality(task.artworkUrl))
+                        .crossfade(true)
+                        .build(),
+                    placeholder = painterResource(R.drawable.app_icon_small),
+                    error = painterResource(R.drawable.app_icon_small),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(12.dp)),
+                )
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    val decodedTitle = remember(task.title) {
+                        cleanHtmlEntities(task.title) ?: "Resolving Track..."
+                    }
+                    Text(
+                        text = decodedTitle,
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 15.sp,
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
 
-                    Column(modifier = Modifier.weight(1f)) {
-                        val decodedTitle = remember(task.title) {
-                            cleanHtmlEntities(task.title) ?: "Resolving Track..."
+                    val subtitleText = remember(task.artist, task.album, task.title) {
+                        when {
+                            !task.artist.isNullOrBlank() -> cleanHtmlEntities(task.artist)
+                            !task.album.isNullOrBlank() && task.album != task.title -> cleanHtmlEntities(task.album)
+                            else -> null
                         }
+                    }
+                    if (!subtitleText.isNullOrBlank()) {
+                        Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = decodedTitle,
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                            color = MaterialTheme.colorScheme.onSurface,
+                            text = subtitleText,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 13.sp,
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        val subtitleText = remember(task.artist, task.album, task.title) {
-                            when {
-                                !task.artist.isNullOrBlank() -> cleanHtmlEntities(task.artist)
-                                !task.album.isNullOrBlank() && task.album != task.title -> cleanHtmlEntities(
-                                    task.album
-                                )
-
-                                else -> null
-                            }
-                        }
-                        if (!subtitleText.isNullOrBlank()) {
-                            Text(
-                                text = subtitleText,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-
-                        val failedCount = task.failedTracks
-                        if (failedCount != null && failedCount > 0) {
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "$failedCount failed",
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                ),
-                                color = MaterialTheme.colorScheme.error,
-                            )
-                        }
                     }
 
-                    if (task.isOwner) {
-                        Surface(
-                            onClick = onCancel,
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
-                            contentColor = MaterialTheme.colorScheme.onErrorContainer,
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                            ) {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_clear),
-                                    contentDescription = "Cancel task",
-                                    modifier = Modifier.size(12.dp),
-                                )
-                                Text(
-                                    text = "Cancel",
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 11.sp,
-                                    ),
-                                )
-                            }
+                    if (task.isAlbum) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        val albumProgressText = if (task.currentTrackIndex != null && task.totalTracks != null) {
+                            "Album • Track ${task.currentTrackIndex} of ${task.totalTracks}"
+                        } else {
+                            "Album"
                         }
+                        Text(
+                            text = albumProgressText,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                            ),
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+
+                    val failedCount = task.failedTracks
+                    if (failedCount != null && failedCount > 0) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "$failedCount failed",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            ),
+                            color = MaterialTheme.colorScheme.error,
+                        )
                     }
                 }
 
-                val hasLanes = task.download != null || task.upload != null
-                if (hasLanes) {
-                    Spacer(modifier = Modifier.height(14.dp))
-                    HorizontalDivider(
-                        thickness = 0.8.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    task.download?.let { lane ->
-                        LaneGauge(
-                            lane = lane,
-                            task = task,
-                        )
-                    }
-
-                    if (task.download != null && task.upload != null) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                    }
-
-                    task.upload?.let { lane ->
-                        UploadLaneGauge(
-                            lane = lane,
-                            task = task,
-                        )
+                if (task.isOwner) {
+                    Surface(
+                        onClick = onCancel,
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f),
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_clear),
+                                contentDescription = "Cancel task",
+                                modifier = Modifier.size(11.dp),
+                            )
+                            Text(
+                                text = "Cancel",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 11.sp,
+                                ),
+                            )
+                        }
                     }
                 }
             }
-        },
-    )
+
+            val hasLanes = task.download != null || task.upload != null
+            if (hasLanes) {
+                Spacer(modifier = Modifier.height(12.dp))
+                HorizontalDivider(
+                    thickness = 0.8.dp,
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f),
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                task.download?.let { lane ->
+                    LaneGauge(
+                        lane = lane,
+                        task = task,
+                    )
+                }
+
+                if (task.download != null && task.upload != null) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+
+                task.upload?.let { lane ->
+                    UploadLaneGauge(
+                        lane = lane,
+                        task = task,
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -359,7 +540,6 @@ private fun LaneGauge(
         speedBytesPerSec = lane.speedBytesPerSec,
         trackTitle = trackTitle,
         trackPosition = trackPosition,
-        codec = lane.codec,
         modifier = modifier,
     )
 }
@@ -390,8 +570,7 @@ private fun UploadLaneGauge(
         if (!lane.title.isNullOrBlank() && lane.title != "Album ZIP archive" && lane.title != "Full Album Archive") {
             lane.title
         } else if (!task.artist.isNullOrBlank() && !task.title.isNullOrBlank()) {
-            val codecSuffix = lane.codec?.uppercase(Locale.getDefault())?.let { " [$it]" } ?: ""
-            "${task.artist} - ${task.title}$codecSuffix.zip"
+            "${task.artist} - ${task.title}.zip"
         } else if (!task.title.isNullOrBlank()) {
             "${task.title}.zip"
         } else {
@@ -410,7 +589,6 @@ private fun UploadLaneGauge(
         speedBytesPerSec = lane.speedBytesPerSec,
         trackTitle = trackTitle,
         trackPosition = trackPosition,
-        codec = lane.codec,
         modifier = modifier,
     )
 }
@@ -425,7 +603,6 @@ private fun LaneProgressIndicator(
     speedBytesPerSec: Long,
     trackTitle: String? = null,
     trackPosition: String? = null,
-    codec: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val progress = (percent ?: 0f) / 100f
@@ -505,8 +682,9 @@ private fun LaneProgressIndicator(
             val isTransferStage = stage.contains("download", ignoreCase = true) ||
                     stage.contains("upload", ignoreCase = true)
             if (speedBytesPerSec > 0 || isTransferStage) {
+                val arrowPrefix = if (isDownload) "↓ " else "↑ "
                 Text(
-                    text = speedToHumanReadable(speedBytesPerSec),
+                    text = arrowPrefix + speedToHumanReadable(speedBytesPerSec),
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontWeight = FontWeight.SemiBold,
                         fontFeatureSettings = "tnum",
@@ -516,8 +694,7 @@ private fun LaneProgressIndicator(
             }
         }
 
-        val hasTrackInfo =
-            !trackTitle.isNullOrBlank() || !trackPosition.isNullOrBlank() || !codec.isNullOrBlank()
+        val hasTrackInfo = !trackTitle.isNullOrBlank() || !trackPosition.isNullOrBlank()
         if (hasTrackInfo) {
             Spacer(modifier = Modifier.height(4.dp))
             Row(
@@ -556,38 +733,6 @@ private fun LaneProgressIndicator(
                         modifier = Modifier.weight(1f, fill = false),
                     )
                 }
-                val hasIcons = !codec.isNullOrBlank()
-                if ((!trackPosition.isNullOrBlank() || !trackTitle.isNullOrBlank()) && hasIcons) {
-                    Text(
-                        text = "•",
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                    )
-                }
-                if (!codec.isNullOrBlank()) {
-                    CodecIcon(
-                        codec = codec,
-                        height = 10.dp,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                    )
-                    if (!isLosslessOrDolby(codec) &&
-                        !codec.equals("aac", ignoreCase = true) &&
-                        !codec.startsWith("mp4a", ignoreCase = true)
-                    ) {
-                        val displayCodec = when (codec.lowercase(Locale.ROOT)) {
-                            "mp4a.40.2", "mp4a.40.5" -> "AAC"
-                            else -> codec.uppercase(Locale.ROOT)
-                        }
-                        Text(
-                            text = displayCodec,
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 10.sp,
-                            ),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                        )
-                    }
-                }
             }
         }
 
@@ -600,7 +745,7 @@ private fun LaneProgressIndicator(
                 .height(4.dp)
                 .clip(RoundedCornerShape(2.dp)),
             color = accentColor,
-            trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            trackColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
             strokeCap = StrokeCap.Round,
         )
 
@@ -621,7 +766,10 @@ private fun LaneProgressIndicator(
 
             Text(
                 text = bytesText,
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontSize = 11.sp,
+                    fontFeatureSettings = "tnum",
+                ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
@@ -629,7 +777,7 @@ private fun LaneProgressIndicator(
                 text = "${(progress * 100).toInt()}%",
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.SemiBold,
                     fontFeatureSettings = "tnum",
                 ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -639,34 +787,95 @@ private fun LaneProgressIndicator(
 }
 
 @Composable
-private fun EmptyTasksState(
+private fun ModernEmptyState(
+    wsStatus: RipWsStatus,
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 48.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Icon(
-            painter = painterResource(R.drawable.ic_song_wave),
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
+        Surface(
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.6f),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)),
             modifier = Modifier.size(80.dp),
-        )
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_song_wave),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(38.dp),
+                )
+            }
+        }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(20.dp))
 
         Text(
-            text = "No active tasks",
-            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            text = "Pipeline Idle",
+            style = MaterialTheme.typography.titleMedium.copy(
+                fontWeight = FontWeight.Bold,
+                fontSize = 18.sp,
+            ),
+            color = MaterialTheme.colorScheme.onBackground,
         )
-    }
-}
 
-private fun isLosslessOrDolby(codec: String?): Boolean {
-    val c = codec?.trim()?.lowercase(Locale.getDefault()) ?: return false
-    return c in listOf("lossless", "alac", "flac", "ec-3", "ec3", "atmos", "dolby", "dolby_atmos")
+        Spacer(modifier = Modifier.height(6.dp))
+
+        Text(
+            text = "No active downloads or uploads. Tracks and albums dispatched from Search or Home stream live here.",
+            style = MaterialTheme.typography.bodySmall.copy(
+                lineHeight = 18.sp,
+            ),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(0.85f),
+        )
+
+        Spacer(modifier = Modifier.height(18.dp))
+
+        val (dotColor, statusMsg) = when (wsStatus) {
+            RipWsStatus.CONNECTED -> Color(0xFF22C55E) to "Connected to pipeline backend"
+            RipWsStatus.CONNECTING -> Color(0xFFF59E0B) to "Connecting to pipeline backend…"
+            RipWsStatus.DISCONNECTED -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f) to "Pipeline server offline"
+            RipWsStatus.ERROR -> MaterialTheme.colorScheme.error to "Pipeline connection error"
+        }
+
+        Surface(
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.5f),
+            border = BorderStroke(0.8.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.15f)),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(dotColor),
+                )
+                Text(
+                    text = statusMsg,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
 }
 
 private fun humanReadableStage(stage: String): String =
