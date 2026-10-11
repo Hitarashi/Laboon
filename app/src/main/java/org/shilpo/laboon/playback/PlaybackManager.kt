@@ -71,6 +71,8 @@ import org.shilpo.laboon.lyrics.LyricsRepositoryImpl
 import org.shilpo.laboon.lyricsporn.LyricspornClient
 import org.shilpo.laboon.rip.AutoRipCoordinator
 import org.shilpo.laboon.rip.AutoRipSource
+import org.shilpo.laboon.scrobble.ScrobbleCoordinator
+import org.shilpo.laboon.scrobble.ScrobbleQueue
 import org.shilpo.laboon.search.SearchRepository
 import org.shilpo.laboon.search.SearchRepositoryImpl
 import java.nio.ByteBuffer
@@ -146,6 +148,7 @@ class PlaybackManagerImpl(
     ),
     private val autoRipCoordinator: AutoRipCoordinator? = null,
     private val completedRipTrackIds: SharedFlow<String>? = null,
+    scrobbleCoordinator: ScrobbleCoordinator? = null,
 ) : PlaybackManager {
 
     private data class PlayerAudioSinkState(
@@ -158,6 +161,11 @@ class PlaybackManagerImpl(
     override val spectrumState: StateFlow<SpectrumFrame> = spectrumVisualizer.state
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    private val activeScrobbleCoordinator: ScrobbleCoordinator = scrobbleCoordinator ?: ScrobbleCoordinator(
+        sessionStore = sessionStore,
+        queue = ScrobbleQueue(SharedPreferencesKeyValueStore(context, "laboon_scrobble_queue")),
+        scope = scope,
+    )
     private val _state = MutableStateFlow(
         run {
             val lastTrack = playbackPersistence.getLastTrack()
@@ -236,6 +244,9 @@ class PlaybackManagerImpl(
 
     init {
         initPlayer()
+        scope.launch(Dispatchers.IO) {
+            activeScrobbleCoordinator.flushQueue()
+        }
         _state.value.currentTrack?.let { track ->
             _state.value = _state.value.copy(lyricsLoading = true)
             requestLyrics(track, _state.value.durationMs)
@@ -758,6 +769,12 @@ class PlaybackManagerImpl(
                     }
                 } else {
                     stopProgressTracker()
+                    activeScrobbleCoordinator.onPlaybackTick(
+                        exo.currentMediaItem?.let { _state.value.currentTrack },
+                        false,
+                        exo.currentPosition.coerceAtLeast(0L),
+                        exo.duration.coerceAtLeast(0L),
+                    )
                 }
             }
 
@@ -2608,14 +2625,22 @@ class PlaybackManagerImpl(
             while (isActive) {
                 val exo = player
                 if (exo != null) syncTrackStateWithPlayer(exo)
-                if (exo != null && exo.isPlaying) {
+                if (exo != null) {
                     val pos = exo.currentPosition.coerceAtLeast(0L)
                     val dur = exo.duration.coerceAtLeast(0L)
-                    val prog = if (dur > 0) (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f) else 0f
-                    _state.value = _state.value.copy(
-                        currentPositionMs = pos,
-                        durationMs = dur,
-                        progress = prog,
+                    if (exo.isPlaying) {
+                        val prog = if (dur > 0) (pos.toFloat() / dur.toFloat()).coerceIn(0f, 1f) else 0f
+                        _state.value = _state.value.copy(
+                            currentPositionMs = pos,
+                            durationMs = dur,
+                            progress = prog,
+                        )
+                    }
+                    activeScrobbleCoordinator.onPlaybackTick(
+                        exo.currentMediaItem?.let { _state.value.currentTrack },
+                        exo.isPlaying,
+                        pos,
+                        dur,
                     )
                 }
                 delay(200)

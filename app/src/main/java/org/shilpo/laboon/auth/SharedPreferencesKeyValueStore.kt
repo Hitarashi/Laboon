@@ -4,10 +4,13 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
 
-class SharedPreferencesKeyValueStore(context: Context) : KeyValueStore {
+class SharedPreferencesKeyValueStore(
+    context: Context,
+    prefsName: String = PREFS_NAME,
+) : KeyValueStore {
 
     private val prefs: SharedPreferences =
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        context.getSharedPreferences(prefsName, Context.MODE_PRIVATE)
 
     override fun getString(key: String): String? = prefs.getString(key, null)
 
