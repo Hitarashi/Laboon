@@ -391,7 +391,7 @@ private fun AboutHeroIdentityCard(
             }
 
             // Clean Version Badge (No debug, no code numbers, no Compose clutter)
-            val versionName = data?.versionName ?: "0.2.1"
+            val versionName = data?.versionName ?: "0.2.2"
             Surface(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
