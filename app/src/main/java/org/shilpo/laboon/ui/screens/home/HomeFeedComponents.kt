@@ -53,6 +53,8 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -204,6 +206,8 @@ internal fun HomeDailyMixPanel(
     onPlayTrack: (HomeTrack, List<HomeTrack>) -> Unit,
     onPlayNext: (HomeTrack) -> Unit,
     onAddToQueue: (HomeTrack) -> Unit,
+    onAddToPlaylist: (HomeTrack) -> Unit,
+    onOpenAlbumForTrack: ((HomeTrack) -> Unit)? = null,
     onDownloadTrack: (HomeTrack) -> Unit,
     onLoadTrackGenres: suspend (HomeTrack) -> List<String>,
     onOpenDailyMix: () -> Unit,
@@ -281,6 +285,13 @@ internal fun HomeDailyMixPanel(
             onAddToQueue = {
                 onAddToQueue(track)
                 selectedTrack = null
+            },
+            onAddToPlaylist = {
+                onAddToPlaylist(track)
+                selectedTrack = null
+            },
+            onOpenAlbum = onOpenAlbumForTrack?.let { openAlbum ->
+                { openAlbum(track); selectedTrack = null }
             },
             onLoadTrackGenres = onLoadTrackGenres,
             onDownload = {
@@ -424,14 +435,29 @@ internal fun HomeDailyMixTrackRow(
             Spacer(Modifier.width(4.dp))
         }
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = track.title,
-                style = MaterialTheme.typography.bodyLarge.copy(fontFamily = DailyMixRoundedSans),
-                fontWeight = FontWeight.SemiBold,
-                color = contentColor,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = track.title,
+                    style = MaterialTheme.typography.bodyLarge.copy(fontFamily = DailyMixRoundedSans),
+                    fontWeight = FontWeight.SemiBold,
+                    color = contentColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (track.isEffectiveFavorite(LocalTrackFavoriteActions.current)) {
+                    DailyMixSymbol(
+                        symbol = "favorite",
+                        iconSlot = "playback.favorite",
+                        filled = true,
+                        contentDescription = stringResource(R.string.home_daily_mix_remove_favorite),
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
+            }
             Spacer(Modifier.height(4.dp))
             Text(
                 text = track.artist,
@@ -476,12 +502,15 @@ internal fun HomeDailyMixSongOptionsSheet(
     onPlayNext: () -> Unit,
     onAddToQueue: () -> Unit,
     onAddToPlaylist: (() -> Unit)? = null,
+    onOpenAlbum: (() -> Unit)? = null,
+    onShare: (() -> Unit)? = null,
     onLoadTrackGenres: suspend (HomeTrack) -> List<String> = { emptyList() },
     onDownload: () -> Unit = {},
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val pagerState = rememberPagerState(pageCount = { 2 })
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val safeInsets = WindowInsets.safeDrawing.asPaddingValues()
     val maxPagerHeight = (
@@ -492,6 +521,33 @@ internal fun HomeDailyMixSongOptionsSheet(
         ).coerceAtLeast(280.dp)
     var trackGenres by remember(track.providerTrackId) {
         mutableStateOf<List<String>?>(null)
+    }
+    val favoriteActions = LocalTrackFavoriteActions.current
+    val hasFavoriteAction = favoriteActions?.enabled == true &&
+        !track.providerTrackId.isNullOrBlank()
+    val isFavFromActions = track.isEffectiveFavorite(favoriteActions)
+    var optimisticFavoriteState by remember(track.providerTrackId) { mutableStateOf<Boolean?>(null) }
+    val favoriteState = optimisticFavoriteState ?: isFavFromActions
+    var isSavingFavorite by remember(track.providerTrackId) { mutableStateOf(false) }
+    val favoriteSnackbarHostState = remember { SnackbarHostState() }
+
+    val onToggleFavorite: () -> Unit = {
+        val actions = favoriteActions
+        if (actions != null && !isSavingFavorite) {
+            val shouldBeFavorite = !favoriteState
+            optimisticFavoriteState = shouldBeFavorite
+            isSavingFavorite = true
+            scope.launch {
+                val succeeded = actions.setMembership(track, shouldBeFavorite)
+                if (!succeeded) {
+                    optimisticFavoriteState = !shouldBeFavorite
+                    favoriteSnackbarHostState.showSnackbar(
+                        context.getString(R.string.home_daily_mix_favorite_update_failed),
+                    )
+                }
+                isSavingFavorite = false
+            }
+        }
     }
 
     LaunchedEffect(track.providerTrackId) {
@@ -541,7 +597,12 @@ internal fun HomeDailyMixSongOptionsSheet(
                                 onPlayNext = onPlayNext,
                                 onAddToQueue = onAddToQueue,
                                 onAddToPlaylist = onAddToPlaylist,
+                                onOpenAlbum = onOpenAlbum,
+                                onShare = onShare ?: { shareAppleMusicTrack(context, track) },
                                 onDownload = onDownload,
+                                favoriteState = favoriteState,
+                                favoriteEnabled = hasFavoriteAction && !isSavingFavorite,
+                                onToggleFavorite = onToggleFavorite,
                             )
                             else -> HomeDailyMixInfoPage(track = track, genres = trackGenres)
                         }
@@ -582,6 +643,13 @@ internal fun HomeDailyMixSongOptionsSheet(
                     onClick = { scope.launch { pagerState.animateScrollToPage(1) } },
                 )
             }
+            SnackbarHost(
+                hostState = favoriteSnackbarHostState,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(start = 16.dp, end = 16.dp, bottom = 72.dp),
+            )
         }
     }
 }
@@ -593,9 +661,13 @@ private fun HomeDailyMixOptionsPage(
     onPlayNext: () -> Unit,
     onAddToQueue: () -> Unit,
     onAddToPlaylist: (() -> Unit)?,
+    onOpenAlbum: (() -> Unit)?,
+    onShare: () -> Unit,
     onDownload: () -> Unit,
+    favoriteState: Boolean?,
+    favoriteEnabled: Boolean,
+    onToggleFavorite: () -> Unit,
 ) {
-    val context = LocalContext.current
     LazyColumn(
         modifier = Modifier.fillMaxWidth(),
         contentPadding = PaddingValues(horizontal = 16.dp),
@@ -638,27 +710,41 @@ private fun HomeDailyMixOptionsPage(
                         MaterialTheme.colorScheme.onSurfaceVariant
                     },
                 )
+                val isFavorite = favoriteState == true
                 FilledIconButton(
                     modifier = Modifier.weight(0.25f).fillMaxHeight(),
-                    onClick = {},
-                    enabled = false,
+                    onClick = onToggleFavorite,
+                    enabled = favoriteEnabled,
                     shape = CircleShape,
                     colors = IconButtonDefaults.filledIconButtonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        containerColor = if (isFavorite) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                        contentColor = if (isFavorite) {
+                            MaterialTheme.colorScheme.onPrimary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
                     ),
                 ) {
                     DailyMixSymbol(
                         symbol = "favorite",
                         iconSlot = "playback.favorite",
-                        filled = false,
-                        contentDescription = stringResource(R.string.home_daily_mix_favorite_unavailable),
+                        filled = isFavorite,
+                        contentDescription = stringResource(
+                            if (isFavorite) R.string.home_daily_mix_remove_favorite
+                            else R.string.home_daily_mix_add_favorite,
+                        ),
                         modifier = Modifier.size(24.dp),
                     )
                 }
                 FilledTonalIconButton(
                     modifier = Modifier.weight(0.25f).fillMaxHeight(),
-                    onClick = { shareAppleMusicTrack(context, track) },
+                    onClick = onShare,
                     enabled = true,
                     shape = CircleShape,
                 ) {
@@ -729,7 +815,7 @@ private fun HomeDailyMixOptionsPage(
                         contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                     ),
                     shape = CircleShape,
-                    enabled = track.isPlayable && onAddToPlaylist != null,
+                    enabled = !track.providerTrackId.isNullOrBlank() && onAddToPlaylist != null,
                     onClick = { onAddToPlaylist?.invoke() },
                 ) {
                     DailyMixSymbol(symbol = "playlist_add", iconSlot = "playback.playlistAdd")
@@ -754,6 +840,22 @@ private fun HomeDailyMixOptionsPage(
                         stringResource(R.string.home_daily_mix_download_track),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.labelLarge.copy(fontFamily = DailyMixRoundedSans),
+                    )
+                }
+            }
+        }
+        if (onOpenAlbum != null && !track.providerTrackId.isNullOrBlank()) {
+            item {
+                FilledTonalButton(
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 66.dp),
+                    shape = CircleShape,
+                    onClick = onOpenAlbum,
+                ) {
+                    DailyMixSymbol(symbol = "album", iconSlot = "metadata.album")
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        stringResource(R.string.home_daily_mix_go_to_album),
                         style = MaterialTheme.typography.labelLarge.copy(fontFamily = DailyMixRoundedSans),
                     )
                 }

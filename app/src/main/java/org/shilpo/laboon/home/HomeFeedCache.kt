@@ -145,6 +145,31 @@ class HomeFeedCache(private val store: KeyValueStore) {
         saveCachedList(KEY_LIBRARY_PLAYLISTS_CACHE, encodePlaylists(playlists))
     }
 
+    fun loadLibraryCategoryOrder(): List<String>? {
+        val raw = store.getString(KEY_LIBRARY_CATEGORY_ORDER_PREFERENCE) ?: return null
+        return runCatching {
+            val array = JSONArray(raw)
+            buildList {
+                for (index in 0 until array.length()) {
+                    array.optString(index).takeIf(String::isNotBlank)?.let(::add)
+                }
+            }
+        }.getOrNull()
+    }
+
+    fun saveLibraryCategoryOrder(categoryIds: List<String>) {
+        runCatching {
+            store.putString(
+                KEY_LIBRARY_CATEGORY_ORDER_PREFERENCE,
+                JSONArray(categoryIds).toString(),
+            )
+        }
+    }
+
+    fun resetLibraryCategoryOrder() {
+        store.remove(KEY_LIBRARY_CATEGORY_ORDER_PREFERENCE)
+    }
+
     fun loadLibraryPlaylistTracks(playlistId: String): List<HomeTrack>? {
         val raw = store.getString(KEY_LIBRARY_PLAYLIST_TRACKS_CACHE) ?: return null
         return runCatching {
@@ -416,6 +441,7 @@ class HomeFeedCache(private val store: KeyValueStore) {
         const val KEY_LIBRARY_ARTISTS_CACHE = "library_artists_cache_v1"
         const val KEY_LIBRARY_PLAYLISTS_CACHE = "library_playlists_cache_v2"
         const val KEY_LIBRARY_PLAYLIST_TRACKS_CACHE = "library_playlist_tracks_cache_v2"
+        const val KEY_LIBRARY_CATEGORY_ORDER_PREFERENCE = "library_category_order_v1"
         const val TRACK_MAPPING_VERSION = 2
 
         val LIBRARY_CACHE_KEYS = listOf(

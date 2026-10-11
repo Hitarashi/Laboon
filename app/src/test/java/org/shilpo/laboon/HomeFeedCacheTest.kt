@@ -193,6 +193,22 @@ class HomeFeedCacheTest {
     }
 
     @Test
+    fun libraryCategoryOrderPersistsAcrossCacheClearsAndCanReset() {
+        val store = FakeKeyValueStore()
+        val cache = HomeFeedCache(store)
+        val categoryOrder = listOf("recent", "songs", "loved", "albums", "artists", "playlists")
+
+        cache.saveLibraryCategoryOrder(categoryOrder)
+        assertEquals(categoryOrder, HomeFeedCache(store).loadLibraryCategoryOrder())
+
+        cache.clear()
+        assertEquals(categoryOrder, HomeFeedCache(store).loadLibraryCategoryOrder())
+
+        cache.resetLibraryCategoryOrder()
+        assertNull(HomeFeedCache(store).loadLibraryCategoryOrder())
+    }
+
+    @Test
     fun testClearRemovesData() {
         val store = FakeKeyValueStore()
         val cache = HomeFeedCache(store)

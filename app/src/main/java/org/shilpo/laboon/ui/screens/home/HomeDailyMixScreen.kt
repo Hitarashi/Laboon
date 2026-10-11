@@ -55,6 +55,8 @@ internal fun HomeDailyMixScreen(
     onShuffle: (List<HomeTrack>) -> Unit,
     onPlayNext: (HomeTrack) -> Unit,
     onAddToQueue: (HomeTrack) -> Unit,
+    onAddToPlaylist: (HomeTrack) -> Unit,
+    onOpenAlbumForTrack: ((HomeTrack) -> Unit)? = null,
     onLoadTrackGenres: suspend (HomeTrack) -> List<String>,
     onDownloadTrack: (HomeTrack) -> Unit,
 ) {
@@ -169,6 +171,13 @@ internal fun HomeDailyMixScreen(
             onAddToQueue = {
                 onAddToQueue(track)
                 selectedTrack = null
+            },
+            onAddToPlaylist = {
+                onAddToPlaylist(track)
+                selectedTrack = null
+            },
+            onOpenAlbum = onOpenAlbumForTrack?.let { openAlbum ->
+                { openAlbum(track); selectedTrack = null }
             },
             onLoadTrackGenres = onLoadTrackGenres,
             onDownload = {

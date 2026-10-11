@@ -29,6 +29,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -62,6 +64,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -80,8 +83,12 @@ import androidx.compose.material3.MediumExtendedFloatingActionButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SheetValue
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -118,6 +125,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.PlatformTextStyle
@@ -161,6 +169,8 @@ import org.shilpo.laboon.ui.design.UserAvatar
 import org.shilpo.laboon.ui.design.theme.RoundedSans
 import org.shilpo.laboon.ui.screens.home.HomeDailyMixSongOptionsSheet
 import org.shilpo.laboon.ui.screens.home.HomeDailyMixTrackRow
+import org.shilpo.laboon.ui.screens.home.LocalTrackFavoriteActions
+import org.shilpo.laboon.ui.screens.home.isEffectiveFavorite
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 
@@ -197,6 +207,15 @@ private val InitialLibraryCategories = listOf(
     LibraryCategory("loved", R.string.library_category_loved, "favorite"),
 )
 
+private fun restoreLibraryCategories(savedCategoryIds: List<String>?): List<LibraryCategory> {
+    if (savedCategoryIds.isNullOrEmpty()) return InitialLibraryCategories
+
+    val categoriesById = InitialLibraryCategories.associateBy(LibraryCategory::id)
+    val restoredCategories = savedCategoryIds.distinct().mapNotNull(categoriesById::get)
+    val restoredIds = restoredCategories.mapTo(mutableSetOf(), LibraryCategory::id)
+    return restoredCategories + InitialLibraryCategories.filterNot { it.id in restoredIds }
+}
+
 private val LibraryCategoryTitleStyle = TextStyle(
     fontFamily = RoundedSans,
     fontWeight = FontWeight.ExtraBold,
@@ -211,11 +230,17 @@ private val LibraryCategoryTitleStyle = TextStyle(
 )
 
 private val LibraryHeaderSplitButtonHeight = 52.dp
+private const val MaxCustomPlaylistCount = 7
 
 private enum class LibrarySort(val label: Int) {
     RECENT(R.string.library_sort_recent),
     TITLE(R.string.library_sort_title),
     ARTIST(R.string.library_sort_artist),
+}
+
+private enum class PlaylistMergeDestinationMode {
+    NewPlaylist,
+    ExistingPlaylist,
 }
 
 private val LibrarySortSheetOptions = LibrarySort.entries.map { option ->
@@ -275,14 +300,20 @@ fun LibraryScreen(
     onAddToQueueTrack: (HomeTrack) -> Unit = {},
     onLoadTrackGenres: suspend (HomeTrack) -> List<String> = { emptyList() },
     onOpenAlbum: (HomeAlbum) -> Unit = {},
+    onOpenAlbumForTrack: ((HomeTrack) -> Unit)? = null,
     onOpenArtist: (HomeArtist) -> Unit = {},
     onShuffleAlbum: (HomeAlbum) -> Unit = {},
     onShuffleArtist: (HomeArtist) -> Unit = {},
     onPlaylistDetailVisibilityChanged: (Boolean) -> Unit = {},
     requestedTrackToAddToPlaylist: HomeTrack? = null,
     onPlaylistAddRequestHandled: () -> Unit = {},
+    onPlaylistPickerFinished: () -> Unit = {},
 ) {
-    var categories by remember { mutableStateOf(InitialLibraryCategories) }
+    var categories by remember(librarySongsCache) {
+        mutableStateOf(
+            restoreLibraryCategories(librarySongsCache.loadLibraryCategoryOrder()),
+        )
+    }
     val pagerState = rememberPagerState(pageCount = { categories.size })
     val scope = rememberCoroutineScope()
     var showTabSwitcher by rememberSaveable { mutableStateOf(false) }
@@ -354,10 +385,23 @@ fun LibraryScreen(
     var playlistsToDelete by remember { mutableStateOf<List<SavedPlaylist>?>(null) }
     var isDeletingPlaylist by remember { mutableStateOf(false) }
     var showPlaylistSelectionOptions by remember { mutableStateOf(false) }
+    var showPlaylistMergeSheet by rememberSaveable { mutableStateOf(false) }
+    var playlistMergeDestinationMode by rememberSaveable {
+        mutableStateOf(PlaylistMergeDestinationMode.NewPlaylist)
+    }
+    var playlistMergeName by rememberSaveable { mutableStateOf("") }
+    var playlistMergeDestinationId by rememberSaveable { mutableStateOf<String?>(null) }
+    var isMergingPlaylists by remember { mutableStateOf(false) }
     var trackToAddToPlaylist by remember { mutableStateOf<HomeTrack?>(null) }
     var selectedTrackForOptions by remember { mutableStateOf<HomeTrack?>(null) }
     var selectedTrackOptionsQueue by remember { mutableStateOf<List<HomeTrack>>(emptyList()) }
     val snackbarHostState = remember { SnackbarHostState() }
+
+    fun finishPlaylistPicker() {
+        showPlaylistPicker = false
+        trackToAddToPlaylist = null
+        onPlaylistPickerFinished()
+    }
 
     LaunchedEffect(requestedTrackToAddToPlaylist?.id) {
         val track = requestedTrackToAddToPlaylist ?: return@LaunchedEffect
@@ -392,6 +436,13 @@ fun LibraryScreen(
     val selectedPlaylists = remember(allPlaylists, selectedPlaylistIds) {
         selectedPlaylistIds.mapNotNull { id -> allPlaylists.firstOrNull { it.id == id } }
     }
+    val mergeSourcePlaylists = remember(selectedPlaylists) {
+        selectedPlaylists.filterNot(SavedPlaylist::isFavorites)
+    }
+    val mergeDestinationPlaylists = remember(allPlaylists) {
+        allPlaylists.filterNot(SavedPlaylist::isFavorites)
+    }
+    val canCreateMergedPlaylist = mergeDestinationPlaylists.size < MaxCustomPlaylistCount
     val isPlaylistSelectionMode = activeCategory.id == "playlists" &&
         activePlaylist == null && selectedPlaylists.isNotEmpty()
     val hapticFeedback = LocalHapticFeedback.current
@@ -503,7 +554,7 @@ fun LibraryScreen(
         val categoryId = activeCategory.id
         if (categoryId != "playlists") selectedPlaylist = null
         val previous = pageStates[categoryId]
-        val isExplicitRefresh = refreshCategoryOnRequest == categoryId
+        val isExplicitRefresh = refreshCategoryOnRequest == categoryId || categoryId == "loved"
         if (previous == null) {
             pageStates = pageStates + (categoryId to LibraryPageState(isLoading = true))
         } else if (isExplicitRefresh) {
@@ -786,10 +837,19 @@ fun LibraryScreen(
                             } else {
                                 category.id
                             }
-                            val items = if (isShowingPlaylistDetail) {
+                            val rawItems = if (isShowingPlaylistDetail) {
                                 playlistDetailState.items
                             } else {
                                 pageState.items
+                            }
+                            val favoriteActions = LocalTrackFavoriteActions.current
+                            val items = if (category.id == "loved" && !isShowingPlaylistDetail && favoriteActions != null && favoriteActions.favoriteTrackIds.isNotEmpty()) {
+                                rawItems.filter { entry ->
+                                    val track = entry.track ?: return@filter true
+                                    track.isEffectiveFavorite(favoriteActions)
+                                }
+                            } else {
+                                rawItems
                             }
                             LibraryCategoryPage(
                                 items = items,
@@ -939,6 +999,7 @@ fun LibraryScreen(
             onReorder = { reordered ->
                 val selectedId = categories.getOrNull(pagerState.currentPage)?.id
                 categories = reordered
+                librarySongsCache.saveLibraryCategoryOrder(reordered.map(LibraryCategory::id))
                 val selectedAfterMove = reordered.indexOfFirst { it.id == selectedId }
                 if (selectedAfterMove >= 0) {
                     scope.launch { pagerState.scrollToPage(selectedAfterMove) }
@@ -947,6 +1008,7 @@ fun LibraryScreen(
             onReset = {
                 val selectedId = categories.getOrNull(pagerState.currentPage)?.id
                 categories = InitialLibraryCategories
+                librarySongsCache.resetLibraryCategoryOrder()
                 val selectedAfterReset = categories.indexOfFirst { it.id == selectedId }
                 if (selectedAfterReset >= 0) {
                     scope.launch { pagerState.scrollToPage(selectedAfterReset) }
@@ -1080,6 +1142,98 @@ fun LibraryScreen(
                 showPlaylistSelectionOptions = false
                 playlistsToDelete = selectedPlaylists
             },
+            onMerge = {
+                showPlaylistSelectionOptions = false
+                playlistMergeDestinationMode = if (canCreateMergedPlaylist) {
+                    PlaylistMergeDestinationMode.NewPlaylist
+                } else {
+                    PlaylistMergeDestinationMode.ExistingPlaylist
+                }
+                playlistMergeName = ""
+                playlistMergeDestinationId = null
+                showPlaylistMergeSheet = true
+            },
+        )
+    }
+
+    if (showPlaylistMergeSheet && mergeSourcePlaylists.size >= 2) {
+        PlaylistMergeDestinationSheet(
+            sourcePlaylists = mergeSourcePlaylists,
+            destinationPlaylists = mergeDestinationPlaylists,
+            canCreateNewPlaylist = canCreateMergedPlaylist,
+            destinationMode = playlistMergeDestinationMode,
+            playlistName = playlistMergeName,
+            destinationPlaylistId = playlistMergeDestinationId,
+            isMerging = isMergingPlaylists,
+            onDestinationModeChange = { playlistMergeDestinationMode = it },
+            onPlaylistNameChange = { playlistMergeName = it },
+            onDestinationPlaylistSelected = { playlistMergeDestinationId = it },
+            onDismiss = { showPlaylistMergeSheet = false },
+            onMerge = {
+                if (isMergingPlaylists) return@PlaylistMergeDestinationSheet
+                val sourceSnapshot = mergeSourcePlaylists.toList()
+                val destinationId = playlistMergeDestinationId.takeIf {
+                    playlistMergeDestinationMode == PlaylistMergeDestinationMode.ExistingPlaylist
+                }
+                val newName = playlistMergeName.trim().takeIf {
+                    playlistMergeDestinationMode == PlaylistMergeDestinationMode.NewPlaylist
+                }
+                if (destinationId == null && newName.isNullOrBlank()) {
+                    return@PlaylistMergeDestinationSheet
+                }
+
+                isMergingPlaylists = true
+                scope.launch {
+                    val mergedDetail = try {
+                        repository.mergeUserPlaylists(
+                            sourcePlaylistIds = sourceSnapshot.map(SavedPlaylist::id),
+                            destinationPlaylistId = destinationId,
+                            newPlaylistName = newName,
+                        )
+                    } catch (cancelled: CancellationException) {
+                        isMergingPlaylists = false
+                        throw cancelled
+                    } catch (_: Exception) {
+                        null
+                    }
+                    isMergingPlaylists = false
+                    if (mergedDetail == null) {
+                        snackbarHostState.showSnackbar(
+                            context.getString(R.string.library_playlist_merge_failed),
+                        )
+                        return@launch
+                    }
+
+                    val destinationArtwork = mergeDestinationPlaylists
+                        .firstOrNull { it.id == mergedDetail.playlist.id }
+                        ?.previewArtworkByTrackId
+                        .orEmpty()
+                    val mergedArtwork = buildMap {
+                        putAll(destinationArtwork)
+                        sourceSnapshot.forEach { putAll(it.previewArtworkByTrackId) }
+                    }.filterKeys(mergedDetail.playlist.previewTrackIds::contains)
+                    val mergedPlaylist = mergedDetail.playlist.copy(
+                        previewArtworkByTrackId = mergedArtwork,
+                    )
+                    val currentPlaylists = pageStates["playlists"]?.items.orEmpty()
+                        .mapNotNull(LibraryEntry::playlist)
+                    selectedPlaylistIds = emptyList()
+                    updatePlaylistCollection(
+                        listOf(mergedPlaylist) + currentPlaylists.filterNot {
+                            it.id == mergedPlaylist.id
+                        },
+                    )
+                    showPlaylistMergeSheet = false
+                    playlistMergeName = ""
+                    playlistMergeDestinationId = null
+                    snackbarHostState.showSnackbar(
+                        context.getString(
+                            R.string.library_playlist_merge_success,
+                            mergedPlaylist.name,
+                        ),
+                    )
+                }
+            },
         )
     }
 
@@ -1182,8 +1336,7 @@ fun LibraryScreen(
                                     showCreatePlaylist = false
                                     createPlaylistForTrack = false
                                     if (addTrackOnCreate && addedTrack != null) {
-                                        showPlaylistPicker = false
-                                        trackToAddToPlaylist = null
+                                        finishPlaylistPicker()
                                         snackbarHostState.showSnackbar(
                                             context.getString(
                                                 R.string.library_playlist_created_with_track,
@@ -1369,17 +1522,13 @@ fun LibraryScreen(
             canSave = hasLoadedPlaylistMembership &&
                 trackToAddToPlaylist?.providerTrackId?.isNotBlank() == true,
             canManagePlaylists = repository.canManageUserPlaylists(),
-            onDismiss = {
-                showPlaylistPicker = false
-                trackToAddToPlaylist = null
-            },
+            onDismiss = ::finishPlaylistPicker,
             onCreatePlaylist = {
                 createPlaylistForTrack = true
                 showCreatePlaylist = true
             },
             onOpenSettings = {
-                showPlaylistPicker = false
-                trackToAddToPlaylist = null
+                finishPlaylistPicker()
                 onOpenSettings()
             },
             onSetPlaylistSelected = { playlistId, selected ->
@@ -1398,8 +1547,7 @@ fun LibraryScreen(
                         (id in playlistMembershipIds) != (id in desiredMembership)
                     }
                     if (changedIds.isEmpty()) {
-                        showPlaylistPicker = false
-                        trackToAddToPlaylist = null
+                        finishPlaylistPicker()
                         scope.launch {
                             snackbarHostState.showSnackbar(
                                 context.getString(R.string.library_playlist_picker_saved),
@@ -1477,8 +1625,7 @@ fun LibraryScreen(
 
                             isSavingPlaylistMembership = false
                             if (failedIds.isEmpty()) {
-                                showPlaylistPicker = false
-                                trackToAddToPlaylist = null
+                                finishPlaylistPicker()
                                 snackbarHostState.showSnackbar(
                                     context.getString(R.string.library_playlist_picker_saved),
                                 )
@@ -1548,6 +1695,13 @@ fun LibraryScreen(
                 selectedTrackForOptions = null
                 selectedTrackOptionsQueue = emptyList()
                 showPlaylistPicker = true
+            },
+            onOpenAlbum = onOpenAlbumForTrack?.let { openAlbum ->
+                {
+                    openAlbum(track)
+                    selectedTrackForOptions = null
+                    selectedTrackOptionsQueue = emptyList()
+                }
             },
             onLoadTrackGenres = onLoadTrackGenres,
         )
@@ -2373,6 +2527,7 @@ private fun LibraryCategoryPage(
             } else if (isLovedTab) {
                 LibraryLovedEmptyState(
                     bottomPadding = emptyStateBottomPadding + 24.dp,
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
                 )
             } else {
                 Column(
@@ -2845,6 +3000,7 @@ private fun PlaylistSelectionOptionsSheet(
     playlists: List<SavedPlaylist>,
     onDismiss: () -> Unit,
     onDelete: () -> Unit,
+    onMerge: () -> Unit,
 ) {
     val sheetState = rememberBottomSheetState(
         initialValue = SheetValue.Hidden,
@@ -2952,7 +3108,7 @@ private fun PlaylistSelectionOptionsSheet(
                         Spacer(Modifier.width(8.dp))
                         Text(stringResource(R.string.library_playlist_delete))
                     }
-                    UnsupportedPlaylistAction(
+                    PlaylistSelectionActionButton(
                         label = R.string.library_playlist_export,
                         icon = "download",
                         modifier = Modifier.weight(1f),
@@ -2962,12 +3118,14 @@ private fun PlaylistSelectionOptionsSheet(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    UnsupportedPlaylistAction(
+                    PlaylistSelectionActionButton(
                         label = R.string.library_playlist_merge,
                         icon = "merge",
                         modifier = Modifier.weight(1f),
+                        enabled = playlists.count { !it.isFavorites } >= 2,
+                        onClick = onMerge,
                     )
-                    UnsupportedPlaylistAction(
+                    PlaylistSelectionActionButton(
                         label = R.string.library_playlist_share,
                         icon = "share",
                         modifier = Modifier.weight(1f),
@@ -2979,14 +3137,16 @@ private fun PlaylistSelectionOptionsSheet(
 }
 
 @Composable
-private fun UnsupportedPlaylistAction(
+private fun PlaylistSelectionActionButton(
     label: Int,
     icon: String,
     modifier: Modifier = Modifier,
+    enabled: Boolean = false,
+    onClick: () -> Unit = {},
 ) {
     FilledTonalButton(
-        onClick = {},
-        enabled = false,
+        onClick = onClick,
+        enabled = enabled,
         modifier = modifier.heightIn(min = 66.dp),
         shape = CircleShape,
     ) {
@@ -2997,6 +3157,235 @@ private fun UnsupportedPlaylistAction(
         )
         Spacer(Modifier.width(8.dp))
         Text(stringResource(label))
+    }
+}
+
+@Composable
+private fun PlaylistMergeDestinationSheet(
+    sourcePlaylists: List<SavedPlaylist>,
+    destinationPlaylists: List<SavedPlaylist>,
+    canCreateNewPlaylist: Boolean,
+    destinationMode: PlaylistMergeDestinationMode,
+    playlistName: String,
+    destinationPlaylistId: String?,
+    isMerging: Boolean,
+    onDestinationModeChange: (PlaylistMergeDestinationMode) -> Unit,
+    onPlaylistNameChange: (String) -> Unit,
+    onDestinationPlaylistSelected: (String) -> Unit,
+    onDismiss: () -> Unit,
+    onMerge: () -> Unit,
+) {
+    val sheetState = rememberBottomSheetState(
+        initialValue = SheetValue.Hidden,
+        enabledValues = setOf(SheetValue.Hidden, SheetValue.Expanded),
+    )
+    val canMerge = when (destinationMode) {
+        PlaylistMergeDestinationMode.NewPlaylist -> canCreateNewPlaylist && playlistName.isNotBlank()
+        PlaylistMergeDestinationMode.ExistingPlaylist -> destinationPlaylistId != null
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Icon(
+                    painter = materialSymbolPainterResource("merge"),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(30.dp),
+                )
+                Column {
+                    Text(
+                        text = stringResource(R.string.library_playlist_merge_title),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = RoundedSans,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = stringResource(
+                            R.string.library_playlist_merge_selected_count,
+                            sourcePlaylists.size,
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontFamily = RoundedSans,
+                    )
+                }
+            }
+
+            SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                SegmentedButton(
+                    selected = destinationMode == PlaylistMergeDestinationMode.NewPlaylist,
+                    onClick = { onDestinationModeChange(PlaylistMergeDestinationMode.NewPlaylist) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                    label = { Text(stringResource(R.string.library_playlist_merge_new)) },
+                    enabled = canCreateNewPlaylist,
+                )
+                SegmentedButton(
+                    selected = destinationMode == PlaylistMergeDestinationMode.ExistingPlaylist,
+                    onClick = { onDestinationModeChange(PlaylistMergeDestinationMode.ExistingPlaylist) },
+                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                    label = { Text(stringResource(R.string.library_playlist_merge_existing)) },
+                )
+            }
+
+            if (!canCreateNewPlaylist) {
+                Text(
+                    text = stringResource(R.string.library_playlist_merge_limit),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            when (destinationMode) {
+                PlaylistMergeDestinationMode.NewPlaylist -> {
+                    OutlinedTextField(
+                        value = playlistName,
+                        onValueChange = { value ->
+                            if (value.length <= 80) onPlaylistNameChange(value)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text(stringResource(R.string.library_playlist_name)) },
+                        singleLine = true,
+                        enabled = !isMerging,
+                    )
+                }
+                PlaylistMergeDestinationMode.ExistingPlaylist -> {
+                    if (destinationPlaylists.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.library_playlist_none_available),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.heightIn(max = 280.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            itemsIndexed(
+                                items = destinationPlaylists,
+                                key = { _, playlist -> playlist.id },
+                            ) { index, playlist ->
+                                PlaylistMergeDestinationRow(
+                                    playlist = playlist,
+                                    index = index,
+                                    selected = playlist.id == destinationPlaylistId,
+                                    enabled = !isMerging,
+                                    onClick = { onDestinationPlaylistSelected(playlist.id) },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text(
+                text = stringResource(
+                    if (destinationMode == PlaylistMergeDestinationMode.ExistingPlaylist) {
+                        R.string.library_playlist_merge_existing_hint
+                    } else {
+                        R.string.library_playlist_merge_new_hint
+                    },
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            FilledTonalButton(
+                onClick = onMerge,
+                enabled = canMerge && !isMerging,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                shape = CircleShape,
+            ) {
+                if (isMerging) {
+                    ContainedLoadingIndicator(modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(10.dp))
+                } else {
+                    Icon(
+                        painter = materialSymbolPainterResource("merge"),
+                        contentDescription = null,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(
+                    stringResource(
+                        if (destinationMode == PlaylistMergeDestinationMode.NewPlaylist) {
+                            R.string.library_playlist_merge_create
+                        } else {
+                            R.string.library_playlist_merge_into
+                        },
+                    ),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlaylistMergeDestinationRow(
+    playlist: SavedPlaylist,
+    index: Int,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.large)
+            .background(
+                if (selected) {
+                    MaterialTheme.colorScheme.secondaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceContainerHigh
+                },
+            )
+            .selectable(
+                selected = selected,
+                enabled = enabled,
+                role = Role.RadioButton,
+                onClick = onClick,
+            )
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        LibraryArtwork(
+            item = playlist.toLibraryEntry(),
+            index = index,
+            size = 48.dp,
+            shape = MaterialTheme.shapes.small,
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = playlist.name,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = stringResource(R.string.library_playlist_picker_track_count, playlist.trackCount),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        RadioButton(selected = selected, onClick = null, enabled = enabled)
     }
 }
 

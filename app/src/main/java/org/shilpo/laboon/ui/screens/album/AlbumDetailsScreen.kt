@@ -39,8 +39,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
@@ -89,6 +87,7 @@ import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import org.shilpo.laboon.R
+import org.shilpo.laboon.theme.renderer.materialSymbolPainterResource
 import org.shilpo.laboon.home.AlbumDetailsResult
 import org.shilpo.laboon.home.HomeTrack
 import org.shilpo.laboon.lyricsporn.LyricspornAlbum
@@ -97,6 +96,9 @@ import org.shilpo.laboon.ui.design.CodecIcon
 import org.shilpo.laboon.ui.design.TrackCodecBadges
 import org.shilpo.laboon.ui.design.getTrackQualityCodecs
 import org.shilpo.laboon.ui.design.painterResource
+import org.shilpo.laboon.ui.screens.home.HomeDailyMixSongOptionsSheet
+import org.shilpo.laboon.ui.screens.home.LocalTrackFavoriteActions
+import org.shilpo.laboon.ui.screens.home.isEffectiveFavorite
 import java.net.URI
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -121,6 +123,7 @@ fun AlbumDetailsScreen(
     onStartPlayback: (HomeTrack, List<HomeTrack>) -> Unit,
     onPlayNext: (HomeTrack) -> Unit,
     onAddToQueue: (HomeTrack) -> Unit,
+    onAddToPlaylist: (HomeTrack) -> Unit,
     onDownloadTrack: (HomeTrack) -> Unit,
     isDownloadPending: (HomeTrack) -> Boolean,
     onOpenAlbumVersion: (String) -> Unit,
@@ -131,6 +134,7 @@ fun AlbumDetailsScreen(
     onRefresh: () -> Unit = {},
     currentTrackId: String? = null,
     isPlaying: Boolean = false,
+    onLoadTrackGenres: suspend (HomeTrack) -> List<String> = { emptyList() },
 ) {
     val album = (state as? AlbumDetailsUiState.Loaded)?.album
     val context = LocalContext.current
@@ -242,6 +246,7 @@ fun AlbumDetailsScreen(
                         onStartPlayback = onStartPlayback,
                         onPlayNext = onPlayNext,
                         onAddToQueue = onAddToQueue,
+                        onAddToPlaylist = onAddToPlaylist,
                         onDownloadTrack = onDownloadTrack,
                         isDownloadPending = isDownloadPending,
                         onOpenAlbumVersion = onOpenAlbumVersion,
@@ -249,6 +254,7 @@ fun AlbumDetailsScreen(
                         onOpenRecordLabel = onOpenRecordLabel,
                         currentTrackId = currentTrackId,
                         isPlaying = isPlaying,
+                        onLoadTrackGenres = onLoadTrackGenres,
                         modifier = Modifier.align(Alignment.TopCenter),
                     )
                 }
@@ -314,6 +320,7 @@ private fun AlbumContent(
     onStartPlayback: (HomeTrack, List<HomeTrack>) -> Unit,
     onPlayNext: (HomeTrack) -> Unit,
     onAddToQueue: (HomeTrack) -> Unit,
+    onAddToPlaylist: (HomeTrack) -> Unit,
     onDownloadTrack: (HomeTrack) -> Unit,
     isDownloadPending: (HomeTrack) -> Boolean,
     onOpenAlbumVersion: (String) -> Unit,
@@ -321,6 +328,7 @@ private fun AlbumContent(
     onOpenRecordLabel: (String, String?) -> Unit,
     currentTrackId: String?,
     isPlaying: Boolean,
+    onLoadTrackGenres: suspend (HomeTrack) -> List<String>,
     modifier: Modifier = Modifier,
 ) {
     val availableTracks = remember(tracks) { tracks.filter(HomeTrack::isPlayable) }
@@ -421,6 +429,8 @@ private fun AlbumContent(
                             },
                             onPlayNext = { onPlayNext(track) },
                             onAddToQueue = { onAddToQueue(track) },
+                            onAddToPlaylist = { onAddToPlaylist(track) },
+                            onLoadTrackGenres = onLoadTrackGenres,
                             onDownload = { onDownloadTrack(track) },
                         )
                     }
@@ -770,9 +780,11 @@ private fun AlbumTrackRow(
     onClick: () -> Unit,
     onPlayNext: () -> Unit,
     onAddToQueue: () -> Unit,
+    onAddToPlaylist: () -> Unit,
+    onLoadTrackGenres: suspend (HomeTrack) -> List<String>,
     onDownload: () -> Unit,
 ) {
-    var menuExpanded by remember(track.id) { mutableStateOf(false) }
+    var optionsSheetOpen by remember(track.id) { mutableStateOf(false) }
     val context = LocalContext.current
     val rowHeightModifier = if (LocalDensity.current.fontScale <= 1f) {
         Modifier.heightIn(max = 64.dp)
@@ -810,16 +822,24 @@ private fun AlbumTrackRow(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 Text(
                     text = track.title,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f, fill = false),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (track.isEffectiveFavorite(LocalTrackFavoriteActions.current)) {
+                    Icon(
+                        painter = materialSymbolPainterResource("favorite", filled = true),
+                        contentDescription = "Favorite",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
                 if (track.contentRating.equals("explicit", ignoreCase = true)) {
                     Surface(
                         shape = MaterialTheme.shapes.extraSmall,
@@ -887,61 +907,35 @@ private fun AlbumTrackRow(
                         )
                     }
                 }
-                Box {
-                    IconButton(onClick = { menuExpanded = true }) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_more_vert),
-                            contentDescription = "Actions for ${track.title}",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    DropdownMenu(
-                        expanded = menuExpanded,
-                        onDismissRequest = { menuExpanded = false },
-                    ) {
-                        if (shareUrl != null) {
-                            DropdownMenuItem(
-                                text = { Text("Share song") },
-                                leadingIcon = {
-                                    Icon(
-                                        painter = painterResource(R.drawable.ic_share_album),
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier.size(20.dp),
-                                    )
-                                },
-                                onClick = {
-                                    menuExpanded = false
-                                    shareAppleMusicLink(
-                                        context = context,
-                                        title = track.title,
-                                        url = shareUrl,
-                                        chooserTitle = "Share song",
-                                    )
-                                },
-                            )
-                        }
-                        DropdownMenuItem(
-                            text = { Text("Play next") },
-                            enabled = track.isPlayable,
-                            onClick = {
-                                menuExpanded = false
-                                onPlayNext()
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Add to queue") },
-                            enabled = track.isPlayable,
-                            onClick = {
-                                menuExpanded = false
-                                onAddToQueue()
-                            },
-                        )
-                    }
+                IconButton(onClick = { optionsSheetOpen = true }) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_more_vert),
+                        contentDescription = "Actions for ${track.title}",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         },
     )
+
+    if (optionsSheetOpen) {
+        HomeDailyMixSongOptionsSheet(
+            track = track,
+            onDismiss = { optionsSheetOpen = false },
+            onPlay = { optionsSheetOpen = false; onClick() },
+            onPlayNext = { optionsSheetOpen = false; onPlayNext() },
+            onAddToQueue = { optionsSheetOpen = false; onAddToQueue() },
+            onAddToPlaylist = { optionsSheetOpen = false; onAddToPlaylist() },
+            onShare = shareUrl?.let { url ->
+                {
+                    optionsSheetOpen = false
+                    shareAppleMusicLink(context, track.title, url, "Share song")
+                }
+            },
+            onLoadTrackGenres = onLoadTrackGenres,
+            onDownload = { optionsSheetOpen = false; onDownload() },
+        )
+    }
 }
 
 @Composable

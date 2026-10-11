@@ -138,6 +138,8 @@ import org.shilpo.laboon.ui.screens.player.lyrics.usesSynchronizedLyrics
 import org.shilpo.laboon.ui.screens.player.queue.QueueScreen
 import org.shilpo.laboon.playback.PlaybackManagerHolder
 import org.shilpo.laboon.ui.screens.home.HomeDailyMixSongOptionsSheet
+import org.shilpo.laboon.ui.screens.home.LocalTrackFavoriteActions
+import org.shilpo.laboon.ui.screens.home.isEffectiveFavorite
 import org.shilpo.laboon.ui.design.theme.RoundedSans
 import org.shilpo.laboon.ui.design.MiniPlayerHeight
 import org.shilpo.laboon.ui.design.NavigationBarMaxWidth
@@ -209,6 +211,7 @@ internal fun StockPlayerSheet(
     collapsedBottomChromeClearance: Dp,
     navigationBarHiddenProgress: Float,
     onDownloadTrack: ((HomeTrack) -> Unit)? = null,
+    onAddToPlaylist: ((HomeTrack) -> Unit)? = null,
     onLoadTrackGenres: (suspend (HomeTrack) -> List<String>)? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -675,6 +678,7 @@ internal fun StockPlayerSheet(
                             onPromote = onPromote,
                             onClear = onClear,
                             onRetry = onRetry,
+                            onAddToPlaylist = onAddToPlaylist,
                             isDiscovering = isDiscovering,
                             discoveryStatus = discoveryStatus,
                             expansionProgress = expansionProgress,
@@ -761,6 +765,7 @@ internal fun StockPlayerSheet(
                                     onPromote = onPromote,
                                     onClear = onClear,
                                     onRetry = onRetry,
+                                    onAddToPlaylist = onAddToPlaylist,
                                     isDiscovering = isDiscovering,
                                     discoveryStatus = discoveryStatus,
                                     expansionProgress = expansionProgress,
@@ -912,6 +917,18 @@ internal fun StockPlayerSheet(
             onAddToQueue = {
                 PlaybackManagerHolder.getInstanceOrNull()?.addToQueue(optTrack)
                 trackForOptions = null
+            },
+            onAddToPlaylist = onAddToPlaylist?.let { addTrack ->
+                {
+                    addTrack(optTrack)
+                    trackForOptions = null
+                }
+            },
+            onOpenAlbum = onAlbum?.let { openAlbum ->
+                {
+                    scope.launch { openAlbum(optTrack) }
+                    trackForOptions = null
+                }
             },
             onLoadTrackGenres = { opt ->
                 onLoadTrackGenres?.invoke(opt) ?: emptyList()
@@ -1401,6 +1418,7 @@ private fun ExpandedPlayerContent(
     onPromote: ((Long) -> Unit)?,
     onClear: (() -> Unit)?,
     onRetry: (() -> Unit)?,
+    onAddToPlaylist: ((HomeTrack) -> Unit)?,
     isDiscovering: Boolean,
     discoveryStatus: DiscoveryStatus,
     expansionProgress: Float,
@@ -1475,9 +1493,11 @@ private fun ExpandedPlayerContent(
                 onPromote = onPromote,
                 onClear = onClear,
                 onRetry = onRetry,
+                onAlbum = onAlbum,
                 isDiscovering = isDiscovering,
                 discoveryStatus = discoveryStatus,
                 onOpenMoreOptions = onOpenMoreOptions,
+                onAddToPlaylist = onAddToPlaylist,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
@@ -1555,6 +1575,7 @@ private fun ExpandedPlayerContent(
                             },
                     )
                     FullPlayerPlaybackControls(
+                        track = track,
                         isPlaying = isPlaying,
                         isBuffering = isBuffering,
                         canSkipPrevious = canSkipPrevious,
@@ -1647,6 +1668,7 @@ private fun ExpandedPlayerContent(
                 }
 
                 FullPlayerPlaybackControls(
+                    track = track,
                     isPlaying = isPlaying,
                     isBuffering = isBuffering,
                     canSkipPrevious = canSkipPrevious,
@@ -1691,6 +1713,7 @@ private fun fullPlayerSectionAlpha(expansionProgress: Float, startThreshold: Flo
 
 @Composable
 private fun FullPlayerPlaybackControls(
+    track: HomeTrack,
     isPlaying: Boolean,
     isBuffering: Boolean,
     canSkipPrevious: Boolean,
@@ -1708,6 +1731,7 @@ private fun FullPlayerPlaybackControls(
     onMorphTransportBoundsChanged: (PlayerMorphBounds) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val scope = rememberCoroutineScope()
     Column(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1731,12 +1755,39 @@ private fun FullPlayerPlaybackControls(
                     .capturePlayerMorphBounds(playerContentCoordinates, onMorphTransportBoundsChanged),
             )
         }
+        val favoriteActions = LocalTrackFavoriteActions.current
+        val hasFavoriteAction = favoriteActions?.enabled == true &&
+            !track.providerTrackId.isNullOrBlank()
+        val isFavFromActions = track.isEffectiveFavorite(favoriteActions)
+        var optimisticFavoriteState by remember(track.providerTrackId) { mutableStateOf<Boolean?>(null) }
+        val favoriteState = optimisticFavoriteState ?: isFavFromActions
+        var isSavingFavorite by remember(track.providerTrackId) { mutableStateOf(false) }
+
+        val onToggleFavorite: () -> Unit = {
+            val actions = favoriteActions
+            if (actions != null && !isSavingFavorite) {
+                val shouldBeFavorite = !favoriteState
+                optimisticFavoriteState = shouldBeFavorite
+                isSavingFavorite = true
+                scope.launch {
+                    val succeeded = actions.setMembership(track, shouldBeFavorite)
+                    if (!succeeded) {
+                        optimisticFavoriteState = !shouldBeFavorite
+                    }
+                    isSavingFavorite = false
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(14.dp))
         FullPlayerToggleRow(
             isShuffle = isShuffle,
             repeatMode = repeatMode,
             onShuffle = onShuffle,
             onRepeat = onRepeat,
+            isFavorite = favoriteState == true,
+            favoriteEnabled = hasFavoriteAction && !isSavingFavorite,
+            onToggleFavorite = onToggleFavorite,
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 66.dp, max = 86.dp)
@@ -1844,9 +1895,11 @@ private fun QueueLyricsTabScreen(
     onPromote: ((Long) -> Unit)?,
     onClear: (() -> Unit)?,
     onRetry: (() -> Unit)?,
+    onAlbum: (suspend (HomeTrack) -> Boolean)?,
     isDiscovering: Boolean,
     discoveryStatus: DiscoveryStatus,
     onOpenMoreOptions: (() -> Unit)? = null,
+    onAddToPlaylist: ((HomeTrack) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val colorScheme = MaterialTheme.colorScheme
@@ -2007,6 +2060,10 @@ private fun QueueLyricsTabScreen(
                 showFloatingControls = true,
                 onMoreOptions = { showQueueOptions = true },
                 onTrackMoreOptions = { optTrack -> trackForOptions = optTrack },
+                onAddToPlaylist = onAddToPlaylist,
+                onOpenAlbumForTrack = onAlbum?.let { openAlbum ->
+                    { optTrack -> scope.launch { openAlbum(optTrack) } }
+                },
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
@@ -2126,6 +2183,18 @@ private fun QueueLyricsTabScreen(
                 onAddToQueue = {
                     PlaybackManagerHolder.getInstanceOrNull()?.addToQueue(optTrack)
                     trackForOptions = null
+                },
+                onAddToPlaylist = onAddToPlaylist?.let { addTrack ->
+                    {
+                        addTrack(optTrack)
+                        trackForOptions = null
+                    }
+                },
+                onOpenAlbum = onAlbum?.let { openAlbum ->
+                    {
+                        scope.launch { openAlbum(optTrack) }
+                        trackForOptions = null
+                    }
                 },
                 onDownload = {
                     trackForOptions = null

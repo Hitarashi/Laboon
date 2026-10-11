@@ -103,6 +103,8 @@ import org.shilpo.laboon.playback.QueueState
 import org.shilpo.laboon.playback.RepeatMode
 import org.shilpo.laboon.theme.renderer.materialSymbolPainterResource
 import org.shilpo.laboon.ui.screens.home.HomeDailyMixSongOptionsSheet
+import org.shilpo.laboon.ui.screens.home.LocalTrackFavoriteActions
+import org.shilpo.laboon.ui.screens.home.isEffectiveFavorite
 import org.shilpo.laboon.ui.design.TrackCodecBadges
 import androidx.compose.ui.res.painterResource
 import sh.calvin.reorderable.ReorderableItem
@@ -132,6 +134,8 @@ fun QueueScreen(
     showFloatingControls: Boolean = true,
     onMoreOptions: (() -> Unit)? = null,
     onTrackMoreOptions: ((HomeTrack) -> Unit)? = null,
+    onAddToPlaylist: ((HomeTrack) -> Unit)? = null,
+    onOpenAlbumForTrack: ((HomeTrack) -> Unit)? = null,
 ) {
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -653,6 +657,15 @@ fun QueueScreen(
                     PlaybackManagerHolder.getInstanceOrNull()?.addToQueue(optTrack)
                     internalSelectedTrackForOptions = null
                 },
+                onAddToPlaylist = onAddToPlaylist?.let { addTrack ->
+                    {
+                        addTrack(optTrack)
+                        internalSelectedTrackForOptions = null
+                    }
+                },
+                onOpenAlbum = onOpenAlbumForTrack?.let { openAlbum ->
+                    { openAlbum(optTrack); internalSelectedTrackForOptions = null }
+                },
                 onLoadTrackGenres = { emptyList() },
                 onDownload = {
                     internalSelectedTrackForOptions = null
@@ -750,14 +763,28 @@ private fun CurrentQueueTrackRow(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Text(
-                    text = track.title,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = colorScheme.primary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = track.title,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = colorScheme.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    if (track.isEffectiveFavorite(LocalTrackFavoriteActions.current)) {
+                        Icon(
+                            painter = materialSymbolPainterResource("favorite", filled = true),
+                            contentDescription = "Favorite",
+                            tint = colorScheme.primary,
+                            modifier = Modifier.size(14.dp),
+                        )
+                    }
+                }
                 Text(
                     text = track.artist,
                     style = MaterialTheme.typography.bodyMedium,
@@ -952,14 +979,28 @@ private fun UpNextTrackRow(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    Text(
-                        text = track.title,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Normal,
-                        color = colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = track.title,
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Normal,
+                            color = colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        if (track.isEffectiveFavorite(LocalTrackFavoriteActions.current)) {
+                            Icon(
+                                painter = materialSymbolPainterResource("favorite", filled = true),
+                                contentDescription = "Favorite",
+                                tint = colorScheme.primary,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                    }
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),

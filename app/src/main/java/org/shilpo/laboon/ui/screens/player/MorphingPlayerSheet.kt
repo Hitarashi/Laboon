@@ -141,6 +141,7 @@ fun MorphingPlayerSheet(
     motionArtwork: LyricspornMotionArtwork? = null,
     onRequestMotionArtwork: (() -> Unit)? = null,
     onDownloadTrack: ((HomeTrack) -> Unit)? = null,
+    onAddToPlaylist: ((HomeTrack) -> Unit)? = null,
     onLoadTrackGenres: (suspend (HomeTrack) -> List<String>)? = null,
 ) {
     val playerColorScheme = animateColorScheme(
@@ -198,6 +199,7 @@ fun MorphingPlayerSheet(
             motionArtwork = motionArtwork,
             onRequestMotionArtwork = onRequestMotionArtwork,
             onDownloadTrack = onDownloadTrack,
+            onAddToPlaylist = onAddToPlaylist,
             onLoadTrackGenres = onLoadTrackGenres,
             modifier = modifier,
         )

@@ -9,6 +9,7 @@ package org.shilpo.laboon.ui.screens.library
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.AnimatedVisibility
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -79,6 +80,8 @@ import org.shilpo.laboon.home.TrackIdentity
 import org.shilpo.laboon.theme.renderer.materialSymbolPainterResource
 import org.shilpo.laboon.ui.design.theme.RoundedSans
 import org.shilpo.laboon.ui.screens.home.HomeArtwork
+import org.shilpo.laboon.ui.screens.home.LocalTrackFavoriteActions
+import org.shilpo.laboon.ui.screens.home.isEffectiveFavorite
 import org.shilpo.laboon.ui.screens.player.queue.PlayingEqIcon
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -116,6 +119,17 @@ internal fun PlaylistDetailScreen(
     var removeMode by remember { mutableStateOf(false) }
     var reorderMode by remember { mutableStateOf(false) }
     var hasReordered by remember { mutableStateOf(false) }
+
+    fun handleBack() {
+        if (reorderMode || removeMode) {
+            reorderMode = false
+            removeMode = false
+        } else {
+            onBack()
+        }
+    }
+
+    BackHandler(enabled = reorderMode || removeMode, onBack = ::handleBack)
 
     LaunchedEffect(playlist.id, tracks) {
         orderedTracks = tracks
@@ -207,7 +221,7 @@ internal fun PlaylistDetailScreen(
                 navigationIcon = {
                     IconButton(
                         modifier = Modifier.padding(start = 10.dp),
-                        onClick = onBack,
+                        onClick = ::handleBack,
                     ) {
                         Icon(
                             painter = materialSymbolPainterResource("arrow_back"),
@@ -638,14 +652,28 @@ private fun PlaylistDetailTrackRow(
                 )
                 Spacer(Modifier.width(16.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = track.title,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = if (isCurrentSong) colors.primary else colors.onSurface,
-                        fontWeight = if (isCurrentSong) FontWeight.Bold else FontWeight.Normal,
-                        style = MaterialTheme.typography.bodyLarge.copy(fontFamily = RoundedSans),
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            text = track.title,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = if (isCurrentSong) colors.primary else colors.onSurface,
+                            fontWeight = if (isCurrentSong) FontWeight.Bold else FontWeight.Normal,
+                            style = MaterialTheme.typography.bodyLarge.copy(fontFamily = RoundedSans),
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        if (track.isEffectiveFavorite(LocalTrackFavoriteActions.current)) {
+                            Icon(
+                                painter = materialSymbolPainterResource("favorite", filled = true),
+                                contentDescription = "Favorite",
+                                tint = colors.primary,
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                    }
                     Text(
                         text = track.artist,
                         maxLines = 1,

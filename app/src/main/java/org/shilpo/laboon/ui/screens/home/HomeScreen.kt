@@ -73,6 +73,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -180,6 +181,7 @@ import org.shilpo.laboon.ui.screens.library.LibraryScreen
 import org.shilpo.laboon.ui.screens.player.MorphingPlayerSheet
 import org.shilpo.laboon.ui.screens.rip.RipVisualizerScreen
 import org.shilpo.laboon.ui.screens.search.SearchScreen
+import org.shilpo.laboon.ui.screens.search.SearchScreenResumeState
 import org.shilpo.laboon.ui.screens.settings.SettingsCategory
 import org.shilpo.laboon.ui.screens.settings.SettingsScreen
 import org.shilpo.laboon.ui.screens.settings.contractId
@@ -250,6 +252,14 @@ fun HomeScreen(
     var playerExpansionProgress by remember { mutableFloatStateOf(0f) }
     var isLibraryPlaylistDetailOpen by remember { mutableStateOf(false) }
     var requestedTrackToAddToPlaylist by remember { mutableStateOf<HomeTrack?>(null) }
+    var isPlaylistPickerOpen by remember { mutableStateOf(false) }
+    var playlistPickerReturnTab by remember { mutableStateOf<MainTab?>(null) }
+    var overlayStack by remember { mutableStateOf<List<OverlayEntry>>(emptyList()) }
+    var playlistPickerReturnOverlayStack by remember {
+        mutableStateOf<List<OverlayEntry>?>(null)
+    }
+    val overlaySaveableStateHolder = rememberSaveableStateHolder()
+    var searchResumeState by remember { mutableStateOf(SearchScreenResumeState()) }
     var isRefreshing by remember { mutableStateOf(false) }
     var showThemeQueue by rememberSaveable { mutableStateOf(false) }
     var showThemeLyrics by rememberSaveable { mutableStateOf(false) }
@@ -283,7 +293,6 @@ fun HomeScreen(
     var themeSearchError by remember { mutableStateOf("") }
     var themeSearchGeneration by remember { mutableIntStateOf(0) }
     var showRipVisualizer by rememberSaveable { mutableStateOf(false) }
-    var overlayStack by remember { mutableStateOf<List<OverlayEntry>>(emptyList()) }
     var nextOverlayId by remember { mutableLongStateOf(1L) }
     val artistDetailsRepository = remember(sessionStore, keyValueStore) {
         ArtistDetailsRepository(sessionStore, ArtistDetailsCache(keyValueStore))
@@ -292,6 +301,26 @@ fun HomeScreen(
         RecordLabelRepository(sessionStore, RecordLabelCache(keyValueStore))
     }
     val isAlbumOverlayVisible = overlayStack.isNotEmpty()
+
+    fun requestTrackForPlaylist(
+        track: HomeTrack,
+        originTab: MainTab = currentTab,
+        resumeState: SearchScreenResumeState? = null,
+    ) {
+        if (resumeState != null) {
+            searchResumeState = resumeState.copy(isSearching = false)
+        } else if (originTab == MainTab.Search) {
+            searchResumeState = searchResumeState.copy(isSearching = false)
+        }
+        requestedTrackToAddToPlaylist = track
+        isPlaylistPickerOpen = true
+        playlistPickerReturnTab = originTab
+        if (overlayStack.isNotEmpty()) {
+            playlistPickerReturnOverlayStack = overlayStack
+            overlayStack = emptyList()
+        }
+        onEvent(RouteEvent.TabSelected(MainTab.Library))
+    }
 
     val openArtist: (String, String?) -> Unit = { name, appleId ->
         overlayStack = overlayStack + OverlayEntry(
@@ -350,6 +379,11 @@ fun HomeScreen(
         album.appleCatalogId
             ?.takeIf(String::isNotBlank)
             ?.let(openAlbum)
+    }
+    val onOpenAlbumForTrack: (HomeTrack) -> Unit = { track ->
+        coroutineScope.launch {
+            albumDetailsRepository.resolveAlbumIdForTrack(track)?.let(openAlbum)
+        }
     }
 
 
@@ -624,7 +658,12 @@ fun HomeScreen(
     )
 
     val homeBackState = rememberPredictiveBackState(
-        enabled = state.canGoBackWithinHome && overlayStack.isEmpty() && !showRipVisualizer,
+        enabled = shouldHandleHomeBack(
+            canGoBackWithinHome = state.canGoBackWithinHome,
+            overlayStackIsEmpty = overlayStack.isEmpty(),
+            showRipVisualizer = showRipVisualizer,
+            playlistPickerOpen = isPlaylistPickerOpen,
+        ),
         onBack = { onEvent(RouteEvent.BackPressed) },
     )
 
@@ -1734,6 +1773,8 @@ fun HomeScreen(
                             },
                             onPlayNextTrack = playbackManager::playNext,
                             onAddTrackToQueue = playbackManager::addToQueue,
+                            onAddToPlaylist = { track -> requestTrackForPlaylist(track) },
+                            onOpenAlbumForTrack = onOpenAlbumForTrack,
                             onDownloadTrack = { track -> ripWsClient.startRip(track) },
                             onLoadTrackGenres = albumDetailsRepository::getGenresForTrack,
                             currentTrackId = activeTrack?.id,
@@ -1754,10 +1795,13 @@ fun HomeScreen(
                             backdropState = liquidGlassBackdropState,
                             bottomClearance = albumBottomClearance,
                             searchFocusTrigger = searchFocusTrigger,
+                            resumeState = searchResumeState,
+                            onResumeStateChanged = { searchResumeState = it },
                             onTrackClick = { track ->
                                 playbackManager.play(track)
                             },
                             onAlbumClick = onAlbumClick,
+                            onOpenAlbumForTrack = onOpenAlbumForTrack,
                             onArtistClick = { artist ->
                                 openArtist(
                                     artist.name,
@@ -1773,9 +1817,8 @@ fun HomeScreen(
                             onAddToQueue = { track ->
                                 playbackManager.addToQueue(track)
                             },
-                            onAddToPlaylist = { track ->
-                                requestedTrackToAddToPlaylist = track
-                                onEvent(RouteEvent.TabSelected(MainTab.Library))
+                            onAddToPlaylist = { track, resumeState ->
+                                requestTrackForPlaylist(track, resumeState = resumeState)
                             },
                             onLoadTrackGenres = albumDetailsRepository::getGenresForTrack,
                             ripTasks = ripState.activeTasks,
@@ -1812,6 +1855,7 @@ fun HomeScreen(
                             onAddToQueueTrack = playbackManager::addToQueue,
                             onLoadTrackGenres = albumDetailsRepository::getGenresForTrack,
                             onOpenAlbum = onAlbumClick,
+                            onOpenAlbumForTrack = onOpenAlbumForTrack,
                             onOpenArtist = { artist ->
                                 openArtist(artist.name, artist.appleCatalogId)
                             },
@@ -1820,6 +1864,18 @@ fun HomeScreen(
                             onPlaylistDetailVisibilityChanged = { isLibraryPlaylistDetailOpen = it },
                             requestedTrackToAddToPlaylist = requestedTrackToAddToPlaylist,
                             onPlaylistAddRequestHandled = { requestedTrackToAddToPlaylist = null },
+                            onPlaylistPickerFinished = {
+                                isPlaylistPickerOpen = false
+                                val returnTab = playlistPickerReturnTab
+                                playlistPickerReturnTab = null
+                                if (returnTab != null) {
+                                    onEvent(RouteEvent.TabSelected(returnTab))
+                                }
+                                playlistPickerReturnOverlayStack?.let { savedOverlayStack ->
+                                    overlayStack = savedOverlayStack
+                                }
+                                playlistPickerReturnOverlayStack = null
+                            },
                         )
                     }
                 }
@@ -1850,8 +1906,9 @@ fun HomeScreen(
             }
 
             overlayStack.forEachIndexed { index, entry ->
-                val isTop = index == overlayStack.lastIndex
-                key(entry.id) {
+                overlaySaveableStateHolder.SaveableStateProvider("home-overlay-${entry.id}") {
+                    val isTop = index == overlayStack.lastIndex
+                    key(entry.id) {
                     PredictiveBackSurface(
                         state = overlayBackState,
                         spec = PredictiveBackSpec.HomeSettings,
@@ -1878,6 +1935,8 @@ fun HomeScreen(
                                     onOpenAlbumVersion = openAlbum,
                                     onOpenArtist = openArtist,
                                     onOpenRecordLabel = openAlbumRecordLabel,
+                                    onAddToPlaylist = { track -> requestTrackForPlaylist(track) },
+                                    onLoadTrackGenres = albumDetailsRepository::getGenresForTrack,
                                     onDownloadTrack = { track -> ripWsClient.startRip(track) },
                                     isDownloadPending = { track ->
                                         val id = track.providerTrackId?.takeIf(String::isNotBlank)
@@ -1907,6 +1966,8 @@ fun HomeScreen(
                                     onBack = popOverlay,
                                     onOpenAlbum = openAlbum,
                                     onOpenArtist = openArtist,
+                                    onAddToPlaylist = { track -> requestTrackForPlaylist(track) },
+                                    onLoadTrackGenres = albumDetailsRepository::getGenresForTrack,
                                     onDownloadTrack = { track -> ripWsClient.startRip(track) },
                                     isDownloadPending = { track ->
                                         val id = track.providerTrackId?.takeIf(String::isNotBlank)
@@ -1966,11 +2027,14 @@ fun HomeScreen(
                                     },
                                     onPlayNext = playbackManager::playNext,
                                     onAddToQueue = playbackManager::addToQueue,
+                                    onAddToPlaylist = { track -> requestTrackForPlaylist(track) },
+                                    onOpenAlbumForTrack = onOpenAlbumForTrack,
                                     onLoadTrackGenres = albumDetailsRepository::getGenresForTrack,
                                     onDownloadTrack = { track -> ripWsClient.startRip(track) },
                                 )
                             }
                         }
+                    }
                     }
                 }
             }
@@ -2071,6 +2135,9 @@ fun HomeScreen(
                         },
                         onArtistClick = { artistName -> openArtist(artistName, null) },
                         onDownloadTrack = { dlTrack -> ripWsClient.startRip(dlTrack) },
+                        onAddToPlaylist = { playlistTrack ->
+                            requestTrackForPlaylist(playlistTrack)
+                        },
                         onLoadTrackGenres = albumDetailsRepository::getGenresForTrack,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -2242,6 +2309,8 @@ private fun AlbumOverlayHost(
     onOpenAlbumVersion: (String) -> Unit,
     onOpenArtist: (String, String?) -> Unit,
     onOpenRecordLabel: (String, String?) -> Unit,
+    onAddToPlaylist: (HomeTrack) -> Unit,
+    onLoadTrackGenres: suspend (HomeTrack) -> List<String>,
     onDownloadTrack: (HomeTrack) -> Unit,
     isDownloadPending: (HomeTrack) -> Boolean,
     modifier: Modifier = Modifier,
@@ -2365,6 +2434,8 @@ private fun AlbumOverlayHost(
         },
         onPlayNext = { track -> playbackManager.playNext(track) },
         onAddToQueue = { track -> playbackManager.addToQueue(track) },
+        onAddToPlaylist = onAddToPlaylist,
+        onLoadTrackGenres = albumDetailsRepository::getGenresForTrack,
         onDownloadTrack = onDownloadTrack,
         isDownloadPending = isDownloadPending,
         onOpenAlbumVersion = onOpenAlbumVersion,
@@ -2390,6 +2461,8 @@ private fun ArtistOverlayHost(
     onBack: () -> Unit,
     onOpenAlbum: (String) -> Unit,
     onOpenArtist: (String, String?) -> Unit,
+    onAddToPlaylist: (HomeTrack) -> Unit,
+    onLoadTrackGenres: suspend (HomeTrack) -> List<String>,
     onDownloadTrack: (HomeTrack) -> Unit,
     isDownloadPending: (HomeTrack) -> Boolean,
     modifier: Modifier = Modifier,
@@ -2524,6 +2597,7 @@ private fun ArtistOverlayHost(
         },
         onPlayNext = { track -> playbackManager.playNext(track) },
         onAddToQueue = { track -> playbackManager.addToQueue(track) },
+        onAddToPlaylist = onAddToPlaylist,
         onDownloadTrack = onDownloadTrack,
         isDownloadPending = isDownloadPending,
         onOpenAlbum = onOpenAlbum,
@@ -2535,6 +2609,7 @@ private fun ArtistOverlayHost(
                 }
             }
         },
+        onLoadTrackGenres = albumDetailsRepository::getGenresForTrack,
         onOpenArtist = onOpenArtist,
         modifier = finalModifier,
     )

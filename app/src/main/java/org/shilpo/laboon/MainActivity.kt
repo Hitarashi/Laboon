@@ -87,6 +87,8 @@ import org.shilpo.laboon.ui.design.rememberPredictiveBackState
 import org.shilpo.laboon.ui.screens.connect.ConnectScreen
 import org.shilpo.laboon.ui.screens.connect.openTelegramApp
 import org.shilpo.laboon.ui.screens.home.HomeScreen
+import org.shilpo.laboon.ui.screens.home.LocalTrackFavoriteActions
+import org.shilpo.laboon.ui.screens.home.TrackFavoriteActions
 import org.shilpo.laboon.ui.screens.lastfm.LastFmScreen
 import org.shilpo.laboon.ui.screens.permissions.PermissionsScreen
 import org.shilpo.laboon.ui.screens.welcome.WelcomeScreen
@@ -519,28 +521,49 @@ class MainActivity : ComponentActivity() {
                                             )
                                         }
 
-                                        Route.Home -> HomeScreen(
-                                            state = routeState,
-                                            session = sessionStore.getSession(),
-                                            repository = homeFeedRepository,
-                                            onActiveTrackChange = { track, dismissed ->
-                                                activeArtworkUrl = track?.artworkUrl
-                                                isPlayerDismissed = dismissed
-                                            },
-                                            onEvent = ::dispatch,
-                                            openThemeSelection = openThemeSelectionOnNextHome,
-                                            onThemeSelectionOpened = {
-                                                openThemeSelectionOnNextHome = false
-                                            },
-                                            onDisconnect = {
-                                                sessionStore.signOut()
-                                                onboardingProgress.reset()
-                                                isPlayerDismissed = true
-                                                syncRipConnection()
-                                                dispatch(RouteEvent.SessionEnded)
-                                            },
-                                            modifier = Modifier.fillMaxSize(),
-                                        )
+                                        Route.Home -> {
+                                            val currentSession = sessionStore.getSession()
+                                            val favoriteTrackIds by homeFeedRepository.favoriteTrackIds.collectAsState()
+                                            val trackFavoriteActions = remember(
+                                                homeFeedRepository,
+                                                currentSession,
+                                                favoriteTrackIds,
+                                            ) {
+                                                TrackFavoriteActions(
+                                                    enabled = currentSession != null &&
+                                                        homeFeedRepository.canManageUserPlaylists(),
+                                                    loadMembership = homeFeedRepository::isUserFavoriteTrack,
+                                                    setMembership = homeFeedRepository::setUserFavoriteTrack,
+                                                    favoriteTrackIds = favoriteTrackIds,
+                                                )
+                                            }
+                                            CompositionLocalProvider(
+                                                LocalTrackFavoriteActions provides trackFavoriteActions,
+                                            ) {
+                                                HomeScreen(
+                                                    state = routeState,
+                                                    session = currentSession,
+                                                    repository = homeFeedRepository,
+                                                    onActiveTrackChange = { track, dismissed ->
+                                                        activeArtworkUrl = track?.artworkUrl
+                                                        isPlayerDismissed = dismissed
+                                                    },
+                                                    onEvent = ::dispatch,
+                                                    openThemeSelection = openThemeSelectionOnNextHome,
+                                                    onThemeSelectionOpened = {
+                                                        openThemeSelectionOnNextHome = false
+                                                    },
+                                                    onDisconnect = {
+                                                        sessionStore.signOut()
+                                                        onboardingProgress.reset()
+                                                        isPlayerDismissed = true
+                                                        syncRipConnection()
+                                                        dispatch(RouteEvent.SessionEnded)
+                                                    },
+                                                    modifier = Modifier.fillMaxSize(),
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }

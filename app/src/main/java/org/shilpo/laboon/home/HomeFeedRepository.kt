@@ -5,6 +5,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -56,6 +59,12 @@ class HomeFeedRepository(
     private var cachedRecentTracks: List<HomeTrack>? = null
     private var cachedRecentTracksAtMs = 0L
     private val playlistClient = UserPlaylistClient(sessionStore)
+    private val favoritePlaylistMutex = Mutex()
+    private var favoritePlaylistAccountKey: String? = null
+    private var favoritePlaylistInitialized = false
+    private var cachedFavoritePlaylist: SavedPlaylistDetail? = null
+    private val _favoriteTrackIds = MutableStateFlow<Set<String>>(emptySet())
+    val favoriteTrackIds: StateFlow<Set<String>> = _favoriteTrackIds.asStateFlow()
 
     suspend fun clearCache() {
         recentTracksMutex.withLock { cachedRecentTracks = null; cachedRecentTracksAtMs = 0L }
@@ -169,18 +178,147 @@ class HomeFeedRepository(
             )
     }
 
-    /** Returns Last.fm loved tracks resolved to playable catalog entries. */
+    /** Returns user favorite tracks from peerless-server (and Last.fm if connected) resolved to playable catalog entries. */
     suspend fun fetchLibraryLovedTracks(forceRefresh: Boolean = false): List<HomeTrack> =
         withContext(Dispatchers.IO) {
-            val tracks = if (forceRefresh) {
-                fetchLastFmLovedTracks(sessionStore.getLastFmCredentials())
+            val serverFavoriteTracks = if (sessionStore.hasSession()) {
+                sessionStore.getSession()?.let { session ->
+                    val playlistId = "favorites-${session.user.telegramId}"
+                    fetchUserPlaylistTracks(playlistId)
+                } ?: emptyList()
             } else {
-                fetchTasteProfile().lovedTracks
+                emptyList()
             }
-            resolveTracks(tracks.distinctBy(TrackIdentity::keyOf).take(MAX_LIBRARY_TRACKS))
+
+            val serverTrackIds = serverFavoriteTracks.mapNotNull { it.providerTrackId }.toSet()
+            if (serverTrackIds.isNotEmpty()) {
+                _favoriteTrackIds.value = serverTrackIds
+            }
+
+            val lastFmCreds = sessionStore.getLastFmCredentials()
+            val lastFmTracks = if (lastFmCreds != null) {
+                val tracks = if (forceRefresh) {
+                    fetchLastFmLovedTracks(lastFmCreds)
+                } else {
+                    fetchTasteProfile().lovedTracks
+                }
+                resolveTracks(tracks.distinctBy(TrackIdentity::keyOf).take(MAX_LIBRARY_TRACKS))
+            } else {
+                emptyList()
+            }
+
+            val combined = if (serverFavoriteTracks.isNotEmpty()) {
+                val existingKeys = serverFavoriteTracks.map(TrackIdentity::keyOf).toSet()
+                serverFavoriteTracks + lastFmTracks.filterNot { TrackIdentity.keyOf(it) in existingKeys }
+            } else {
+                lastFmTracks
+            }
+            combined.map { it.copy(isFavorite = true) }
         }
 
     fun canManageUserPlaylists(): Boolean = sessionStore.hasSession()
+
+    suspend fun isUserFavoriteTrack(track: HomeTrack): Boolean? = withContext(Dispatchers.IO) {
+        val trackId = track.providerTrackId?.takeIf(String::isNotBlank) ?: return@withContext null
+        if (_favoriteTrackIds.value.isNotEmpty()) {
+            return@withContext trackId in _favoriteTrackIds.value
+        }
+        favoritePlaylistMutex.withLock {
+            cachedFavoritePlaylist?.let { detail ->
+                return@withLock trackId in detail.trackIds
+            }
+            if (track.isFavorite != null) {
+                return@withLock track.isFavorite
+            }
+            loadFavoritePlaylistDetail(forceRefresh = false)?.let { detail ->
+                trackId in detail.trackIds
+            }
+        }
+    }
+
+    suspend fun setUserFavoriteTrack(track: HomeTrack, shouldBeFavorite: Boolean): Boolean =
+        withContext(Dispatchers.IO) {
+            val trackId = track.providerTrackId?.takeIf(String::isNotBlank)
+                ?: return@withContext false
+            val session = sessionStore.getSession() ?: return@withContext false
+            val playlistId = "favorites-${session.user.telegramId}"
+
+            val previousTrackIds = favoritePlaylistMutex.withLock {
+                loadFavoritePlaylistDetail(forceRefresh = false)?.trackIds
+                    ?: _favoriteTrackIds.value.toList()
+            }
+            val alreadyFavorite = trackId in previousTrackIds
+            if (alreadyFavorite == shouldBeFavorite) return@withContext true
+
+            val updatedTrackIds = if (shouldBeFavorite) {
+                previousTrackIds + trackId
+            } else {
+                previousTrackIds.filterNot { it == trackId }
+            }
+
+            // Optimistic update in-memory
+            favoritePlaylistMutex.withLock {
+                cachedFavoritePlaylist?.let { current ->
+                    cachedFavoritePlaylist = current.copy(trackIds = updatedTrackIds)
+                }
+            }
+            _favoriteTrackIds.value = updatedTrackIds.toSet()
+
+            val result = playlistClient.replaceTracks(playlistId, updatedTrackIds)
+            if (result.isSuccess) {
+                val updated = result.getOrThrow()
+                favoritePlaylistMutex.withLock {
+                    cachedFavoritePlaylist = updated
+                }
+                _favoriteTrackIds.value = updated.trackIds.toSet()
+                true
+            } else {
+                // Revert on failure
+                logWarning("Could not update favorites: ${result.exceptionOrNull()?.message.orEmpty()}")
+                favoritePlaylistMutex.withLock {
+                    cachedFavoritePlaylist?.let { current ->
+                        cachedFavoritePlaylist = current.copy(trackIds = previousTrackIds)
+                    }
+                }
+                _favoriteTrackIds.value = previousTrackIds.toSet()
+                false
+            }
+        }
+
+    private suspend fun loadFavoritePlaylistDetail(
+        forceRefresh: Boolean,
+    ): SavedPlaylistDetail? {
+        val session = sessionStore.getSession() ?: return null
+        val accountKey = "${session.serverUrl.trimEnd('/')}|${session.user.telegramId}"
+        if (favoritePlaylistAccountKey != accountKey) {
+            favoritePlaylistAccountKey = accountKey
+            favoritePlaylistInitialized = false
+            cachedFavoritePlaylist = null
+        }
+
+        if (!favoritePlaylistInitialized) {
+            playlistClient.list().getOrElse { error ->
+                logWarning("Could not initialize favorites: ${error.message.orEmpty()}")
+                return null
+            }
+            favoritePlaylistInitialized = true
+        }
+
+        if (!forceRefresh) cachedFavoritePlaylist?.let { return it }
+
+        val playlistId = "favorites-${session.user.telegramId}"
+        val detail = playlistClient.get(playlistId).getOrElse { error ->
+            logWarning("Could not load favorites: ${error.message.orEmpty()}")
+            return null
+        }
+        if (!detail.playlist.isFavorites) {
+            logWarning("Favorites playlist response was not marked as favorites")
+            return null
+        }
+        cachedFavoritePlaylist = detail
+        _favoriteTrackIds.value = detail.trackIds.toSet()
+        return detail
+    }
 
     suspend fun fetchUserPlaylists(): List<SavedPlaylist> {
         val playlists = playlistClient.list().getOrElse { error ->
@@ -227,6 +365,83 @@ class HomeFeedRepository(
             logWarning("Could not create playlist: ${error.message.orEmpty()}")
             null
         }
+
+    suspend fun mergeUserPlaylists(
+        sourcePlaylistIds: List<String>,
+        destinationPlaylistId: String?,
+        newPlaylistName: String?,
+    ): SavedPlaylistDetail? {
+        val sourceIds = sourcePlaylistIds.map(String::trim)
+        val destinationId = destinationPlaylistId?.trim()?.takeIf(String::isNotEmpty)
+        val destinationName = newPlaylistName?.trim()?.takeIf(String::isNotEmpty)
+
+        if (sourceIds.size !in 2..MAX_CUSTOM_USER_PLAYLISTS ||
+            sourceIds.any(String::isEmpty) ||
+            sourceIds.distinct().size != sourceIds.size
+        ) {
+            logWarning("Playlist merge needs two to seven distinct source playlists")
+            return null
+        }
+        if ((destinationId == null) == (destinationName == null)) {
+            logWarning("Playlist merge needs either a new name or an existing destination")
+            return null
+        }
+
+        val playlistIdsToRead = (sourceIds + listOfNotNull(destinationId)).distinct()
+        val readResults = coroutineScope {
+            playlistIdsToRead.map { playlistId ->
+                async(Dispatchers.IO) { playlistId to playlistClient.get(playlistId) }
+            }.awaitAll()
+        }
+        val failedRead = readResults.firstOrNull { (_, result) -> result.isFailure }
+        if (failedRead != null) {
+            logWarning(
+                "Could not read playlist ${failedRead.first} for merge: " +
+                    failedRead.second.exceptionOrNull()?.message.orEmpty(),
+            )
+            return null
+        }
+
+        val detailsById = readResults.associate { (playlistId, result) ->
+            playlistId to result.getOrThrow()
+        }
+        if (detailsById.values.any { it.playlist.isFavorites }) {
+            logWarning("Favorites cannot be merged as a custom playlist")
+            return null
+        }
+
+        val sourceTrackIds = sourceIds
+            .filterNot { it == destinationId }
+            .map { playlistId -> detailsById.getValue(playlistId).trackIds }
+        val mergedTrackIds = combinePlaylistTrackIds(
+            destinationTrackIds = destinationId?.let { detailsById.getValue(it).trackIds },
+            sourceTrackIds = sourceTrackIds,
+        )
+        if (mergedTrackIds.size > MAX_USER_PLAYLIST_TRACKS) {
+            logWarning("Merged playlist would exceed $MAX_USER_PLAYLIST_TRACKS tracks")
+            return null
+        }
+
+        if (destinationId != null) {
+            return playlistClient.replaceTracks(destinationId, mergedTrackIds).getOrElse { error ->
+                logWarning("Could not save merged playlist: ${error.message.orEmpty()}")
+                null
+            }
+        }
+
+        val createdPlaylist = playlistClient.create(destinationName!!).getOrElse { error ->
+            logWarning("Could not create merged playlist: ${error.message.orEmpty()}")
+            return null
+        }
+        return playlistClient.replaceTracks(createdPlaylist.id, mergedTrackIds).getOrElse { error ->
+            val cleanup = playlistClient.delete(createdPlaylist.id)
+            if (cleanup.isFailure) {
+                logWarning("Could not clean up incomplete merged playlist ${createdPlaylist.id}")
+            }
+            logWarning("Could not save merged playlist: ${error.message.orEmpty()}")
+            null
+        }
+    }
 
     suspend fun renameUserPlaylist(playlistId: String, title: String): SavedPlaylist? =
         playlistClient.rename(playlistId, title.trim()).getOrElse { error ->
@@ -317,20 +532,25 @@ class HomeFeedRepository(
                 logWarning("Could not load playlist tracks: ${error.message.orEmpty()}")
                 return@withContext emptyList()
             }
+            val isFavorites = detail.playlist.isFavorites || playlistId.startsWith("favorites-")
+            if (isFavorites) {
+                _favoriteTrackIds.value = detail.trackIds.toSet()
+            }
             val apiBaseUrl = sessionStore.getSession()?.lyricspornApiUrl
             val catalogItems = artworkResolver.fetchTrackCatalogItems(apiBaseUrl, detail.trackIds)
             val rawTracks = detail.trackIds.mapIndexedNotNull { index, trackId ->
-                val track = catalogItems[trackId] ?: return@mapIndexedNotNull null
+                val track = catalogItems[trackId]
                 HomeTrack(
                     id = "playlist-${detail.playlist.id}-$index",
-                    title = track.name,
-                    artist = track.artistName?.trim()?.takeIf(String::isNotEmpty).orEmpty(),
-                    album = track.albumName,
-                    artworkUrl = track.artworkUrl,
+                    title = track?.name ?: "Track $trackId",
+                    artist = track?.artistName?.trim()?.takeIf(String::isNotEmpty).orEmpty(),
+                    album = track?.albumName,
+                    artworkUrl = track?.artworkUrl,
                     source = "Laboon playlist",
                     providerTrackId = trackId,
-                    isrc = track.isrc,
-                    durationMs = track.durationMs,
+                    isrc = track?.isrc,
+                    durationMs = track?.durationMs ?: 0L,
+                    isFavorite = isFavorites,
                 )
             }
             availabilityResolver.enrichAvailability(rawTracks)
@@ -834,6 +1054,8 @@ class HomeFeedRepository(
         private const val MAX_RECOMMENDATION_CANDIDATES = 20
         private const val MAX_TOP_TRACK_CANDIDATES = 20
         private const val MAX_LIBRARY_TRACKS = 30
+        private const val MAX_CUSTOM_USER_PLAYLISTS = 7
+        private const val MAX_USER_PLAYLIST_TRACKS = 1_000
                 private const val MAX_TRENDING_CANDIDATES = 20
         private const val MAX_WEEKLY_CANDIDATES = 16
         private const val TASTE_PROFILE_TTL_MS = 15 * 60 * 1_000L

@@ -258,6 +258,9 @@ internal fun FullPlayerToggleRow(
     onShuffle: () -> Unit,
     onRepeat: () -> Unit,
     modifier: Modifier = Modifier,
+    isFavorite: Boolean = false,
+    favoriteEnabled: Boolean = false,
+    onToggleFavorite: (() -> Unit)? = null,
 ) {
     Box(
         modifier = modifier
@@ -300,14 +303,15 @@ internal fun FullPlayerToggleRow(
             )
             PlayerToggleSegment(
                 modifier = Modifier.weight(1f),
-                selected = false,
-                enabled = false,
+                selected = isFavorite,
+                enabled = favoriteEnabled,
                 selectedContainer = MaterialTheme.colorScheme.tertiaryFixed,
                 selectedContent = MaterialTheme.colorScheme.onTertiaryFixed,
                 icon = "favorite",
                 slot = "playback.favorite",
                 label = "Favorite",
-                onClick = {},
+                filled = isFavorite,
+                onClick = onToggleFavorite ?: {},
             )
         }
     }
@@ -323,6 +327,7 @@ private fun PlayerToggleSegment(
     icon: String,
     slot: String,
     label: String,
+    filled: Boolean = false,
     onClick: () -> Unit,
 ) {
     val container = if (selected) selectedContainer
@@ -347,6 +352,7 @@ private fun PlayerToggleSegment(
                 painter = materialSymbolPainterResource(
                     name = icon,
                     slot = slot,
+                    filled = filled,
                 ),
                 contentDescription = label,
                 modifier = Modifier.size(24.dp),

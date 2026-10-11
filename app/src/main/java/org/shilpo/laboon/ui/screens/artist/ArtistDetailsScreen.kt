@@ -39,9 +39,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.CircularWavyProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
@@ -57,6 +55,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
@@ -69,6 +68,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -85,6 +85,7 @@ import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import org.shilpo.laboon.R
+import org.shilpo.laboon.theme.renderer.materialSymbolPainterResource
 import org.shilpo.laboon.home.ArtistDetailsResult
 import org.shilpo.laboon.home.HomeAlbum
 import org.shilpo.laboon.home.HomeArtist
@@ -93,6 +94,9 @@ import org.shilpo.laboon.lyricsporn.LyricspornArtist
 import org.shilpo.laboon.ui.design.TrackCodecBadges
 import org.shilpo.laboon.ui.design.getTrackQualityCodecs
 import org.shilpo.laboon.ui.design.painterResource
+import org.shilpo.laboon.ui.screens.home.HomeDailyMixSongOptionsSheet
+import org.shilpo.laboon.ui.screens.home.LocalTrackFavoriteActions
+import org.shilpo.laboon.ui.screens.home.isEffectiveFavorite
 import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.sin
@@ -114,6 +118,7 @@ fun ArtistDetailsScreen(
     onStartPlayback: (HomeTrack, List<HomeTrack>) -> Unit,
     onPlayNext: (HomeTrack) -> Unit,
     onAddToQueue: (HomeTrack) -> Unit,
+    onAddToPlaylist: (HomeTrack) -> Unit,
     onDownloadTrack: (HomeTrack) -> Unit,
     isDownloadPending: (HomeTrack) -> Boolean,
     onOpenAlbum: (String) -> Unit,
@@ -124,6 +129,7 @@ fun ArtistDetailsScreen(
     currentTrackId: String? = null,
     isPlaying: Boolean = false,
     onOpenTrackAlbum: ((HomeTrack) -> Unit)? = null,
+    onLoadTrackGenres: suspend (HomeTrack) -> List<String> = { emptyList() },
 ) {
     val artist = (state as? ArtistDetailsUiState.Loaded)?.artist
     val context = LocalContext.current
@@ -234,6 +240,7 @@ fun ArtistDetailsScreen(
                         onStartPlayback = onStartPlayback,
                         onPlayNext = onPlayNext,
                         onAddToQueue = onAddToQueue,
+                        onAddToPlaylist = onAddToPlaylist,
                         onDownloadTrack = onDownloadTrack,
                         isDownloadPending = isDownloadPending,
                         onOpenAlbum = onOpenAlbum,
@@ -241,6 +248,7 @@ fun ArtistDetailsScreen(
                         currentTrackId = currentTrackId,
                         isPlaying = isPlaying,
                         onOpenTrackAlbum = onOpenTrackAlbum,
+                        onLoadTrackGenres = onLoadTrackGenres,
                         modifier = Modifier.align(Alignment.TopCenter),
                     )
                 }
@@ -315,6 +323,7 @@ private fun ArtistContent(
     onStartPlayback: (HomeTrack, List<HomeTrack>) -> Unit,
     onPlayNext: (HomeTrack) -> Unit,
     onAddToQueue: (HomeTrack) -> Unit,
+    onAddToPlaylist: (HomeTrack) -> Unit,
     onDownloadTrack: (HomeTrack) -> Unit,
     isDownloadPending: (HomeTrack) -> Boolean,
     onOpenAlbum: (String) -> Unit,
@@ -322,6 +331,7 @@ private fun ArtistContent(
     currentTrackId: String?,
     isPlaying: Boolean,
     onOpenTrackAlbum: ((HomeTrack) -> Unit)? = null,
+    onLoadTrackGenres: suspend (HomeTrack) -> List<String>,
     modifier: Modifier = Modifier,
 ) {
     val availableTopSongs = remember(topSongs) { topSongs.filter(HomeTrack::isPlayable) }
@@ -402,6 +412,7 @@ private fun ArtistContent(
                             },
                             onPlayNext = { onPlayNext(track) },
                             onAddToQueue = { onAddToQueue(track) },
+                            onAddToPlaylist = { onAddToPlaylist(track) },
                             onDownload = { onDownloadTrack(track) },
                             onOpenAlbum = if (onOpenTrackAlbum != null) {
                                 { onOpenTrackAlbum(track) }
@@ -411,6 +422,7 @@ private fun ArtistContent(
                                     onOpenAlbum(albumId)
                                 }
                             } else null,
+                            onLoadTrackGenres = onLoadTrackGenres,
                         )
                     }
                 }
@@ -697,10 +709,12 @@ private fun ArtistTrackRow(
     onClick: () -> Unit,
     onPlayNext: () -> Unit,
     onAddToQueue: () -> Unit,
+    onAddToPlaylist: () -> Unit,
     onDownload: () -> Unit,
     onOpenAlbum: (() -> Unit)?,
+    onLoadTrackGenres: suspend (HomeTrack) -> List<String>,
 ) {
-    var menuExpanded by remember(track.id) { mutableStateOf(false) }
+    var optionsSheetOpen by remember(track.id) { mutableStateOf(false) }
 
     SegmentedListItem(
         shapes = ListItemDefaults.segmentedShapes(index = index, count = count),
@@ -768,7 +782,7 @@ private fun ArtistTrackRow(
             ) {
                 Text(
                     text = track.title,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.weight(1f, fill = false),
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = if (isCurrentTrack) FontWeight.Bold else FontWeight.Normal,
                     color = if (isCurrentTrack) {
@@ -779,6 +793,14 @@ private fun ArtistTrackRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (track.isEffectiveFavorite(LocalTrackFavoriteActions.current)) {
+                    Icon(
+                        painter = materialSymbolPainterResource("favorite", filled = true),
+                        contentDescription = "Favorite",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
                 if (track.contentRating.equals("explicit", ignoreCase = true)) {
                     Surface(
                         shape = MaterialTheme.shapes.extraSmall,
@@ -846,10 +868,12 @@ private fun ArtistTrackRow(
                         enabled = !pending,
                     ) {
                         if (pending) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp,
+                            CircularWavyProgressIndicator(
+                                modifier = Modifier.size(28.dp),
                                 color = MaterialTheme.colorScheme.primary,
+                                trackColor = Color.Transparent,
+                                wavelength = WavyProgressIndicatorDefaults.CircularWavelength,
+                                waveSpeed = WavyProgressIndicatorDefaults.CircularWavelength / 2f,
                             )
                         } else {
                             Icon(
@@ -862,56 +886,33 @@ private fun ArtistTrackRow(
                     }
                 }
 
-                Box {
-                    IconButton(onClick = { menuExpanded = true }) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_more_vert),
-                            contentDescription = "Options",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
-                    DropdownMenu(
-                        expanded = menuExpanded,
-                        onDismissRequest = { menuExpanded = false },
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Play Next") },
-                            onClick = {
-                                menuExpanded = false
-                                onPlayNext()
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Add to Queue") },
-                            onClick = {
-                                menuExpanded = false
-                                onAddToQueue()
-                            },
-                        )
-                        if (!track.isPlayable) {
-                            DropdownMenuItem(
-                                text = { Text("Download") },
-                                onClick = {
-                                    menuExpanded = false
-                                    onDownload()
-                                },
-                            )
-                        }
-                        if (onOpenAlbum != null) {
-                            DropdownMenuItem(
-                                text = { Text("Go to Album") },
-                                onClick = {
-                                    menuExpanded = false
-                                    onOpenAlbum()
-                                },
-                            )
-                        }
-                    }
+                IconButton(onClick = { optionsSheetOpen = true }) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_more_vert),
+                        contentDescription = "Options for ${track.title}",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
                 }
             }
         },
     )
+
+    if (optionsSheetOpen) {
+        HomeDailyMixSongOptionsSheet(
+            track = track,
+            onDismiss = { optionsSheetOpen = false },
+            onPlay = { optionsSheetOpen = false; onClick() },
+            onPlayNext = { optionsSheetOpen = false; onPlayNext() },
+            onAddToQueue = { optionsSheetOpen = false; onAddToQueue() },
+            onAddToPlaylist = { optionsSheetOpen = false; onAddToPlaylist() },
+            onOpenAlbum = onOpenAlbum?.let { openAlbum ->
+                { optionsSheetOpen = false; openAlbum() }
+            },
+            onLoadTrackGenres = onLoadTrackGenres,
+            onDownload = { optionsSheetOpen = false; onDownload() },
+        )
+    }
 }
 
 @Composable

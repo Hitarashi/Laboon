@@ -13,32 +13,43 @@ import org.shilpo.laboon.search.CachedTrackAvailability
 object TrackAvailability {
 
     fun apply(tracks: List<HomeTrack>, lookup: BatchAvailabilityLookup): List<HomeTrack> =
-        apply(tracks, lookup.cached)
+        apply(tracks, lookup.cached, lookup.favoriteByTrackId)
 
     fun apply(
         tracks: List<HomeTrack>,
         cached: Map<String, CachedTrackAvailability>
+    ): List<HomeTrack> = apply(tracks, cached, emptyMap())
+
+    private fun apply(
+        tracks: List<HomeTrack>,
+        cached: Map<String, CachedTrackAvailability>,
+        favoriteByTrackId: Map<String, Boolean>,
     ): List<HomeTrack> {
-        if (cached.isEmpty()) return tracks
+        if (cached.isEmpty() && favoriteByTrackId.isEmpty()) return tracks
         var changed = false
         val updated = tracks.map { track ->
             val id = AutoRipPlanner.normalizeProviderTrackId(track.providerTrackId)
             val availability = id?.let(cached::get)
-            if (availability == null) {
+            val favorite = id?.let(favoriteByTrackId::get)
+            if (availability == null && favorite == null) {
                 track
             } else {
-                val preferred = availability.preferredCodec
-                val preferredTrackId = availability.playbackTrackId
-                val next = track.copy(
-                    isCached = true,
-                    streamUrl = track.streamUrl.takeIf {
-                        preferredTrackId != null && preferredTrackId == track.backendTrackId
-                    },
-                    codec = preferred,
-                    backendTrackId = preferredTrackId,
-                    availableFormats = availability.formats,
-                    availableVariants = availability.variants,
-                )
+                val next = if (availability == null) {
+                    track.copy(isFavorite = favorite ?: track.isFavorite)
+                } else {
+                    val preferredTrackId = availability.playbackTrackId
+                    track.copy(
+                        isFavorite = favorite ?: track.isFavorite,
+                        isCached = availability.variants.isNotEmpty(),
+                        streamUrl = track.streamUrl.takeIf {
+                            preferredTrackId != null && preferredTrackId == track.backendTrackId
+                        },
+                        codec = availability.preferredCodec,
+                        backendTrackId = preferredTrackId,
+                        availableFormats = availability.formats,
+                        availableVariants = availability.variants,
+                    )
+                }
                 if (next != track) changed = true
                 next
             }

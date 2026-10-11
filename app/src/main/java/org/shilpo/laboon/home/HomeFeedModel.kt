@@ -25,6 +25,7 @@ data class HomeTrack(
     val durationMs: Long? = null,
     val contentRating: String? = null,
     val listenedAtMs: Long? = null,
+    val isFavorite: Boolean? = null,
 ) {
     val isPlayable: Boolean
         get() = backendTrackId != null || !streamUrl.isNullOrBlank()

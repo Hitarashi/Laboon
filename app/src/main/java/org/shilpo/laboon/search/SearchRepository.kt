@@ -53,6 +53,7 @@ data class CachedTrackAvailability(
  */
 data class BatchAvailabilityLookup(
     val cached: Map<String, CachedTrackAvailability> = emptyMap(),
+    val favoriteByTrackId: Map<String, Boolean> = emptyMap(),
     val unresolvedIds: Set<String> = emptySet(),
 ) {
     /** Ids we have no verdict for because the request failed. */
@@ -269,12 +270,14 @@ class SearchRepositoryImpl(
 
     override suspend fun enrichAvailability(tracks: List<HomeTrack>): List<HomeTrack> {
         if (tracks.isEmpty()) return emptyList()
-        val availabilityByAppleId =
-            lookupAvailableFormats(tracks.mapNotNull(HomeTrack::providerTrackId)).cached
+        val lookup = lookupAvailableFormats(tracks.mapNotNull(HomeTrack::providerTrackId))
+        val availabilityByAppleId = lookup.cached
         return tracks.map { track ->
-            val availability = track.providerTrackId?.let(availabilityByAppleId::get)
+            val appleId = track.providerTrackId
+            val availability = appleId?.let(availabilityByAppleId::get)
             val preferredTrackId = availability?.playbackTrackId
             track.copy(
+                isFavorite = appleId?.let(lookup.favoriteByTrackId::get) ?: track.isFavorite,
                 streamUrl = when {
                     availability == null -> track.streamUrl
                     preferredTrackId != null && preferredTrackId == track.backendTrackId -> track.streamUrl
@@ -310,6 +313,7 @@ class SearchRepositoryImpl(
             val dolbySupported = deviceSupportsDolby()
 
             val availabilityById = linkedMapOf<String, CachedTrackAvailability>()
+            val favoriteById = linkedMapOf<String, Boolean>()
             val unresolved = linkedSetOf<String>()
             for (batch in validIds.chunked(LOOKUP_BATCH_SIZE)) {
                 val body = JSONObject().put("track_ids", JSONArray(batch)).toString()
@@ -334,11 +338,16 @@ class SearchRepositoryImpl(
                     unresolved += batch
                     continue
                 }
+                val returnedIds = linkedSetOf<String>()
                 for (index in 0 until tracks.length()) {
                     val track = tracks.objAtOrNull(index) ?: continue
                     val appleId = track.stringOrNull("apple_track_id")
                         ?.let(::normalizeProviderTrackId)
                         ?: continue
+                    returnedIds += appleId
+                    if (track.has("is_favorite") && !track.isNull("is_favorite")) {
+                        favoriteById[appleId] = track.optBoolean("is_favorite")
+                    }
                     val cachedFormats = track.arrOrNull("formats")?.let { values ->
                         buildList<TrackFormatVariant> {
                             for (formatIndex in 0 until values.length()) {
@@ -376,9 +385,11 @@ class SearchRepositoryImpl(
                         )
                     }
                 }
+                unresolved += batch.filterNot(returnedIds::contains)
             }
             BatchAvailabilityLookup(
                 cached = availabilityById,
+                favoriteByTrackId = favoriteById,
                 unresolvedIds = unresolved,
             )
         }

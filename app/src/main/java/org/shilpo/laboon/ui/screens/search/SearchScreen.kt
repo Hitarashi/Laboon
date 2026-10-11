@@ -102,6 +102,9 @@ import org.shilpo.laboon.ui.design.LiquidGlassBackdropState
 import org.shilpo.laboon.ui.design.TrackCodecBadges
 import org.shilpo.laboon.ui.design.painterResource
 import org.shilpo.laboon.ui.screens.home.HomeDailyMixSongOptionsSheet
+import org.shilpo.laboon.ui.screens.home.LocalTrackFavoriteActions
+import org.shilpo.laboon.ui.screens.home.isEffectiveFavorite
+import org.shilpo.laboon.theme.renderer.materialSymbolPainterResource
 
 @Composable
 fun SearchScreen(
@@ -115,7 +118,10 @@ fun SearchScreen(
     onPlayWithContext: ((HomeTrack, List<HomeTrack>) -> Unit)? = null,
     onPlayNext: ((HomeTrack) -> Unit)? = null,
     onAddToQueue: ((HomeTrack) -> Unit)? = null,
-    onAddToPlaylist: ((HomeTrack) -> Unit)? = null,
+    onAddToPlaylist: ((HomeTrack, SearchScreenResumeState) -> Unit)? = null,
+    onOpenAlbumForTrack: ((HomeTrack) -> Unit)? = null,
+    resumeState: SearchScreenResumeState = SearchScreenResumeState(),
+    onResumeStateChanged: (SearchScreenResumeState) -> Unit = {},
     onLoadTrackGenres: suspend (HomeTrack) -> List<String> = { emptyList() },
     ripTasks: List<RipTaskSnapshot> = emptyList(),
     pendingRipTrackIds: Set<String> = emptySet(),
@@ -148,28 +154,29 @@ fun SearchScreen(
         }
     }
 
-    var selectedFilter by remember { mutableStateOf(SearchFilter.TOP_RESULTS) }
-    var query by remember { mutableStateOf("") }
+    var selectedFilter by remember { mutableStateOf(resumeState.selectedFilter) }
+    var query by remember { mutableStateOf(resumeState.query) }
     var searchHistory by remember(searchHistoryStore) {
         mutableStateOf(searchHistoryStore.load())
     }
     var trackHistory by remember(searchHistoryStore) {
         mutableStateOf(searchHistoryStore.loadTracks())
     }
-    var searchRequest by remember { mutableStateOf<String?>(null) }
-    var isSuggesting by remember { mutableStateOf(false) }
-    var isSearching by remember { mutableStateOf(false) }
-    var hints by remember { mutableStateOf<List<String>>(emptyList()) }
-    var suggestions by remember { mutableStateOf<List<HomeTrack>>(emptyList()) }
-    var albumSuggestions by remember { mutableStateOf<List<HomeAlbum>>(emptyList()) }
-    var artistSuggestions by remember { mutableStateOf<List<HomeArtist>>(emptyList()) }
-    var results by remember { mutableStateOf<List<HomeTrack>>(emptyList()) }
-    var albumResults by remember { mutableStateOf<List<HomeAlbum>>(emptyList()) }
-    var artistResults by remember { mutableStateOf<List<HomeArtist>>(emptyList()) }
-    var playlistResults by remember { mutableStateOf<List<HomePlaylist>>(emptyList()) }
-    var stationResults by remember { mutableStateOf<List<HomeStation>>(emptyList()) }
-    var musicVideoResults by remember { mutableStateOf<List<HomeTrack>>(emptyList()) }
-    var topResults by remember { mutableStateOf<List<LyricspornCatalogItem>>(emptyList()) }
+    var searchRequest by remember { mutableStateOf(resumeState.searchRequest) }
+    var isSuggesting by remember { mutableStateOf(resumeState.isSuggesting) }
+    var isSearching by remember { mutableStateOf(resumeState.isSearching) }
+    var hints by remember { mutableStateOf(resumeState.hints) }
+    var suggestions by remember { mutableStateOf(resumeState.suggestions) }
+    var albumSuggestions by remember { mutableStateOf(resumeState.albumSuggestions) }
+    var artistSuggestions by remember { mutableStateOf(resumeState.artistSuggestions) }
+    var results by remember { mutableStateOf(resumeState.results) }
+    var albumResults by remember { mutableStateOf(resumeState.albumResults) }
+    var artistResults by remember { mutableStateOf(resumeState.artistResults) }
+    var playlistResults by remember { mutableStateOf(resumeState.playlistResults) }
+    var stationResults by remember { mutableStateOf(resumeState.stationResults) }
+    var musicVideoResults by remember { mutableStateOf(resumeState.musicVideoResults) }
+    var topResults by remember { mutableStateOf(resumeState.topResults) }
+    var skipRestoredSearch by remember { mutableStateOf(resumeState.searchRequest != null) }
     var selectedTrackForOptions by remember { mutableStateOf<HomeTrack?>(null) }
     var selectedTrackOptionsContext by remember { mutableStateOf<List<HomeTrack>>(emptyList()) }
 
@@ -181,6 +188,29 @@ fun SearchScreen(
     fun dismissTrackOptions() {
         selectedTrackForOptions = null
         selectedTrackOptionsContext = emptyList()
+    }
+
+    val currentResumeState = SearchScreenResumeState(
+        query = query,
+        selectedFilter = selectedFilter,
+        searchRequest = searchRequest,
+        isSuggesting = isSuggesting,
+        isSearching = isSearching,
+        hints = hints,
+        suggestions = suggestions,
+        albumSuggestions = albumSuggestions,
+        artistSuggestions = artistSuggestions,
+        results = results,
+        albumResults = albumResults,
+        artistResults = artistResults,
+        playlistResults = playlistResults,
+        stationResults = stationResults,
+        musicVideoResults = musicVideoResults,
+        topResults = topResults,
+    )
+
+    LaunchedEffect(currentResumeState) {
+        onResumeStateChanged(currentResumeState)
     }
 
     fun clearAllResults() {
@@ -260,6 +290,10 @@ fun SearchScreen(
     }
 
     LaunchedEffect(searchRequest, selectedFilter) {
+        if (skipRestoredSearch) {
+            skipRestoredSearch = false
+            return@LaunchedEffect
+        }
         val term = searchRequest ?: return@LaunchedEffect
         isSearching = true
         results = emptyList()
@@ -541,9 +575,12 @@ fun SearchScreen(
             },
             onAddToPlaylist = onAddToPlaylist?.let { addTrack ->
                 {
-                    addTrack(track)
+                    addTrack(track, currentResumeState)
                     dismissTrackOptions()
                 }
+            },
+            onOpenAlbum = onOpenAlbumForTrack?.let { openAlbum ->
+                { openAlbum(track); dismissTrackOptions() }
             },
             onLoadTrackGenres = onLoadTrackGenres,
             onDownload = {
@@ -1074,13 +1111,27 @@ private fun SearchTrackRow(
                 .padding(start = 14.dp, end = 8.dp),
             verticalArrangement = Arrangement.Center,
         ) {
-            Text(
-                text = track.title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = track.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (track.isEffectiveFavorite(LocalTrackFavoriteActions.current)) {
+                    Icon(
+                        painter = materialSymbolPainterResource("favorite", filled = true),
+                        contentDescription = "Favorite",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(2.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -1600,13 +1651,27 @@ private fun SearchHistoryTrackRow(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.Center,
         ) {
-            Text(
-                text = track.title,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = track.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (track.isEffectiveFavorite(LocalTrackFavoriteActions.current)) {
+                    Icon(
+                        painter = materialSymbolPainterResource("favorite", filled = true),
+                        contentDescription = "Favorite",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(13.dp),
+                    )
+                }
+            }
             Text(
                 text = track.artist,
                 style = MaterialTheme.typography.bodySmall,
