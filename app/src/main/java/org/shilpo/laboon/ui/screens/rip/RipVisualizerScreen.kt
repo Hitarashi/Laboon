@@ -501,7 +501,7 @@ private fun RipTaskCard(
             ) {
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
-                        .data(ArtworkUrlHelper.toLowQuality(task.artworkUrl))
+                        .data(ArtworkUrlHelper.toHighQuality(task.artworkUrl))
                         .crossfade(true)
                         .build(),
                     placeholder = painterResource(R.drawable.app_icon_small),

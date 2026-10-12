@@ -564,13 +564,13 @@ fun MiniPlayer(
                             .background(MaterialTheme.colorScheme.surfaceContainerHigh),
                         contentAlignment = Alignment.Center,
                     ) {
-                        val lowResUrl = remember(track.artworkUrl) {
-                            ArtworkUrlHelper.toLowQuality(track.artworkUrl)
+                        val artworkUrl = remember(track.artworkUrl) {
+                            ArtworkUrlHelper.toHighQuality(track.artworkUrl)
                         }
-                        if (!lowResUrl.isNullOrBlank()) {
+                        if (!artworkUrl.isNullOrBlank()) {
                             AsyncImage(
                                 model = ImageRequest.Builder(LocalPlatformContext.current)
-                                    .data(lowResUrl)
+                                    .data(artworkUrl)
                                     .crossfade(true)
                                     .build(),
                                 placeholder = painterResource(R.drawable.app_icon_small),

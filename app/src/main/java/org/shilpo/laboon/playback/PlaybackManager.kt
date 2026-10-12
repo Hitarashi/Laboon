@@ -1552,7 +1552,7 @@ class PlaybackManagerImpl(
             .setTitle(track.title)
             .setArtist(track.artist)
         track.album?.let { metadataBuilder.setAlbumTitle(it) }
-        track.artworkUrl?.let { metadataBuilder.setArtworkUri(Uri.parse(it)) }
+        track.artworkUrl?.let { (ArtworkUrlHelper.toHighQuality(it) ?: it).let { uri -> metadataBuilder.setArtworkUri(Uri.parse(uri)) } }
 
         return MediaItem.Builder()
             .setMediaId(mediaId)
