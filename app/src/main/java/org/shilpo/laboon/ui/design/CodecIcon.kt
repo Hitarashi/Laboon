@@ -55,7 +55,7 @@ fun getTrackQualityCodecs(track: HomeTrack): List<String> {
     for (f in rawFormats) {
         val norm = f.trim().lowercase(Locale.ROOT)
         when {
-            norm == "ec-3" || norm == "ec3" || norm.contains("dolby") || norm.contains("atmos") -> {
+            norm == "ec-3" || norm == "ec3" || norm == "e-ac-3" || norm.contains("dolby") || norm.contains("atmos") -> {
                 result.add("ec-3")
             }
 
@@ -63,7 +63,7 @@ fun getTrackQualityCodecs(track: HomeTrack): List<String> {
                 result.add("hires")
             }
 
-            norm == "alac" || norm == "flac" || norm == "lossless" -> {
+            norm == "alac" || norm == "flac" || norm == "lossless" || norm.contains("lossless") -> {
                 result.add("lossless")
             }
 
@@ -85,7 +85,7 @@ fun getTrackQualityCodecs(track: HomeTrack): List<String> {
         when (codec.lowercase(Locale.ROOT)) {
             "hires" -> 0
             "lossless", "alac", "flac" -> 1
-            "ec-3", "ec3", "atmos", "dolby", "dolby_atmos" -> 2
+            "ec-3", "ec3", "e-ac-3", "atmos", "dolby", "dolby_atmos", "dolby-atmos" -> 2
             else -> 3
         }
     }
@@ -120,7 +120,7 @@ fun CodecIcon(
             )
         }
 
-        normalized == "lossless" || normalized == "alac" || normalized == "flac" -> {
+        normalized == "lossless" || normalized == "alac" || normalized == "flac" || normalized.contains("lossless") -> {
             val width = height * (15f / 9f)
             Icon(
                 painter = painterResource(R.drawable.ic_codec_lossless),
@@ -130,7 +130,9 @@ fun CodecIcon(
             )
         }
 
-        normalized == "ec-3" || normalized == "ec3" || normalized == "atmos" || normalized == "dolby" || normalized == "dolby_atmos" -> {
+        normalized == "ec-3" || normalized == "ec3" || normalized == "e-ac-3" || normalized == "atmos" ||
+                normalized == "dolby" || normalized == "dolby_atmos" || normalized == "dolby-atmos" ||
+                normalized.contains("dolby") || normalized.contains("atmos") -> {
             val width = height * (103f / 73f)
             Icon(
                 painter = painterResource(R.drawable.ic_codec_dolby),

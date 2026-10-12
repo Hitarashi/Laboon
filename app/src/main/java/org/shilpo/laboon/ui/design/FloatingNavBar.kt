@@ -56,6 +56,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -68,6 +70,7 @@ import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
 import org.shilpo.laboon.navigation.MainTab
 import org.shilpo.laboon.theme.LocalVisualTheme
+import org.shilpo.laboon.theme.renderer.materialSymbolPainterResource
 import kotlin.math.roundToInt
 
 internal val NavigationBarMaxWidth = 420.dp
@@ -96,9 +99,18 @@ internal val FloatingNavBarClearance = FloatingCombinedClearance
 internal data class FloatingNavigationItem<T>(
     val value: T,
     val title: String,
-    val iconOutlined: Int,
-    val iconFilled: Int,
+    val symbol: String? = null,
+    val iconOutlined: Int = 0,
+    val iconFilled: Int = 0,
 )
+
+@Composable
+private fun <T> FloatingNavigationItem<T>.navPainter(selected: Boolean): Painter =
+    if (!symbol.isNullOrBlank()) {
+        materialSymbolPainterResource(name = symbol, filled = selected)
+    } else {
+        painterResource(id = if (selected) iconFilled else iconOutlined)
+    }
 
 @Composable
 fun FloatingNavBar(
@@ -114,6 +126,7 @@ fun FloatingNavBar(
             FloatingNavigationItem(
                 value = tab,
                 title = stringResource(id = tab.titleRes),
+                symbol = tab.symbol,
                 iconOutlined = tab.iconOutlined,
                 iconFilled = tab.iconFilled,
             )
@@ -262,9 +275,7 @@ internal fun <T> FloatingNavigationBar(
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     Icon(
-                                        painter = painterResource(
-                                            id = if (selected) item.iconFilled else item.iconOutlined,
-                                        ),
+                                        painter = item.navPainter(selected),
                                         contentDescription = null,
                                         modifier = Modifier
                                             .size(24.dp)
@@ -438,9 +449,7 @@ internal fun <T> FloatingNavigationBar(
                                 label = "navTabIconCrossfade",
                             ) { isSelected ->
                                 Icon(
-                                    painter = painterResource(
-                                        id = if (isSelected) item.iconFilled else item.iconOutlined,
-                                    ),
+                                    painter = item.navPainter(isSelected),
                                     contentDescription = null,
                                     modifier = Modifier
                                         .size(24.dp)

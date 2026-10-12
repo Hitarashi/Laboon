@@ -58,6 +58,41 @@ data class LyricspornMotionArtwork(
     val format: String? = null,
 )
 
+data class LyricspornHeroDestination(
+    val type: String,
+    val id: String,
+    val url: String? = null,
+)
+
+data class LyricspornHeroItem(
+    val id: String,
+    val badge: String? = null,
+    val title: String? = null,
+    val description: String? = null,
+    val artworkUrl: String? = null,
+    val target: LyricspornCatalogItem? = null,
+    val destination: LyricspornHeroDestination? = null,
+)
+
+data class LyricspornBrowseSection(
+    val id: String,
+    val slug: String,
+    val title: String,
+    val layout: String,
+    val itemsCount: Int,
+    val hasMore: Boolean,
+    val roomId: String? = null,
+    val items: List<LyricspornCatalogItem> = emptyList(),
+)
+
+data class LyricspornBrowseGrouping(
+    val storefront: String,
+    val name: String,
+    val title: String,
+    val hero: List<LyricspornHeroItem> = emptyList(),
+    val sections: List<LyricspornBrowseSection> = emptyList(),
+)
+
 internal fun preferredAlbumEditorialNotes(standard: String?, short: String?): String? =
     standard?.trim()?.takeIf(String::isNotEmpty)
         ?: short?.trim()?.takeIf(String::isNotEmpty)
@@ -786,17 +821,127 @@ object LyricspornClient {
             .orEmpty()
     }
 
-    private suspend fun getJson(url: String): JSONObject? =
-        when (val response = http.getJson(url.withCurrentStorefront())) {
-            is HttpOutcome.Success -> response.value
-            is HttpOutcome.Failure -> null
+    suspend fun getBrowse(
+        apiBaseUrl: String?,
+        storefront: String? = null,
+        limit: Int = 20,
+        artworkSize: Int = 600,
+        includeMotionArtwork: Boolean = false,
+    ): LyricspornBrowseGrouping? {
+        val baseUrl = normalizeApiBaseUrl(apiBaseUrl) ?: return null
+        val browseBasePath = if (baseUrl.endsWith("/api/v1", ignoreCase = true)) {
+            "$baseUrl/browse"
+        } else {
+            "$baseUrl/api/v1/browse"
         }
+        val url = buildString {
+            append(browseBasePath)
+            append("?limit=")
+            append(limit.coerceIn(1, 50))
+            if (includeMotionArtwork) {
+                append("&include=motionArtwork")
+            }
+        }
+        val json = getJson(url, storefront)
+        if (json == null) {
+            android.util.Log.e("LyricspornClient", "getBrowse: json is null for url=$url, storefront=$storefront")
+            return null
+        }
+        val effectiveStorefront = json.stringOrNull("storefront") ?: storefront ?: currentStorefront()
+        val name = json.stringOrNull("name") ?: "music"
+        val title = json.stringOrNull("title") ?: "New"
+        val heroItems = buildList {
+            val heroArr = json.arrOrNull("hero") ?: return@buildList
+            for (i in 0 until heroArr.length()) {
+                heroArr.objAtOrNull(i)?.toHeroItem(artworkSize)?.let(::add)
+            }
+        }
+        val sections = buildList {
+            val sectionsArr = json.arrOrNull("sections") ?: return@buildList
+            for (i in 0 until sectionsArr.length()) {
+                sectionsArr.objAtOrNull(i)?.toBrowseSection(artworkSize)?.let(::add)
+            }
+        }
+        android.util.Log.d("LyricspornClient", "getBrowse loaded ${heroItems.size} hero items and ${sections.size} sections")
+        return LyricspornBrowseGrouping(
+            storefront = effectiveStorefront,
+            name = name,
+            title = title,
+            hero = heroItems,
+            sections = sections,
+        )
+    }
 
-    private fun String.withCurrentStorefront(): String {
+    private fun JSONObject.toHeroItem(artworkSize: Int): LyricspornHeroItem? {
+        val id = stringOrNull("id") ?: return null
+        val targetItem = objOrNull("target")?.toCatalogItem(artworkSize)
+        val destination = objOrNull("destination")?.let {
+            val type = it.stringOrNull("type") ?: return@let null
+            val destId = it.stringOrNull("id") ?: return@let null
+            LyricspornHeroDestination(type = type, id = destId, url = it.stringOrNull("url"))
+        }
+        val editorialArt = objOrNull("editorialArtwork")
+        val coverObj = editorialArt?.objOrNull("subscriptionCover")
+            ?: editorialArt?.objOrNull("subscriptionHero")
+            ?: editorialArt?.objOrNull("superHeroTall")
+            ?: objOrNull("artwork")
+        val rawArtUrl = coverObj?.stringOrNull("url") ?: targetItem?.artworkUrl
+        val resolvedArtUrl = rawArtUrl?.replace("{w}", artworkSize.toString())?.replace("{h}", artworkSize.toString())
+
+        return LyricspornHeroItem(
+            id = id,
+            badge = stringOrNull("badge"),
+            title = stringOrNull("title"),
+            description = stringOrNull("description"),
+            artworkUrl = resolvedArtUrl,
+            target = targetItem,
+            destination = destination,
+        )
+    }
+
+    private fun JSONObject.toBrowseSection(artworkSize: Int): LyricspornBrowseSection? {
+        val id = stringOrNull("id") ?: return null
+        val slug = stringOrNull("slug") ?: id
+        val title = stringOrNull("title") ?: return null
+        val layout = stringOrNull("layout") ?: "mixed"
+        val itemsCount = optInt("itemsCount", 0)
+        val hasMore = optBoolean("hasMore", false)
+        val roomId = stringOrNull("roomId")
+        val items = arrOrNull("items")?.toCatalogItems(artworkSize).orEmpty()
+        return LyricspornBrowseSection(
+            id = id,
+            slug = slug,
+            title = title,
+            layout = layout,
+            itemsCount = itemsCount,
+            hasMore = hasMore,
+            roomId = roomId,
+            items = items,
+        )
+    }
+
+    private suspend fun getJson(url: String, storefront: String? = null): JSONObject? {
+        val resolvedUrl = url.withCurrentStorefront(storefront)
+        android.util.Log.d("LyricspornClient", "getJson request: $resolvedUrl")
+        return when (val response = http.getJson(resolvedUrl)) {
+            is HttpOutcome.Success -> {
+                android.util.Log.d("LyricspornClient", "getJson success for: $resolvedUrl")
+                response.value
+            }
+            is HttpOutcome.Failure -> {
+                android.util.Log.e("LyricspornClient", "getJson failed for $resolvedUrl: ${response.error.message}")
+                null
+            }
+        }
+    }
+
+    private fun String.withCurrentStorefront(storefront: String? = null): String {
         val queryStart = indexOf('?')
         val path = if (queryStart < 0) this else substring(0, queryStart)
         val query = if (queryStart < 0) emptyList() else substring(queryStart + 1).split('&')
         val otherParameters = query.filterNot { it.substringBefore('=') == "storefront" }
+        val effectiveStorefront = storefront?.lowercase(Locale.ROOT)?.takeIf { it.length == 2 && it.all(Char::isLetter) }
+            ?: currentStorefront()
         return buildString {
             append(path)
             append('?')
@@ -805,7 +950,7 @@ object LyricspornClient {
                 append('&')
             }
             append("storefront=")
-            append(currentStorefront())
+            append(effectiveStorefront)
         }
     }
 

@@ -196,15 +196,6 @@ private fun HomeMixHeader(
                     modifier = Modifier.size(36.dp),
                 )
             }
-        } else if (!isLoading && tracks.isNotEmpty()) {
-            if (tracks.any { !it.isPlayable && !it.providerTrackId.isNullOrBlank() }) {
-                Text(
-                    text = stringResource(R.string.home_mix_download_hint),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                )
-            }
         }
     }
 }

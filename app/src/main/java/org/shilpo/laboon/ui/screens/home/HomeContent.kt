@@ -89,7 +89,6 @@ internal fun HomeContent(
     val matchedAlbums = remember(feedState.topAlbums.items) {
         feedState.topAlbums.items.filter { !it.appleCatalogId.isNullOrBlank() }
     }
-    var globalTrending by rememberSaveable { mutableStateOf(false) }
     val topClearance = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 64.dp
     val bottomClearance = FloatingCombinedClearance +
         WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 24.dp
@@ -204,93 +203,6 @@ internal fun HomeContent(
                     HomeTrackCarousel(
                         title = stringResource(R.string.home_top_tracks),
                         tracks = feedState.topTracks.items,
-                        onTrackClick = onTrackClick,
-                        onDownloadTrack = onDownloadTrack,
-                    )
-                }
-            }
-            item(key = "trending", contentType = "trending") {
-                LaunchedEffect(Unit) { onLoadTrending() }
-                val hasRegional = feedState.regionalTrending.items.isNotEmpty()
-                val showGlobal = globalTrending || !hasRegional
-                HomeFeedSection(
-                    title = stringResource(R.string.home_trending),
-                    status = when {
-                        feedState.regionalTrending.status == SectionLoadState.LOADING ||
-                            feedState.globalTrending.status == SectionLoadState.LOADING -> SectionLoadState.LOADING
-                        feedState.regionalTrending.status == SectionLoadState.ERROR ||
-                            feedState.globalTrending.status == SectionLoadState.ERROR -> SectionLoadState.ERROR
-                        else -> SectionLoadState.LOADED
-                    },
-                    hasItems = hasRegional || feedState.globalTrending.items.isNotEmpty(),
-                    onRetry = onLoadTrending,
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
-                        HomeSectionHeading(
-                            stringResource(R.string.home_trending),
-                            modifier = Modifier.padding(horizontal = 8.dp),
-                        )
-                        if (hasRegional && feedState.globalTrending.items.isNotEmpty()) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween)) {
-                                FilledTonalToggleButton(
-                                    checked = !showGlobal,
-                                    onCheckedChange = { globalTrending = false },
-                                    shapes = ButtonGroupDefaults.connectedLeadingButtonShapes(),
-                                    modifier = Modifier.weight(1f),
-                                ) {
-                                    Text(
-                                        text = feedState.regionName.ifBlank { stringResource(R.string.home_trending_regional) },
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                                FilledTonalToggleButton(
-                                    checked = showGlobal,
-                                    onCheckedChange = { globalTrending = true },
-                                    shapes = ButtonGroupDefaults.connectedTrailingButtonShapes(),
-                                    modifier = Modifier.weight(1f),
-                                ) {
-                                    Text(stringResource(R.string.home_trending_global))
-                                }
-                            }
-                        }
-                        AnimatedContent(targetState = showGlobal, label = "homeTrending") { global ->
-                            val tracks = if (global) feedState.globalTrending.items else feedState.regionalTrending.items
-                            Surface(
-                                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                                shape = MaterialTheme.shapes.extraLarge,
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-                                    tracks.forEachIndexed { index, track ->
-                                        HomeSongRow(track, onTrackClick, onDownloadTrack)
-                                        if (index < tracks.lastIndex) {
-                                            androidx.compose.material3.HorizontalDivider(
-                                                modifier = Modifier.padding(horizontal = 12.dp),
-                                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            item(key = "weekly_picks", contentType = "tracks") {
-                LaunchedEffect(Unit) { onLoadWeeklyPicks() }
-                HomeFeedSection(
-                    title = stringResource(R.string.home_weekly_picks),
-                    status = feedState.weeklyPicks.status,
-                    hasItems = feedState.weeklyPicks.items.isNotEmpty(),
-                    onRetry = onLoadWeeklyPicks,
-                ) {
-                    HomeTrackCarousel(
-                        title = stringResource(R.string.home_weekly_picks),
-                        tracks = feedState.weeklyPicks.items,
                         onTrackClick = onTrackClick,
                         onDownloadTrack = onDownloadTrack,
                     )

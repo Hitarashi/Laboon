@@ -68,7 +68,7 @@ class RipTaskModelsTest {
     }
 
     @Test
-    fun parseRipTaskSnapshot_allFieldsPopulateCorrectly() {
+    fun parseTaskSnapshot_parsesAllFields() {
         val json = JSONObject(
             """
             {
@@ -79,6 +79,7 @@ class RipTaskModelsTest {
                 "album": "Midnights",
                 "duration": 200,
                 "job_stage": "resolving",
+                "codec": "alac",
                 "download": {
                     "stage": "downloading",
                     "title": "Anti-Hero",
@@ -137,6 +138,7 @@ class RipTaskModelsTest {
         assertEquals("alac", snapshot.upload?.codec)
         assertEquals(2, snapshot.upload?.trackIndex)
         assertEquals(13, snapshot.upload?.totalTracks)
+        assertEquals("alac", snapshot.codec)
         assertEquals(35.5f, snapshot.percent)
         assertEquals(42, snapshot.resultTrackId)
         assertTrue(snapshot.isOwner)
@@ -145,6 +147,57 @@ class RipTaskModelsTest {
         assertEquals(13, snapshot.totalTracks)
         assertEquals(2, snapshot.completedTracks)
         assertEquals(1, snapshot.failedTracks)
+    }
+
+    @Test
+    fun parseRipTaskSnapshot_allFieldsPopulateCorrectly() = parseTaskSnapshot_parsesAllFields()
+
+    @Test
+    fun parseRipTaskSnapshot_codecFallbackHierarchy() {
+        // Fallback from download lane
+        val jsonFromDownload = JSONObject(
+            """
+            {
+                "task_id": "task_1",
+                "source_track_id": "1",
+                "download": { "stage": "downloading", "codec": "alac" }
+            }
+        """.trimIndent()
+        )
+        assertEquals("alac", RipTaskSnapshot.fromJson(jsonFromDownload).codec)
+
+        // Fallback from upload lane
+        val jsonFromUpload = JSONObject(
+            """
+            {
+                "task_id": "task_1",
+                "source_track_id": "1",
+                "upload": { "stage": "uploading", "codec": "ec-3" }
+            }
+        """.trimIndent()
+        )
+        assertEquals("ec-3", RipTaskSnapshot.fromJson(jsonFromUpload).codec)
+
+        // Fallback from uploads array
+        val jsonFromUploadsArray = JSONObject(
+            """
+            {
+                "task_id": "task_1",
+                "source_track_id": "1",
+                "uploads": [{ "stage": "uploading", "codec": "flac" }]
+            }
+        """.trimIndent()
+        )
+        assertEquals("flac", RipTaskSnapshot.fromJson(jsonFromUploadsArray).codec)
+
+        // Fallback from previous snapshot
+        val prevSnapshot = RipTaskSnapshot(
+            taskId = "task_1",
+            sourceTrackId = "1",
+            codec = "atmos",
+        )
+        val jsonEmpty = JSONObject("""{ "task_id": "task_1", "source_track_id": "1" }""")
+        assertEquals("atmos", RipTaskSnapshot.fromJson(jsonEmpty, previous = prevSnapshot).codec)
     }
 
     @Test

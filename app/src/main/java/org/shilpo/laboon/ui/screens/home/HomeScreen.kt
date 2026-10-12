@@ -177,6 +177,9 @@ import org.shilpo.laboon.ui.screens.artist.toUiState
 import org.shilpo.laboon.ui.screens.label.RecordLabelScreen
 import org.shilpo.laboon.ui.screens.label.RecordLabelUiState
 import org.shilpo.laboon.ui.screens.label.toUiState
+import org.shilpo.laboon.home.BrowseRepository
+import org.shilpo.laboon.home.BrowseState
+import org.shilpo.laboon.ui.screens.browse.BrowseScreen
 import org.shilpo.laboon.ui.screens.library.LibraryScreen
 import org.shilpo.laboon.ui.screens.player.MorphingPlayerSheet
 import org.shilpo.laboon.ui.screens.rip.RipVisualizerScreen
@@ -299,6 +302,37 @@ fun HomeScreen(
     }
     val recordLabelRepository = remember(sessionStore, keyValueStore) {
         RecordLabelRepository(sessionStore, RecordLabelCache(keyValueStore))
+    }
+    val browseRepository = remember(sessionStore, searchRepository) {
+        BrowseRepository(sessionStore, searchRepository)
+    }
+    var browseState by remember { mutableStateOf(browseRepository.getCachedState() ?: BrowseState(isLoading = true)) }
+    var isBrowseRefreshing by remember { mutableStateOf(false) }
+
+    val loadBrowse: (Boolean) -> Unit = { force ->
+        coroutineScope.launch {
+            if (force) {
+                isBrowseRefreshing = true
+            } else if (browseState.grouping == null) {
+                browseState = browseState.copy(isLoading = true)
+            }
+            val result = browseRepository.fetchBrowse(forceRefresh = force)
+            result.onSuccess { state ->
+                browseState = state
+            }.onFailure { err ->
+                browseState = browseState.copy(
+                    isLoading = false,
+                    error = err.message ?: "Failed to load browse content",
+                )
+            }
+            isBrowseRefreshing = false
+        }
+    }
+
+    LaunchedEffect(currentTab) {
+        if (currentTab == MainTab.Browse && browseState.grouping == null) {
+            loadBrowse(false)
+        }
     }
     val isAlbumOverlayVisible = overlayStack.isNotEmpty()
 
@@ -702,9 +736,17 @@ fun HomeScreen(
     }
     val albumBottomClearance = albumBottomInset + albumBottomChromeClearance
     val homeScrollState = rememberLazyListState()
+    val browseScrollState = rememberLazyListState()
 
     LaunchedEffect(homeScrollState, liquidGlassBackdropState) {
         snapshotFlow { homeScrollState.firstVisibleItemIndex to homeScrollState.firstVisibleItemScrollOffset }
+            .collect {
+                liquidGlassBackdropState.invalidate()
+            }
+    }
+
+    LaunchedEffect(browseScrollState, liquidGlassBackdropState) {
+        snapshotFlow { browseScrollState.firstVisibleItemIndex to browseScrollState.firstVisibleItemScrollOffset }
             .collect {
                 liquidGlassBackdropState.invalidate()
             }
@@ -743,6 +785,7 @@ fun HomeScreen(
         overlayStack.lastOrNull()?.destination is OverlayDestination.RecordLabel -> "label"
         overlayStack.lastOrNull()?.destination is OverlayDestination.DailyMix -> "dailyMix"
         activeTrack != null && playerExpansionProgress > 0.55f -> "player"
+        currentTab == MainTab.Browse -> "browse"
         currentTab == MainTab.Search -> "search"
         currentTab == MainTab.Library -> "library"
         else -> "home"
@@ -1787,6 +1830,29 @@ fun HomeScreen(
                             },
                             onAlbumClick = onAlbumClick,
                             lazyListState = homeScrollState,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+
+                        MainTab.Browse -> BrowseScreen(
+                            browseState = browseState,
+                            isRefreshing = isBrowseRefreshing,
+                            onRefresh = { loadBrowse(true) },
+                            onTrackClick = { track ->
+                                playbackManager.play(track)
+                            },
+                            onPlayTrack = { track, contextTracks ->
+                                playbackManager.play(track, contextTracks = contextTracks)
+                            },
+                            onPlayNextTrack = playbackManager::playNext,
+                            onAddTrackToQueue = playbackManager::addToQueue,
+                            onAddToPlaylist = { track -> requestTrackForPlaylist(track) },
+                            onOpenAlbumForTrack = onOpenAlbumForTrack,
+                            onDownloadTrack = { track -> ripWsClient.startRip(track) },
+                            onAlbumClick = openAlbum,
+                            currentTrackId = activeTrack?.id,
+                            isPlaying = activeIsPlaying,
+                            onLoadTrackGenres = albumDetailsRepository::getGenresForTrack,
+                            lazyListState = browseScrollState,
                             modifier = Modifier.fillMaxSize(),
                         )
 

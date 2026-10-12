@@ -59,6 +59,7 @@ import org.shilpo.laboon.rip.RipTaskSnapshot
 import org.shilpo.laboon.rip.RipTaskUploadLane
 import org.shilpo.laboon.rip.RipWebSocketClient
 import org.shilpo.laboon.rip.RipWsStatus
+import org.shilpo.laboon.ui.design.CodecIcon
 import org.shilpo.laboon.ui.design.SkeletonTextLine
 import org.shilpo.laboon.ui.design.UserAvatar
 import org.shilpo.laboon.ui.design.frostedGlassShimmer
@@ -678,6 +679,7 @@ private fun LaneGauge(
         speedBytesPerSec = lane.speedBytesPerSec,
         trackTitle = trackTitle,
         trackPosition = trackPosition,
+        codec = lane.codec,
         modifier = modifier,
     )
 }
@@ -705,14 +707,15 @@ private fun UploadLaneGauge(
     } else null
 
     val trackTitle = if (isArchiveStage) {
+        val codecSuffix = (lane.codec ?: task.codec)?.uppercase(Locale.getDefault())?.let { " [$it]" } ?: ""
         if (!lane.title.isNullOrBlank() && lane.title != "Album ZIP archive" && lane.title != "Full Album Archive") {
             lane.title
         } else if (!task.artist.isNullOrBlank() && !task.title.isNullOrBlank()) {
-            "${task.artist} - ${task.title}.zip"
+            "${task.artist} - ${task.title}$codecSuffix.zip"
         } else if (!task.title.isNullOrBlank()) {
-            "${task.title}.zip"
+            "${task.title}$codecSuffix.zip"
         } else {
-            "Album.zip"
+            if (codecSuffix.isNotEmpty()) "Album$codecSuffix.zip" else "Album.zip"
         }
     } else {
         lane.title ?: (task.currentTrackTitle ?: if (task.isAlbum) null else task.title)
@@ -734,6 +737,7 @@ private fun UploadLaneGauge(
         speedBytesPerSec = lane.speedBytesPerSec,
         trackTitle = trackTitle,
         trackPosition = trackPosition,
+        codec = lane.codec,
         workerBadge = workerBadge,
         modifier = modifier,
     )
@@ -749,6 +753,7 @@ private fun LaneProgressIndicator(
     speedBytesPerSec: Long,
     trackTitle: String? = null,
     trackPosition: String? = null,
+    codec: String? = null,
     workerBadge: String? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -939,6 +944,18 @@ private fun LaneProgressIndicator(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                if (!codec.isNullOrBlank()) {
+                    Text(
+                        text = "•",
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    )
+                    RipCodecsBadges(
+                        codec = codec,
+                        height = 10.dp,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    )
+                }
             }
 
             Text(
@@ -1057,3 +1074,78 @@ private fun cleanHtmlEntities(text: String?): String? {
 }
 
 private fun String.lenSafe(): Int = length.coerceAtMost(7)
+
+private fun isLosslessOrDolby(codec: String?): Boolean {
+    val raw = codec?.trim()?.lowercase(Locale.ROOT) ?: return false
+    val tokens = raw.split(',', '/').map { it.trim() }.filter { it.isNotEmpty() }
+    if (tokens.isEmpty()) return false
+    return tokens.any { token ->
+        token == "lossless" || token == "alac" || token == "flac" || token.contains("lossless") ||
+                token == "ec-3" || token == "ec3" || token == "e-ac-3" || token == "atmos" ||
+                token == "dolby" || token == "dolby_atmos" || token == "dolby-atmos" ||
+                token.contains("dolby") || token.contains("atmos")
+    }
+}
+
+@Composable
+private fun RipCodecsBadges(
+    codec: String?,
+    modifier: Modifier = Modifier,
+    height: Dp = 10.dp,
+    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+) {
+    if (codec.isNullOrBlank()) return
+
+    val tokens = remember(codec) {
+        codec.split(',', '/')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinctBy { it.lowercase(Locale.ROOT) }
+            .sortedBy { token ->
+                val norm = token.lowercase(Locale.ROOT)
+                when {
+                    norm.contains("hires") || norm == "hi-res" || norm.contains("24-") -> 0
+                    norm == "lossless" || norm == "alac" || norm == "flac" || norm.contains("lossless") -> 1
+                    norm == "ec-3" || norm == "ec3" || norm == "e-ac-3" || norm == "atmos" ||
+                            norm == "dolby" || norm == "dolby_atmos" || norm == "dolby-atmos" ||
+                            norm.contains("dolby") || norm.contains("atmos") -> 2
+                    else -> 3
+                }
+            }
+    }
+    if (tokens.isEmpty()) return
+
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
+        tokens.forEach { item ->
+            CodecIcon(
+                codec = item,
+                height = height,
+                tint = tint,
+            )
+            if (!isLosslessOrDolby(item) &&
+                !item.equals("aac", ignoreCase = true) &&
+                !item.startsWith("mp4a", ignoreCase = true) &&
+                !item.contains("hires", ignoreCase = true) &&
+                !item.equals("hi-res", ignoreCase = true) &&
+                !item.contains("24-", ignoreCase = true)
+            ) {
+                val displayCodec = when (item.lowercase(Locale.ROOT)) {
+                    "mp4a.40.2", "mp4a.40.5" -> "AAC"
+                    else -> item.uppercase(Locale.ROOT)
+                }
+                Text(
+                    text = displayCodec,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 10.sp,
+                    ),
+                    color = tint,
+                )
+            }
+        }
+    }
+}
